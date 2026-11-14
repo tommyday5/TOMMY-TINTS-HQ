@@ -1,46 +1,59 @@
-import os, secrets, time
+"""Google OpenID Connect authentication for the private Tommy Tints HQ dashboard."""
+import os
+import secrets
 from functools import wraps
-from flask import Blueprint, request, session, redirect, url_for, render_template_string, abort
-from werkzeug.security import check_password_hash
+from flask import Blueprint, current_app, redirect, request, session, url_for, abort
+from authlib.integrations.flask_client import OAuth
+
 auth = Blueprint("auth", __name__)
-attempts = {}
+oauth = OAuth()
+google = oauth.register(
+    name="google",
+    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+    client_kwargs={"scope": "openid email profile"},
+)
+
 def configured():
-    return bool(os.environ.get("HQ_SESSION_SECRET") and os.environ.get("HQ_ADMIN_PASSWORD_HASH"))
+    return all(os.environ.get(key) for key in (
+        "HQ_SESSION_SECRET", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
+        "HQ_ALLOWED_GOOGLE_EMAIL"))
+
 def required(fn):
     @wraps(fn)
     def wrapped(*args, **kwargs):
         if not configured():
-            return "Authentication configuration required.", 503
-        if not session.get("hq_auth"):
+            return "Authentication configuration required. Private HQ data remains disabled.", 503
+        if session.get("hq_auth") is not True:
             return redirect(url_for("auth.login"))
         return fn(*args, **kwargs)
     return wrapped
-@auth.route("/login", methods=["GET", "POST"])
+
+@auth.get("/login")
 def login():
     if not configured():
-        return "Authentication configuration required.", 503
-    if session.get("hq_auth"):
+        return "Google sign-in is not configured yet.", 503
+    if session.get("hq_auth") is True:
         return redirect("/")
-    session.setdefault("login_csrf", secrets.token_urlsafe(32))
-    error = ""
-    if request.method == "POST":
-        ip = request.remote_addr or "unknown"
-        now = time.monotonic()
-        recent = [t for t in attempts.get(ip, []) if now - t < 900]
-        if len(recent) >= 10:
-            return "Too many attempts", 429
-        attempts[ip] = recent + [now]
-        if not secrets.compare_digest(request.form.get("csrf", ""), session["login_csrf"]):
-            abort(400)
-        if check_password_hash(os.environ["HQ_ADMIN_PASSWORD_HASH"], request.form.get("password", "")):
-            session.clear()
-            session.permanent = True
-            session["hq_auth"] = True
-            session["csrf"] = secrets.token_urlsafe(32)
-            attempts.pop(ip, None)
-            return redirect("/")
-        error = "Incorrect password"
-    return render_template_string("""<!doctype html><html><meta name="viewport" content="width=device-width,initial-scale=1"><title>HQ Sign in</title><style>body{background:#0b1018;color:#fff;font-family:system-ui;display:grid;place-items:center;min-height:100vh}form{background:#182231;padding:30px;border-radius:14px}input,button{display:block;padding:12px;margin:12px 0;width:90%;border-radius:7px}button{background:#d32d40;color:white;border:0}</style><form method="post"><h1>Tommy Tints HQ</h1><p>Private sign in</p><p>{{error}}</p><input type="hidden" name="csrf" value="{{csrf}}"><input type="password" name="password" required autocomplete="current-password" placeholder="Password"><button>Sign in</button></form></html>""",csrf=session["login_csrf"],error=error)
+    return google.authorize_redirect(url_for("auth.callback", _external=True, _scheme="https"))
+
+@auth.get("/auth/google/callback")
+def callback():
+    if not configured():
+        abort(503)
+    token = google.authorize_access_token()
+    identity = token.get("userinfo") or google.userinfo(token=token).json()
+    expected = os.environ["HQ_ALLOWED_GOOGLE_EMAIL"].strip().casefold()
+    actual = str(identity.get("email", "")).strip().casefold()
+    if not identity.get("email_verified") or not secrets.compare_digest(actual, expected):
+        session.clear()
+        return "This Google account is not authorised for Tommy Tints HQ.", 403
+    session.clear()
+    session.permanent = True
+    session["hq_auth"] = True
+    session["csrf"] = secrets.token_urlsafe(32)
+    session["google_sub"] = identity.get("sub")
+    return redirect("/")
+
 @auth.post("/logout")
 @required
 def logout():
