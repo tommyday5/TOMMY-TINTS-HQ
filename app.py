@@ -2,6 +2,7 @@
 import os, secrets
 from flask import Flask, jsonify, render_template_string, session, request
 from quote_engine import calculate_quote
+from hq_sheets_live import configured as sheets_configured, read_workbook
 from hq_auth import auth, oauth, required, configured
 app = Flask(__name__)
 app.secret_key = os.environ.get('HQ_SESSION_SECRET') or secrets.token_hex(32)
@@ -17,7 +18,7 @@ PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name
 <section id="calculator" class="page hidden"><div class="card"><h2>Quick Quote · Internal estimator</h2><p>Uses confirmed Tommy Tints labour rates. Estimates require your approval before sending to customers. The full Cost Library and AI assistant are not connected yet.</p><label>Customer type</label><select id="tier"><option value="retail">Retail — £85/hour</option><option value="trade">Trade — £70/hour</option></select><label>Work description (for your notes only)</label><input id="workDescription" maxlength="300" placeholder="e.g. Hyundai bonnet repair and repaint"><label>Labour hours</label><input id="hours" type="number" min="0" step=".1" value="2.1"><p id="rateDisplay" class="muted">Confirmed retail labour rate: £85/hour</p><label>Materials (£)</label><input id="materials" type="number" min="0" step=".01" value="8.27"><label>Consumables (£)</label><input id="consumables" type="number" min="0" step=".01" value="2.97"><label>Additional overhead allowance (£)</label><input id="overhead" type="number" min="0" step=".01" value="0"><label>Quoted price (£, optional)</label><input id="quoted" type="number" min="0" step=".01" value="150"><p><button class="primary" id="calculate">Calculate</button></p><div id="quoteResult" aria-live="polite"></div></div></section>
 <section id="timer" class="page hidden"><div class="card"><h2>Job timer</h2><p>Use this to measure actual active working time. Timer data is saved on this device only and is not synced across devices.</p><label>Job reference (no customer details)</label><input id="jobRef" maxlength="40" placeholder="e.g. J0082"><label>Estimated active labour (hours)</label><input id="estimatedHours" type="number" min="0.1" max="500" step="0.25" value="4"><p class="muted">Alerts at 75%, 90% and 100% of estimated active time. Save your timer locally on this device; browser alerts require permission and may not fire if the page is closed.</p><div id="timeProgress" role="progressbar" aria-label="Time used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="height:12px;background:#263447;border-radius:8px;overflow:hidden"><div id="timeFill" style="height:100%;width:0%;background:#eab44c"></div></div><p id="timeRemaining" role="status"></p><div id="timer">00:00:00</div><div class="row"><button class="primary" id="start">Start / Resume</button><button id="pause">Pause</button><button id="reset">Reset</button><button id="copyTime">Copy time</button></div><p id="timerMessage" role="status"></p></div></section>
 <section id="jobs" class="page hidden"><div class="card"><h2>Existing HQ jobs</h2><p>Google Sheets remains the source of truth. Job editing and synchronisation are disabled until secure authentication is configured.</p><a href="https://docs.google.com/spreadsheets/d/1B0XULUDiMlVuW9u0kUOYem8WelBtOH-Xey_wWVYdb2M/edit#gid=330634230" target="_blank" rel="noopener noreferrer">Open the live Jobs sheet</a></div></section>
-<section id="integrations" class="page hidden"><div class="card"><h2>Integration readiness</h2><table><tr><th>Integration</th><th>Status</th></tr><tr><td>Google Sheets adapter</td><td>Code prepared; credentials pending</td></tr><tr><td>Square / Calendar</td><td>Not connected to this app</td></tr><tr><td>Monzo / DNA Payments</td><td>Not connected to this app</td></tr><tr><td>Login / roles</td><td>Required before private data sync</td></tr></table></div></section>
+<section id="integrations" class="page hidden"><div class="card"><h2>Integration readiness</h2><table><tr><th>Integration</th><th>Status</th></tr><tr><td>Google Sheets adapter</td><td>Read-only connector prepared; service account permission required</td></tr><tr><td>Square / Calendar</td><td>Not connected to this app</td></tr><tr><td>Monzo / DNA Payments</td><td>Not connected to this app</td></tr><tr><td>Login / roles</td><td>Required before private data sync</td></tr></table></div></section>
 </main></div><script>
 "use strict";
 const $=id=>document.getElementById(id);
@@ -81,8 +82,19 @@ def quote_estimate():
     except (ValueError, TypeError) as exc:
         return jsonify(error=str(exc)), 400
 
+@app.get("/api/hq/pricing")
+@required
+def hq_pricing():
+    if not sheets_configured():
+        return jsonify(error="Google Sheets service account not configured",connected=False), 503
+    try:
+        return jsonify(read_workbook())
+    except Exception:
+        app.logger.exception("Read-only Google Sheets sync failed")
+        return jsonify(error="Unable to read HQ spreadsheet. Check service-account access and Railway configuration."), 502
+
 @app.get("/health")
 def health():
-    return jsonify(status="ok",application="tommy-tints-hq",stage="authenticated-preview" if configured() else "authentication-setup-required",live_data=False)
+    return jsonify(status="ok",application="tommy-tints-hq",stage="authenticated-preview" if configured() else "authentication-setup-required",live_data=False,sheets_credentials_configured=sheets_configured())
 if __name__=="__main__":
     app.run(host="0.0.0.0",port=int(os.environ.get("PORT","8080")))
