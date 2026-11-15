@@ -1,9 +1,10 @@
 """Tommy Tints HQ interactive preview. No customer data is served until auth is configured."""
-import os, secrets
-from flask import Flask, jsonify, render_template_string, session, request
+import os, secrets, time
+from threading import Lock
+from flask import Flask, jsonify, render_template_string, session, request, redirect, url_for
 from quote_engine import calculate_quote
-from hq_sheets_live import configured as sheets_configured, read_workbook
-from hq_auth import auth, oauth, required, configured
+from hq_sheets_live import configured as sheets_configured, read_workbook, read_workbook_with_access_token
+from hq_auth import auth, oauth, google, required, configured
 app = Flask(__name__)
 app.secret_key = os.environ.get('HQ_SESSION_SECRET') or secrets.token_hex(32)
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SECURE=os.environ.get('HQ_DEV_HTTP') != '1', SESSION_COOKIE_SAMESITE='Lax', PERMANENT_SESSION_LIFETIME=3600)
@@ -18,7 +19,7 @@ PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name
 <section id="calculator" class="page hidden"><div class="card"><h2>Quick Quote · Internal estimator</h2><p>Uses confirmed Tommy Tints labour rates. Estimates require your approval before sending to customers. The full Cost Library and AI assistant are not connected yet.</p><label>Customer type</label><select id="tier"><option value="retail">Retail — £85/hour</option><option value="trade">Trade — £70/hour</option></select><label>Work description (for your notes only)</label><input id="workDescription" maxlength="300" placeholder="e.g. Hyundai bonnet repair and repaint"><label>Labour hours</label><input id="hours" type="number" min="0" step=".1" value="2.1"><p id="rateDisplay" class="muted">Confirmed retail labour rate: £85/hour</p><label>Materials (£)</label><input id="materials" type="number" min="0" step=".01" value="8.27"><label>Consumables (£)</label><input id="consumables" type="number" min="0" step=".01" value="2.97"><label>Additional overhead allowance (£)</label><input id="overhead" type="number" min="0" step=".01" value="0"><label>Quoted price (£, optional)</label><input id="quoted" type="number" min="0" step=".01" value="150"><p><button class="primary" id="calculate">Calculate</button></p><div id="quoteResult" aria-live="polite"></div></div></section>
 <section id="timer" class="page hidden"><div class="card"><h2>Job timer</h2><p>Use this to measure actual active working time. Timer data is saved on this device only and is not synced across devices.</p><label>Job reference (no customer details)</label><input id="jobRef" maxlength="40" placeholder="e.g. J0082"><label>Estimated active labour (hours)</label><input id="estimatedHours" type="number" min="0.1" max="500" step="0.25" value="4"><p class="muted">Alerts at 75%, 90% and 100% of estimated active time. Save your timer locally on this device; browser alerts require permission and may not fire if the page is closed.</p><div id="timeProgress" role="progressbar" aria-label="Time used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="height:12px;background:#263447;border-radius:8px;overflow:hidden"><div id="timeFill" style="height:100%;width:0%;background:#eab44c"></div></div><p id="timeRemaining" role="status"></p><div id="timer">00:00:00</div><div class="row"><button class="primary" id="start">Start / Resume</button><button id="pause">Pause</button><button id="reset">Reset</button><button id="copyTime">Copy time</button></div><p id="timerMessage" role="status"></p></div></section>
 <section id="jobs" class="page hidden"><div class="card"><h2>Existing HQ jobs</h2><p>Google Sheets remains the source of truth. Job editing and synchronisation are disabled until secure authentication is configured.</p><a href="https://docs.google.com/spreadsheets/d/1B0XULUDiMlVuW9u0kUOYem8WelBtOH-Xey_wWVYdb2M/edit#gid=330634230" target="_blank" rel="noopener noreferrer">Open the live Jobs sheet</a></div></section>
-<section id="integrations" class="page hidden"><div class="card"><h2>Integration readiness</h2><table><tr><th>Integration</th><th>Status</th></tr><tr><td>Google Sheets adapter</td><td>Read-only connector prepared; service account permission required</td></tr><tr><td>Square / Calendar</td><td>Not connected to this app</td></tr><tr><td>Monzo / DNA Payments</td><td>Not connected to this app</td></tr><tr><td>Login / roles</td><td>Required before private data sync</td></tr></table></div></section>
+<section id="integrations" class="page hidden"><div class="card"><h2>Integration readiness</h2><table><tr><th>Integration</th><th>Status</th></tr><tr><td>Google Sheets adapter</td><td>Google Sheets read-only OAuth consent available; server-side token persistence pending</td></tr><tr><td>Square / Calendar</td><td>Not connected to this app</td></tr><tr><td>Monzo / DNA Payments</td><td>Not connected to this app</td></tr><tr><td>Login / roles</td><td>Required before private data sync</td></tr></table></div></section>
 </main></div><script>
 "use strict";
 const $=id=>document.getElementById(id);
@@ -83,16 +84,51 @@ def quote_estimate():
     except (ValueError, TypeError) as exc:
         return jsonify(error=str(exc)), 400
 
+# Short-lived, process-local tokens only: no Google credentials in browser cookies.
+# A restart or multi-worker request can require reconnection. Do not enable as
+# a production integration until a durable encrypted server-side store exists.
+_google_tokens = {}
+_google_tokens_lock = Lock()
+SHEETS_SCOPE = "openid email profile https://www.googleapis.com/auth/spreadsheets.readonly"
+
+@app.get("/auth/sheets/connect")
+@required
+def sheets_connect():
+    return google.authorize_redirect(
+        url_for("sheets_callback", _external=True, _scheme="https"),
+        scope=SHEETS_SCOPE, prompt="consent")
+
+@app.get("/auth/sheets/callback")
+@required
+def sheets_callback():
+    token = google.authorize_access_token()
+    identity = token.get("userinfo") or google.userinfo(token=token).json()
+    expected = os.environ["HQ_ALLOWED_GOOGLE_EMAIL"].strip().casefold()
+    if not identity.get("email_verified") or not secrets.compare_digest(
+            str(identity.get("email", "")).strip().casefold(), expected):
+        return "Google account not authorised", 403
+    scope = token.get("scope", "")
+    if "https://www.googleapis.com/auth/spreadsheets.readonly" not in scope.split():
+        return "Google Sheets read-only permission was not granted", 403
+    key = secrets.token_urlsafe(32)
+    with _google_tokens_lock:
+        _google_tokens[key] = (token["access_token"], time.time() + min(int(token.get("expires_in", 3600)), 3600))
+    session["sheets_token_key"] = key
+    return redirect("/")
+
 @app.get("/api/hq/pricing")
 @required
 def hq_pricing():
-    if not sheets_configured():
-        return jsonify(error="Google Sheets service account not configured",connected=False), 503
+    key = session.get("sheets_token_key")
+    with _google_tokens_lock:
+        entry = _google_tokens.get(key) if key else None
+    if not entry or entry[1] <= time.time():
+        return jsonify(error="Google Sheets consent required or expired",connect_url="/auth/sheets/connect",connected=False), 401
     try:
-        return jsonify(read_workbook())
+        return jsonify(read_workbook_with_access_token(entry[0]))
     except Exception:
         app.logger.exception("Read-only Google Sheets sync failed")
-        return jsonify(error="Unable to read HQ spreadsheet. Check service-account access and Railway configuration."), 502
+        return jsonify(error="Unable to read HQ spreadsheet. Reconnect Google Sheets and check API permissions."), 502
 
 @app.get("/health")
 def health():
