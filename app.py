@@ -51,7 +51,7 @@ function ukCalendarTime(date,time){
  const dstEnd=Date.UTC(year,9,lastSunday(10),1);
  const local=Date.UTC(year,month-1,day,hour,minute);
  // For the repeated 01:00 hour in October, choose GMT; for the skipped March hour, reject.
- const summer=local>=dstStart+3600000&&local<dstEnd+3600000;
+ const summer=local>=dstStart+3600000&&local<dstEnd;
  if(month===3&&day===lastSunday(3)&&hour===1)throw Error("This hour is skipped when UK clocks go forward. Choose another time.");
  const offset=summer?"+01:00":"+00:00";
  return date+"T"+time+":00"+offset;
