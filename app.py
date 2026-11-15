@@ -152,13 +152,19 @@ $("loadSheets").addEventListener("click",async()=>{
   hqData=data;
   $("service").replaceChildren(new Option("Manual estimate — no service selected",""));
   services.forEach(name=>$("service").add(new Option(name,name)));
-  $("jobSelect").replaceChildren(new Option("Manual timer — no job selected",""));
-  jobs.forEach(key=>$("jobSelect").add(new Option(key+" · "+(data.jobs[key].status||"No status"),key)));
-  const selected=$("matJob").value;
-  $("matJob").replaceChildren(new Option("Unassigned",""));
-  jobs.forEach(key=>$("matJob").add(new Option(key+" · "+(data.jobs[key].status||"No status"),key)));
-  if(selected && jobs.includes(selected))$("matJob").value=selected;
-  else if(selected){$("matJob").add(new Option(selected+" (manual)",selected));$("matJob").value=selected;}
+  const timerJobSelect=$("jobSelect");
+  if(timerJobSelect){
+   timerJobSelect.replaceChildren(new Option("Manual timer — no job selected",""));
+   jobs.forEach(key=>timerJobSelect.add(new Option(key+" · "+(data.jobs[key].status||"No status"),key)));
+  }
+  const materialJobSelect=$("matJob");
+  if(materialJobSelect){
+   const selected=materialJobSelect.value;
+   materialJobSelect.replaceChildren(new Option("Unassigned",""));
+   jobs.forEach(key=>materialJobSelect.add(new Option(key+" · "+(data.jobs[key].status||"No status"),key)));
+   if(selected && jobs.includes(selected))materialJobSelect.value=selected;
+   else if(selected){materialJobSelect.add(new Option(selected+" (manual)",selected));materialJobSelect.value=selected;}
+  }
   $("matJobHelp").textContent=jobs.length+" existing job references loaded from Google Sheets.";
   updateRate();
   $("serviceInfo").textContent="Choose a live service to prefill hours and materials. Review any multipliers and pricing rules manually.";
