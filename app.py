@@ -41,7 +41,7 @@ function navigate(page){if(!titles[page])return;document.querySelectorAll(".page
 document.querySelectorAll("[data-page]").forEach(b=>b.addEventListener("click",()=>navigate(b.dataset.page)));
 document.querySelectorAll("[data-go]").forEach(b=>b.addEventListener("click",()=>navigate(b.dataset.go)));
 function ukCalendarTime(date,time){
- if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(date)||!/^\\d{2}:\\d{2}$/.test(time))throw Error("Select a date and time.");
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!/^\d{2}:\d{2}$/.test(time))throw Error("Select a date and time.");
  const [year,month,day]=date.split("-").map(Number);
  const [hour,minute]=time.split(":").map(Number);
  if(hour>23||minute>59||new Date(Date.UTC(year,month-1,day)).toISOString().slice(0,10)!==date)throw Error("Invalid date or time.");
