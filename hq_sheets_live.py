@@ -44,3 +44,19 @@ def read_workbook():
     return {"rates":{k:str(v) for k,v in settings.items()},
             "services":{k:{name:str(v) for name,v in item.items()} for k,item in library.items()},
             "jobs":jobs,"source":"Google Sheets (read-only)"}
+
+def read_workbook_with_access_token(access_token):
+    """Read HQ using a user-consented, short-lived OAuth access token."""
+    if not access_token:
+        raise ValueError("Missing authorised Google access token")
+    url="https://sheets.googleapis.com/v4/spreadsheets/"+SPREADSHEET_ID+"/values:batchGet"
+    response=requests.get(url,params=[("ranges",r) for r in RANGES.values()],
+                          headers={"Authorization":"Bearer "+access_token},timeout=15)
+    response.raise_for_status()
+    ranges=response.json().get("valueRanges",[])
+    if len(ranges)!=3:
+        raise ValueError("Missing Google Sheets ranges")
+    return {"rates":{k:str(v) for k,v in settings_from_values(ranges[0].get("values",[])).items()},
+            "services":{k:{name:str(v) for name,v in item.items()} for k,item in library_from_values(ranges[1].get("values",[])).items()},
+            "jobs":jobs_for_timer(ranges[2].get("values",[])),
+            "source":"Google Sheets (user OAuth, read-only)"}
