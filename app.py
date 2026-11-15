@@ -3,6 +3,7 @@ import os, secrets, time
 from threading import Lock
 from flask import Flask, jsonify, render_template_string, session, request, redirect, url_for
 from quote_engine import calculate_quote
+from materials_costing import calculate_materials
 from hq_sheets_live import configured as sheets_configured, read_workbook, read_workbook_with_access_token
 from hq_auth import auth, oauth, google, required, configured
 app = Flask(__name__)
@@ -168,6 +169,19 @@ def sheets_callback():
         _google_tokens[key] = (token["access_token"], time.time() + min(int(token.get("expires_in", 3600)), 3600))
     session["sheets_token_key"] = key
     return redirect("/")
+
+@app.post("/api/materials/calculate")
+@required
+def materials_calculate():
+    if not request.is_json:
+        return jsonify(error="JSON body required"),415
+    data=request.get_json(silent=True)
+    if not isinstance(data,dict):
+        return jsonify(error="Invalid request"),400
+    try:
+        return jsonify(calculate_materials(data.get("lines")))
+    except (ValueError,TypeError,AttributeError) as exc:
+        return jsonify(error=str(exc)),400
 
 @app.get("/api/hq/pricing")
 @required
