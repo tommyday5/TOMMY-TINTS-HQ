@@ -4,6 +4,10 @@ from materials_costing import cost_line,calculate_materials
 class MaterialTests(unittest.TestCase):
     def test_clearcoat(self):
         self.assertEqual(cost_line({"name":"Clear","purchase_price":100,"package_quantity":5000,"used_quantity":300})["cost"],"6.00")
+    def test_clearcoat_complete_kit(self):
+        self.assertEqual(cost_line({"method":"clearcoat_kit","purchase_price":100,"clear_ml":5000,"hardener_ml":2500,"used_quantity":300})["cost"],"4.00")
+    def test_clearcoat_waste(self):
+        self.assertEqual(cost_line({"method":"clearcoat_kit","purchase_price":100,"clear_ml":5000,"hardener_ml":2500,"used_quantity":300,"waste_percent":10})["cost"],"4.40")
     def test_discs(self):
         self.assertEqual(cost_line({"name":"P320","purchase_price":35,"package_quantity":50,"used_quantity":5})["cost"],"3.50")
     def test_basecoat(self):
