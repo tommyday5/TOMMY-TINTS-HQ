@@ -20,6 +20,16 @@ def cost_line(item):
     if method=="direct":
         raw=dec(item.get("cost",0),"direct cost")
         detail="Mixing system / manually entered actual cost"
+    elif method=="clearcoat_kit":
+        purchase=dec(item.get("purchase_price"),"complete kit price")
+        clear_ml=dec(item.get("clear_ml",5000),"clearcoat volume")
+        hardener_ml=dec(item.get("hardener_ml",2500),"hardener volume")
+        used=dec(item.get("used_quantity"),"mixed quantity used")
+        if clear_ml+hardener_ml==0: raise ValueError("Total kit volume must be greater than zero")
+        waste=dec(item.get("waste_percent",0),"waste percentage")
+        if waste>100: raise ValueError("Waste percentage cannot exceed 100")
+        raw=purchase/(clear_ml+hardener_ml)*used*(Decimal(1)+waste/100)
+        detail="Complete kit / combined clear and hardener volume; thinner excluded"
     elif method=="quantity":
         purchase=dec(item.get("purchase_price"),"purchase price")
         package=dec(item.get("package_quantity"),"package quantity")
