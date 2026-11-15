@@ -22,6 +22,7 @@ PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name
 </main></div><script>
 "use strict";
 const $=id=>document.getElementById(id);
+const TIMER_STORAGE_KEY="tommy-tints-hq-timer-v2";
 const titles={overview:"Command centre",calculator:"Trade price calculator",timer:"Job timer",jobs:"Jobs",integrations:"Integrations"};
 function navigate(page){if(!titles[page])return;document.querySelectorAll(".page").forEach(el=>el.classList.toggle("hidden",el.id!==page));document.querySelectorAll("[data-page]").forEach(el=>el.classList.toggle("active",el.dataset.page===page));$("heading").textContent=titles[page];}
 document.querySelectorAll("[data-page]").forEach(b=>b.addEventListener("click",()=>navigate(b.dataset.page)));
