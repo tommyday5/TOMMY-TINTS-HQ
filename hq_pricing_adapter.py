@@ -53,7 +53,7 @@ def library_from_values(rows):
 def jobs_for_timer(rows):
     headers=None
     output={}
-    for row in rows:
+    for sheet_row, row in enumerate(rows, start=4):
         if row and str(row[0]).strip()=="Job ID":
             headers=[str(c).strip() for c in row]
             continue
@@ -63,11 +63,15 @@ def jobs_for_timer(rows):
         job_id=str(rec.get("Job ID","")).strip().upper()
         if not job_id:
             continue
-        if job_id in output:
-            raise ValueError("Duplicate job id: "+job_id)
+        key = job_id
+        if key in output:
+            key = f"{job_id} (sheet row {sheet_row})"
+            while key in output:
+                key += " duplicate"
         raw=rec.get("Quoted Hours") or rec.get("Total Hours") or ""
         hours=money_cell(raw) if str(raw).strip() else Decimal("0")
-        output[job_id]={"estimated_hours":str(hours),
+        output[key]={"job_id":job_id,"sheet_row":sheet_row,
+            "duplicate_reference":key != job_id,"estimated_hours":str(hours),
             "status":str(rec.get("Status","")).strip(),
             "services":[str(rec.get("Service "+str(i),"")).strip() for i in range(1,6) if str(rec.get("Service "+str(i),"")).strip()]}
     return output
