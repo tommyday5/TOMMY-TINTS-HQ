@@ -49,7 +49,7 @@ $("jobSelect").addEventListener("change",()=>{
 });
 $("calculate").addEventListener("click",async()=>{
  try{
-  const payload={tier:$("tier").value,hours:num("hours"),materials:num("materials"),consumables:num("consumables"),overhead:num("overhead"),quoted_price:num("quoted")};
+  const payload={tier:$("tier").value,hours:num("hours"),materials:num("materials"),consumables:num("consumables"),overhead:num("overhead"),quoted_price:num("quoted"),service:$("service").value};
   const response=await fetch("/api/quote/estimate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload),credentials:"same-origin"});
   const data=await response.json();
   if(!response.ok)throw Error(data.error||"Unable to calculate quote");
@@ -115,6 +115,24 @@ def quote_estimate():
     if not isinstance(data, dict):
         return jsonify(error="Invalid request"), 400
     try:
+        service = data.get("service")
+        if service:
+            key = session.get("sheets_token_key")
+            with _google_tokens_lock:
+                entry = _google_tokens.get(key) if key else None
+            if not entry or entry[1] <= time.time():
+                return jsonify(error="Reconnect Google Sheets to quote from the live Cost Library"), 401
+            workbook = read_workbook_with_access_token(entry[0])
+            item = workbook["services"].get(service)
+            if item is None:
+                return jsonify(error="Selected service is not in the current Cost Library"), 400
+            data = {**data, "hours":item["hours"], "materials":item["materials"],
+                    "consumables":item["consumables"]}
+            result = calculate_quote(data, rates=workbook["rates"])
+            result["source_service"] = service
+            result["pricing_method"] = item["pricing_method"]
+            result["multiplier_applied"] = False
+            return jsonify(result)
         return jsonify(calculate_quote(data))
     except (ValueError, TypeError) as exc:
         return jsonify(error=str(exc)), 400
