@@ -6,6 +6,7 @@ from quote_engine import calculate_quote
 from materials_costing import calculate_materials
 from job_material_store import read_log, write_log
 from job_profitability import profitability
+from job_negotiation import evaluate as evaluate_negotiation
 from hq_sheets_live import configured as sheets_configured, read_workbook, read_workbook_with_access_token
 from hq_auth import auth, oauth, google, required, configured
 app = Flask(__name__)
@@ -20,7 +21,7 @@ PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name
 </style></head><body><div class="shell"><aside><div class="brand">TOMMY <b>TINTS</b> HQ</div><button class="nav active" data-page="overview">Overview</button><button class="nav" data-page="calculator">Trade price calculator</button><button class="nav" data-page="timer">Job timer</button><button class="nav" data-page="materials">Materials costing</button><button class="nav" data-page="jobs">Jobs & Google Sheets</button><button class="nav" data-page="integrations">Integrations</button></aside><main><h1 id="heading">Command centre</h1><p>Interactive development preview · real business records are not loaded</p><div class="notice">Preview only: login and Google service credentials are required before displaying private business data. No information entered here is sent to Google Sheets.</div>
 <section id="overview" class="page"><div class="grid"><div class="card"><small>Jobs synced</small><div class="value">Not connected</div></div><div class="card"><small>Bank feed</small><div class="value">Not connected</div></div><div class="card"><small>Bookings</small><div class="value">Not connected</div></div></div><div class="card"><h2>Start working</h2><div class="row"><button class="primary" data-go="calculator">Calculate a quote</button><button data-go="timer">Start a job timer</button><button data-go="jobs">Open existing HQ sheet</button></div></div></section>
 <section id="calculator" class="page hidden"><div class="card"><h2>Quick Quote · Internal estimator</h2><p>Select a live Cost Library service to prefill labour and materials. Estimates require your approval; prices are not automatically sent to customers.</p><label>Cost Library service</label><select id="service"><option value="">Manual estimate — no service selected</option></select><p id="serviceInfo" class="muted">Load HQ records to select a live service.</p><label>Customer type</label><select id="tier"><option value="retail">Retail — £85/hour</option><option value="trade">Trade — £70/hour</option></select><label>Work description (for your notes only)</label><input id="workDescription" maxlength="300" placeholder="e.g. Hyundai bonnet repair and repaint"><label>Labour hours</label><input id="hours" type="number" min="0" step=".1" value="2.1"><p id="rateDisplay" class="muted">Confirmed retail labour rate: £85/hour</p><label>Materials (£)</label><input id="materials" type="number" min="0" step=".01" value="8.27"><label>Consumables (£)</label><input id="consumables" type="number" min="0" step=".01" value="2.97"><label>Additional overhead allowance (£)</label><input id="overhead" type="number" min="0" step=".01" value="0"><label>Quoted price (£, optional)</label><input id="quoted" type="number" min="0" step=".01" value="150"><p><button class="primary" id="calculate">Calculate</button></p><div id="quoteResult" aria-live="polite"></div></div></section>
-<section id="materials" class="page hidden"><div class="card"><h2>Materials & consumables · job costing</h2><p>Calculate actual material cost. Nothing is written to Sheets. Add each clearcoat component separately; basecoat can use the mixing system's actual price.</p><label>Job reference</label><select id="matJob"><option value="">Unassigned</option></select><p id="matJobHelp">Existing jobs load after Google Sheets is connected. If unavailable, enter an exact job reference below.</p><label>Manual job reference (when not listed)</label><input id="matManualJob" placeholder="e.g. J0057"><button id="matUseManual">Use reference</button><label>Selling price (£)</label><input id="matSale" type="number" min="0" step=".01"><label>Active labour hours</label><input id="matLabour" type="number" min="0" step=".1"><label>Actual labour cost (£ per hour, not customer rate)</label><input id="matActualRate" type="number" min="0" step=".01" placeholder="Required for meaningful profit"><label>Allocated overhead for this job (£)</label><input id="matOverhead" type="number" min="0" step=".01" placeholder="Enter job overhead"><label>Other job costs (£)</label><input id="matOther" type="number" min="0" step=".01" placeholder="Transport, subcontractors, etc."><label>Material name</label><input id="matName" value="Clearcoat"><label>Cost method</label><select id="matMethod"><option value="clearcoat_kit">Clearcoat kit (clear + hardener)</option><option value="quantity">Quantity from purchased pack</option><option value="direct">Actual cost from mixing system</option><option value="filler_preset">Filler size estimate</option></select><label>Clearcoat volume in kit (ml)</label><input id="matClear" type="number" min="0" value="5000"><label>Hardener volume in kit (ml)</label><input id="matHardener" type="number" min="0" value="2500"><label>Purchase price (£)</label><input id="matPrice" type="number" min="0" step=".01" value="100"><label>Pack quantity (ml, g, discs, etc.)</label><input id="matPack" type="number" min=".01" step=".01" value="5000"><label>Quantity used (same units)</label><input id="matUsed" type="number" min="0" step=".01" value="300"><label>Actual direct cost (£)</label><input id="matDirect" type="number" min="0" step=".01" value="8.61"><label>Filler repair size</label><select id="matPreset"><option value="small">Small skim (30 g)</option><option value="medium">Medium (90 g)</option><option value="heavy">Heavy (200 g)</option></select><label>Waste allowance (%)</label><input id="matWaste" type="number" min="0" max="100" value="0"><p><button id="addMaterial">Add material to job</button></p><p id="matStatus" role="status"></p><div id="matLines"></div><h2 id="matTotal">Total material cost: £0.00</h2><p id="matProfit"></p><div id="matBreakdown"></div><button id="clearMaterials">Clear list</button> <button id="syncMaterials" class="primary">Save job to HQ</button><p id="syncStatus" role="status">Material lines are local until saved to HQ.</p></div></section>
+<section id="materials" class="page hidden"><div class="card"><h2>Materials & consumables · job costing</h2><p>Calculate actual material cost. Nothing is written to Sheets. Add each clearcoat component separately; basecoat can use the mixing system's actual price.</p><label>Job reference</label><select id="matJob"><option value="">Unassigned</option></select><p id="matJobHelp">Existing jobs load after Google Sheets is connected. If unavailable, enter an exact job reference below.</p><label>Manual job reference (when not listed)</label><input id="matManualJob" placeholder="e.g. J0057"><button id="matUseManual">Use reference</button><label>Selling price (£)</label><input id="matSale" type="number" min="0" step=".01"><label>Active labour hours</label><input id="matLabour" type="number" min="0" step=".1"><label>Actual labour cost (£ per hour, not customer rate)</label><input id="matActualRate" type="number" min="0" step=".01" placeholder="Required for meaningful profit"><label>Allocated overhead for this job (£)</label><input id="matOverhead" type="number" min="0" step=".01" placeholder="Enter job overhead"><label>Other job costs (£)</label><input id="matOther" type="number" min="0" step=".01" placeholder="Transport, subcontractors, etc."><label>Material name</label><input id="matName" value="Clearcoat"><label>Cost method</label><select id="matMethod"><option value="clearcoat_kit">Clearcoat kit (clear + hardener)</option><option value="quantity">Quantity from purchased pack</option><option value="direct">Actual cost from mixing system</option><option value="filler_preset">Filler size estimate</option></select><label>Clearcoat volume in kit (ml)</label><input id="matClear" type="number" min="0" value="5000"><label>Hardener volume in kit (ml)</label><input id="matHardener" type="number" min="0" value="2500"><label>Purchase price (£)</label><input id="matPrice" type="number" min="0" step=".01" value="100"><label>Pack quantity (ml, g, discs, etc.)</label><input id="matPack" type="number" min=".01" step=".01" value="5000"><label>Quantity used (same units)</label><input id="matUsed" type="number" min="0" step=".01" value="300"><label>Actual direct cost (£)</label><input id="matDirect" type="number" min="0" step=".01" value="8.61"><label>Filler repair size</label><select id="matPreset"><option value="small">Small skim (30 g)</option><option value="medium">Medium (90 g)</option><option value="heavy">Heavy (200 g)</option></select><label>Waste allowance (%)</label><input id="matWaste" type="number" min="0" max="100" value="0"><p><button id="addMaterial">Add material to job</button></p><p id="matStatus" role="status"></p><div id="matLines"></div><h2 id="matTotal">Total material cost: £0.00</h2><p id="matProfit"></p><div id="matBreakdown"></div><hr><h3>Price negotiation</h3><p>Set a minimum sustainable margin. The slider never changes the agreed job price automatically.</p><label>Minimum sustainable margin (%)</label><input id="matMinMargin" type="number" min="0" max="99" step="1" placeholder="Set your policy"><label>Proposed customer price (£)</label><input id="matOffer" type="range" min="0" max="2000" step="5" value="0"><p id="matOfferLabel">Proposed price: £0.00</p><p id="matNegotiation" role="status"></p><h3>Quiet-period cashflow check</h3><p id="matQuiet">Cash-only acceptance is not a sustainable pricing recommendation. Costs and capacity must be verified first.</p><hr><h3>Customer-facing job breakdown</h3><p>Only the work description, work stages, job reference and agreed selling price are printed. Internal costs and margins are excluded. Save job to HQ after editing the description or stages, then print.</p><label>Customer-facing job description</label><input id="matDescription" maxlength="200" placeholder="e.g. Hyundai bonnet preparation and repaint"><label>Work completed (one stage per line)</label><textarea id="matStages" rows="5" placeholder="Preparation and masking&#10;Surface repair&#10;Primer and paint&#10;Clearcoat and finishing"></textarea><button id="matPrint">Open printable customer breakdown</button><button id="clearMaterials">Clear list</button> <button id="syncMaterials" class="primary">Save job to HQ</button><p id="syncStatus" role="status">Material lines are local until saved to HQ.</p></div></section>
 <section id="timer" class="page hidden"><div class="card"><h2>Job timer</h2><p>Use this to measure actual active working time. Timer data is saved on this device only and is not synced across devices.</p><label>Existing HQ job</label><select id="jobSelect"><option value="">Manual timer — no job selected</option></select><label>Job reference (no customer details)</label><input id="jobRef" maxlength="40" placeholder="e.g. J0082"><label>Estimated active labour (hours)</label><input id="estimatedHours" type="number" min="0.1" max="500" step="0.25" value="4"><p class="muted">Alerts at 75%, 90% and 100% of estimated active time. Save your timer locally on this device; browser alerts require permission and may not fire if the page is closed.</p><div id="timeProgress" role="progressbar" aria-label="Time used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="height:12px;background:#263447;border-radius:8px;overflow:hidden"><div id="timeFill" style="height:100%;width:0%;background:#eab44c"></div></div><p id="timeRemaining" role="status"></p><div id="timer">00:00:00</div><div class="row"><button class="primary" id="start">Start / Resume</button><button id="pause">Pause</button><button id="reset">Reset</button><button id="copyTime">Copy time</button></div><p id="timerMessage" role="status"></p></div></section>
 <section id="jobs" class="page hidden"><div class="card"><h2>Existing HQ jobs</h2><p>Google Sheets remains the source of truth. Connect read-only to load current jobs and Cost Library information. Editing remains disabled.</p><p><a href="/auth/sheets/connect">Connect Google Sheets (read-only)</a> · <button id="loadSheets">Load HQ records</button></p><p id="sheetsStatus" role="status"></p><div id="sheetsSummary"></div><a href="https://docs.google.com/spreadsheets/d/1B0XULUDiMlVuW9u0kUOYem8WelBtOH-Xey_wWVYdb2M/edit#gid=330634230" target="_blank" rel="noopener noreferrer">Open the live Jobs sheet</a></div></section>
 <section id="integrations" class="page hidden"><div class="card"><h2>Integration readiness</h2><table><tr><th>Integration</th><th>Status</th></tr><tr><td>Google Sheets adapter</td><td>Google Sheets read-only OAuth consent available; server-side token persistence pending</td></tr><tr><td>Square / Calendar</td><td>Not connected to this app</td></tr><tr><td>Monzo / DNA Payments</td><td>Not connected to this app</td></tr><tr><td>Login / roles</td><td>Required before private data sync</td></tr></table></div></section>
@@ -88,8 +89,8 @@ $("copyTime").addEventListener("click",async()=>{const text=($("jobRef").value||
 let materialLines=[];
 let currentMaterialJob="";
 function matKey(){return "hq-materials-job:"+currentMaterialJob;}
-function saveMat(){try{localStorage.setItem(matKey(),JSON.stringify({lines:materialLines,sale:$("matSale").value,labour:$("matLabour").value,actual_labour_rate:$("matActualRate").value,overhead:$("matOverhead").value,other_costs:$("matOther").value}));}catch(e){}}
-function loadMat(){try{const d=JSON.parse(localStorage.getItem(matKey())||"{}");materialLines=Array.isArray(d.lines)?d.lines:[];$("matSale").value=d.sale||"";$("matLabour").value=d.labour||"";$("matActualRate").value=d.actual_labour_rate||"";$("matOverhead").value=d.overhead||"";$("matOther").value=d.other_costs||"";}catch(e){materialLines=[];}showMaterials();}
+function saveMat(){try{localStorage.setItem(matKey(),JSON.stringify({lines:materialLines,sale:$("matSale").value,labour:$("matLabour").value,actual_labour_rate:$("matActualRate").value,overhead:$("matOverhead").value,other_costs:$("matOther").value,minimum_margin_percent:$("matMinMargin").value,description:$("matDescription").value,stages:$("matStages").value}));}catch(e){}}
+function loadMat(){try{const d=JSON.parse(localStorage.getItem(matKey())||"{}");materialLines=Array.isArray(d.lines)?d.lines:[];$("matSale").value=d.sale||"";$("matLabour").value=d.labour||"";$("matActualRate").value=d.actual_labour_rate||"";$("matOverhead").value=d.overhead||"";$("matOther").value=d.other_costs||"";$("matMinMargin").value=d.minimum_margin_percent||"";$("matDescription").value=d.description||"";$("matStages").value=d.stages||"";}catch(e){materialLines=[];}showMaterials();}
 $("matUseManual").addEventListener("click",async()=>{
  const key=$("matManualJob").value.trim().toUpperCase();
  if(!/^[A-Z0-9][A-Z0-9 _-]{0,79}$/.test(key)){$("syncStatus").textContent="Enter a valid job reference (letters, numbers, spaces, hyphens or underscores).";return;}
@@ -101,7 +102,7 @@ async function loadServerMat(){
  if(!currentMaterialJob)return;
  try{const res=await fetch("/api/job-materials/"+encodeURIComponent(currentMaterialJob));
  const d=await res.json();if(!res.ok)throw Error(d.error||"Unable to load saved job");
- if(d.data){materialLines=d.data.lines||[];$("matSale").value=d.data.sale||"";$("matLabour").value=d.data.labour||"";$("matActualRate").value=d.data.actual_labour_rate||"";$("matOverhead").value=d.data.overhead||"";$("matOther").value=d.data.other_costs||"";showMaterials();$("syncStatus").textContent="Loaded saved HQ job record ("+d.updated_at+").";}
+ if(d.data){materialLines=d.data.lines||[];$("matSale").value=d.data.sale||"";$("matLabour").value=d.data.labour||"";$("matActualRate").value=d.data.actual_labour_rate||"";$("matOverhead").value=d.data.overhead||"";$("matOther").value=d.data.other_costs||"";$("matMinMargin").value=d.data.minimum_margin_percent||"";$("matDescription").value=d.data.description||"";$("matStages").value=d.data.stages||"";showMaterials();$("syncStatus").textContent="Loaded saved HQ job record ("+d.updated_at+").";}
  else $("syncStatus").textContent="No saved HQ record for this job. Local values are shown.";
  }catch(e){$("syncStatus").textContent=e.message+"; local values retained.";}
 }
@@ -113,7 +114,7 @@ $("syncMaterials").addEventListener("click",async()=>{
  $("syncStatus").textContent="Saved securely to HQ at "+d.updated_at;
  }catch(e){$("syncStatus").textContent="Not saved: "+e.message;}
 });
-["matSale","matLabour","matActualRate","matOverhead","matOther"].forEach(id=>$(id).addEventListener("change",showMaterials));
+["matSale","matLabour","matActualRate","matOverhead","matOther","matMinMargin","matDescription","matStages"].forEach(id=>$(id).addEventListener("change",showMaterials));
 try{const saved=JSON.parse(localStorage.getItem("hq-material-lines-v1")||"[]");if(Array.isArray(saved)&&saved.length<=100)materialLines=saved.filter(x=>x&&typeof x.name==="string"&&Number.isFinite(Number(x.cost)));}catch(e){}
 function showMaterials(){
  saveMat();
@@ -125,6 +126,8 @@ function showMaterials(){
  });
  const cost=materialLines.reduce((sum,x)=>sum+Number(x.cost),0);
  $("matTotal").textContent="Total material cost: "+money(cost);
+ if($("matSale").value!=="" && Number($("matOffer").max)<Number($("matSale").value)*1.5){$("matOffer").max=String(Math.ceil(Number($("matSale").value)*1.5/5)*5);}
+ refreshNegotiation();
  const sale=$("matSale").value, hours=$("matLabour").value;
  const actual=$("matActualRate").value,overhead=$("matOverhead").value,other=$("matOther").value;
  if(sale===""||hours===""){
@@ -141,6 +144,38 @@ function showMaterials(){
   $("matBreakdown").textContent="Revenue "+money(Number(sale))+" | Materials "+money(cost)+" | Actual labour "+money(labourCost)+" | Allocated overhead "+money(overheadCost)+" | Other costs "+money(otherCost)+". Owner pay, depreciation and tax may still need accounting treatment.";
  }
 }
+function refreshNegotiation(){
+ const price=Number($("matOffer").value);
+ $("matOfferLabel").textContent="Proposed price: "+money(price);
+ const target=$("matMinMargin").value;
+ const fields=[$("matSale").value,$("matLabour").value,$("matActualRate").value,$("matOverhead").value,$("matOther").value,target];
+ if(fields.some(v=>v==="")){
+  $("matNegotiation").textContent="HOLD — enter selling price, labour hours, actual labour rate, overhead, other costs and minimum margin.";
+  $("matQuiet").textContent="Quiet-period decision unavailable until all costs are entered.";
+  return;
+ }
+ const materials=materialLines.reduce((a,x)=>a+Number(x.cost),0);
+ const labour=Number($("matLabour").value)*Number($("matActualRate").value);
+ const overhead=Number($("matOverhead").value),other=Number($("matOther").value),min=Number(target);
+ if([materials,labour,overhead,other,min].some(x=>!Number.isFinite(x)||x<0)||min>=100){$("matNegotiation").textContent="HOLD — invalid inputs.";return;}
+ const floor=(materials+labour+overhead+other)/(1-min/100);
+ const cash=materials+labour+other;
+ $("matNegotiation").textContent=price>=floor?"GREEN — meets your sustainable margin target. Minimum "+money(floor)+".":"RED — below sustainable floor "+money(floor)+". Hold firm.";
+ $("matQuiet").textContent=price>=floor?"Covers recorded costs and target margin.":price>=cash?"Cash-positive on recorded incremental costs, but DOES NOT cover allocated overhead or target margin. Exception review only — not a sustainable price.":"Below recorded incremental cost "+money(cash)+". Reject.";
+}
+$("matOffer").addEventListener("input",refreshNegotiation);
+$("matSale").addEventListener("change",()=>{
+ const sale=Number($("matSale").value);
+ if(Number.isFinite(sale)&&sale>=0){
+  $("matOffer").max=String(Math.max(2000,Math.ceil(sale*1.5/5)*5));
+  $("matOffer").value=String(Math.min(Number($("matOffer").max),Math.round(sale/5)*5));
+  refreshNegotiation();
+ }
+});
+$("matPrint").addEventListener("click",()=>{
+ if(!currentMaterialJob){$("syncStatus").textContent="Select a job and save it to HQ before printing.";return;}
+ window.open("/customer-breakdown/"+encodeURIComponent(currentMaterialJob),"_blank","noopener");
+});
 $("addMaterial").addEventListener("click",async()=>{
  try{
   const method=$("matMethod").value;
@@ -308,6 +343,33 @@ def job_profitability_calculate():
         return jsonify(profitability(request.get_json(silent=True)))
     except (ValueError,TypeError) as exc:
         return jsonify(error=str(exc)),400
+
+@app.post("/api/job-negotiation/calculate")
+@required
+def job_negotiation_calculate():
+    if not request.is_json: return jsonify(error="JSON body required"),415
+    try: return jsonify(evaluate_negotiation(request.get_json(silent=True)))
+    except (ValueError,TypeError) as exc: return jsonify(error=str(exc)),400
+
+@app.get("/customer-breakdown/<path:job_key>")
+@required
+def customer_breakdown(job_key):
+    from markupsafe import escape
+    if not job_key or len(job_key)>100 or "/" in job_key: return "Invalid job reference",400
+    owner=str(session.get("google_sub") or "")
+    if not owner: return "Owner identity missing",403
+    try: record=read_log(owner,job_key).get("data")
+    except (RuntimeError,OSError): return "Job storage unavailable",503
+    if not record: return "Save this job in HQ before printing.",404
+    description=str(record.get("description") or "Vehicle work completed")[:200]
+    stages=[str(x).strip()[:200] for x in str(record.get("stages") or "").splitlines() if str(x).strip()][:30]
+    if not stages: return "Add customer-facing work stages and save the job before printing.",400
+    price=record.get("sale")
+    try:
+        from decimal import Decimal
+        price_text="£"+format(Decimal(str(price)),",.2f") if price is not None and str(price).strip()!="" and Decimal(str(price)).is_finite() and Decimal(str(price))>=0 else "Not recorded"
+    except Exception: price_text="Not recorded"
+    return render_template_string("""<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Job breakdown</title><style>body{font:16px Arial,sans-serif;max-width:760px;margin:40px auto;padding:0 20px;color:#222}h1{border-bottom:3px solid #b71c1c;padding-bottom:12px}li{margin:12px 0}.small{font-size:13px;color:#555}@media print{button{display:none}body{margin:20px auto}}</style></head><body><h1>Tommy Tints — Job Work Summary</h1><p><strong>Job reference:</strong> {{ job }}</p><p><strong>Work:</strong> {{ description }}</p><h2>Work completed</h2><ol>{% for stage in stages %}<li>{{ stage }}</li>{% endfor %}</ol><p><strong>Agreed job price:</strong> {{ price }}</p><p class="small">Summary of work undertaken; not an itemised supplier-cost disclosure, VAT invoice or proof of payment.</p><button onclick="window.print()">Print / Save PDF</button></body></html>""",job=job_key,description=description,stages=stages,price=price_text)
 
 @app.get("/api/hq/pricing")
 @required
