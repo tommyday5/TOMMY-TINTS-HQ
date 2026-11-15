@@ -108,7 +108,7 @@ async function loadServerMat(){
 $("syncMaterials").addEventListener("click",async()=>{
  if(!currentMaterialJob){$("syncStatus").textContent="Select an existing job before saving to HQ.";return;}
  try{const csrf=document.querySelector('input[name="csrf"]').value;
- const res=await fetch("/api/job-materials/"+encodeURIComponent(currentMaterialJob),{method:"PUT",headers:{"Content-Type":"application/json","X-HQ-CSRF":csrf},body:JSON.stringify({lines:materialLines,sale:$("matSale").value,labour:$("matLabour").value})});
+ const res=await fetch("/api/job-materials/"+encodeURIComponent(currentMaterialJob),{method:"PUT",headers:{"Content-Type":"application/json","X-HQ-CSRF":csrf},body:JSON.stringify({lines:materialLines,sale:$("matSale").value,labour:$("matLabour").value,actual_labour_rate:$("matActualRate").value,overhead:$("matOverhead").value,other_costs:$("matOther").value})});
  const d=await res.json();if(!res.ok)throw Error(d.error||"Save failed");
  $("syncStatus").textContent="Saved securely to HQ at "+d.updated_at;
  }catch(e){$("syncStatus").textContent="Not saved: "+e.message;}
