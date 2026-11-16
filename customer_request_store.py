@@ -28,6 +28,7 @@ def connect():
       notes TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL,
       remote_fingerprint TEXT NOT NULL)""")
     db.execute("CREATE INDEX IF NOT EXISTS request_fingerprint ON customer_requests(remote_fingerprint,created_at)")
+    db.execute("""CREATE TABLE IF NOT EXISTS customer_request_drafts(id TEXT PRIMARY KEY, request_id TEXT NOT NULL UNIQUE, draft_type TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(request_id) REFERENCES customer_requests(id))""")
     return db
 
 def _text(value,limit,required=False):
@@ -85,3 +86,24 @@ def update_request_status(request_id,status):
         if existing["status"]==status: return status
         db.execute("UPDATE customer_requests SET status=? WHERE id=?",(status,request_id))
     return status
+
+def create_review_draft(request_id,draft_type):
+    """Idempotent internal draft. Never creates an actual job or sends a quote."""
+    if draft_type not in {"quote","job"}: raise ValueError("Invalid draft type")
+    with connect() as db:
+        row=db.execute("SELECT id,kind,status FROM customer_requests WHERE id=?",(request_id,)).fetchone()
+        if row is None: raise LookupError("Customer request not found")
+        if row["status"] in {"declined","closed"}: raise ValueError("Closed requests cannot be converted")
+        existing=db.execute("SELECT id,request_id,draft_type,created_at FROM customer_request_drafts WHERE request_id=?",(request_id,)).fetchone()
+        if existing:
+            if existing["draft_type"]!=draft_type: raise ValueError("Request already has a different draft type")
+            return dict(existing)
+        identifier=uuid.uuid4().hex
+        created=datetime.now(timezone.utc).isoformat()
+        db.execute("INSERT INTO customer_request_drafts VALUES(?,?,?,?)",(identifier,request_id,draft_type,created))
+        return {"id":identifier,"request_id":request_id,"draft_type":draft_type,"created_at":created}
+
+def list_review_drafts():
+    with connect() as db:
+        rows=db.execute("""SELECT d.id,d.request_id,d.draft_type,d.created_at,r.name,r.email,r.phone,r.service,r.vehicle_make,r.vehicle_model,r.vehicle_year,r.registration,r.notes,r.preferred_date,r.preferred_time FROM customer_request_drafts d JOIN customer_requests r ON r.id=d.request_id ORDER BY d.created_at DESC LIMIT 100""").fetchall()
+    return [dict(row) for row in rows]
