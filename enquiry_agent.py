@@ -15,7 +15,7 @@ SERVICES = {
     "leather_repair": ("Leather Repair", ("leather", "seat repair", "upholstery")),
 }
 NEW_SERVICE_HINTS = {
-    "caliper_painting": ("Brake Caliper Painting", ("caliper",)),
+    "caliper_painting": ("Brake Caliper Painting", ("caliper", "calipers")),
     "splitter_installation": ("Splitter Installation", ("splitter",)),
     "diagnostics": ("Vehicle Diagnostics", ("diagnostic", "fault code", "warning light")),
 }
