@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from datetime import date, timedelta
-from customer_request_store import create_request,list_requests
+from customer_request_store import create_request,list_requests,update_request_status
 
 class CustomerRequestTests(unittest.TestCase):
     def setUp(self):
@@ -20,6 +20,12 @@ class CustomerRequestTests(unittest.TestCase):
         self.assertEqual(rows[0]["id"],ref)
         self.assertEqual(rows[0]["status"],"new")
         self.assertEqual(rows[0]["email"],"customer@example.org")
+    def test_status_review_without_external_actions(self):
+        ref=create_request(self.payload,"test-ip")
+        self.assertEqual(update_request_status(ref,"reviewing"),"reviewing")
+        self.assertEqual(list_requests()[0]["status"],"reviewing")
+        with self.assertRaises(ValueError):update_request_status(ref,"confirmed")
+        with self.assertRaises(LookupError):update_request_status("missing","closed")
     def test_rate_limit(self):
         for _ in range(3):create_request(self.payload,"test-ip")
         with self.assertRaises(ValueError):create_request(self.payload,"test-ip")
