@@ -629,6 +629,11 @@ def hq_pricing():
         app.logger.exception("Read-only Google Sheets sync failed")
         return jsonify(error="Unable to read HQ spreadsheet. Reconnect Google Sheets and check API permissions."), 502
 
+@app.get("/book")
+def customer_booking_preview():
+    """Public, non-transactional booking design preview."""
+    return redirect("/static/customer-booking-preview.html", code=302)
+
 @app.get("/health")
 def health():
     return jsonify(status="ok",application="tommy-tints-hq",stage="authenticated-preview" if configured() else "authentication-setup-required",live_data=False,sheets_credentials_configured=sheets_configured())
