@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from datetime import date, timedelta
-from customer_request_store import create_request,list_requests,update_request_status,storage_ready
+from customer_request_store import create_request,list_requests,update_request_status,storage_ready,create_review_draft,list_review_drafts
 
 class CustomerRequestTests(unittest.TestCase):
     def setUp(self):
@@ -33,6 +33,17 @@ class CustomerRequestTests(unittest.TestCase):
         self.assertEqual(list_requests()[0]["status"],"reviewing")
         with self.assertRaises(ValueError):update_request_status(ref,"confirmed")
         with self.assertRaises(LookupError):update_request_status("missing","closed")
+    def test_review_draft_idempotency(self):
+        ref=create_request(self.payload,"test-ip")
+        first=create_review_draft(ref,"quote")
+        second=create_review_draft(ref,"quote")
+        self.assertEqual(first["id"],second["id"])
+        self.assertEqual(list_review_drafts()[0]["email"],"customer@example.org")
+        with self.assertRaises(ValueError):create_review_draft(ref,"job")
+    def test_closed_request_cannot_be_converted(self):
+        ref=create_request(self.payload,"test-ip")
+        update_request_status(ref,"closed")
+        with self.assertRaises(ValueError):create_review_draft(ref,"job")
     def test_rate_limit(self):
         for _ in range(3):create_request(self.payload,"test-ip")
         with self.assertRaises(ValueError):create_request(self.payload,"test-ip")
