@@ -1,5 +1,5 @@
 """Tommy Tints HQ interactive preview. No customer data is served until auth is configured."""
-import os, secrets, time
+import os, secrets, time, hmac, hashlib
 from threading import Lock
 from flask import Flask, jsonify, render_template_string, session, request, redirect, url_for
 from quote_engine import calculate_quote
@@ -7,6 +7,7 @@ from enquiry_agent import analyse_enquiry
 from hq_assistant import plan_request
 from assistant_task_store import create_task, list_tasks, review_task
 from assistant_memory import history as assistant_history, record_chat, clear_history, audit, audit_events
+from customer_request_store import create_request as save_customer_request, list_requests as list_customer_requests
 from hq_openai import chat as openai_chat, configured as openai_configured, AssistantConfigurationError, AssistantUpstreamError
 from materials_costing import calculate_materials
 from job_material_store import read_log, write_log
@@ -763,6 +764,35 @@ def hq_enquiry_analyse():
         return jsonify(analyse_enquiry(request.get_json(silent=True)))
     except (ValueError, TypeError) as exc:
         return jsonify(error=str(exc)), 400
+
+@app.get("/api/public/customer-request/status")
+def customer_request_status():
+    return jsonify(enabled=os.environ.get("HQ_PUBLIC_REQUESTS_ENABLED", "").lower()=="true")
+
+@app.post("/api/public/customer-request")
+def public_customer_request():
+    """Unconfirmed customer enquiry intake; no booking, payment or outbound messaging."""
+    if os.environ.get("HQ_PUBLIC_REQUESTS_ENABLED", "").lower() != "true":
+        return jsonify(error="Customer requests are not yet enabled"), 503
+    if not request.is_json:
+        return jsonify(error="JSON body required"), 415
+    if request.content_length is not None and request.content_length > 8000:
+        return jsonify(error="Request too large"), 413
+    data=request.get_json(silent=True)
+    try:
+        # Never store raw IP addresses; hash with a server-held secret for throttling.
+        ip=request.remote_addr or "unknown"
+        fingerprint=hmac.new(app.secret_key.encode() if isinstance(app.secret_key,str) else app.secret_key,ip.encode(),hashlib.sha256).hexdigest()
+        request_id=save_customer_request(data,fingerprint)
+        return jsonify(reference=request_id,status="received",confirmed_booking=False), 201
+    except (ValueError,TypeError) as exc:
+        return jsonify(error=str(exc)), 400
+
+@app.get("/api/hq/customer-requests")
+@required
+def hq_customer_requests():
+    """Owner-only customer request inbox."""
+    return jsonify(requests=list_customer_requests())
 
 @app.get("/book")
 def customer_booking_preview():
