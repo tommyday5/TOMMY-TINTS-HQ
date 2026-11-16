@@ -10,6 +10,21 @@ class AssistantTests(unittest.TestCase):
         result=plan_request({"message":"Send a legal email to my creditor"})
         self.assertTrue(result["approval_required"])
         self.assertTrue(all(t["status"]=="not_executed" for t in result["tasks"]))
+    def test_external_write_verbs_require_approval(self):
+        for message in ("Forward the customer email", "Reschedule the appointment",
+                        "Archive the invoice", "Submit the HMRC form",
+                        "Update the customer address", "Order new supplies"):
+            with self.subTest(message=message):
+                result=plan_request({"message":message})
+                self.assertTrue(result["approval_required"])
+                self.assertEqual(result["actions_executed"],0)
+                self.assertTrue(all(task["approval_required"] for task in result["tasks"]))
+
+    def test_read_only_request_does_not_require_blanket_approval(self):
+        result=plan_request({"message":"Show my daily operations overview"})
+        self.assertFalse(result["approval_required"])
+        self.assertEqual(result["actions_executed"],0)
+
     def test_bad_input(self):
         with self.assertRaises(ValueError):plan_request({"message":""})
 
