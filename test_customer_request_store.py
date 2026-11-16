@@ -33,6 +33,20 @@ class CustomerRequestTests(unittest.TestCase):
         self.assertEqual(list_requests()[0]["status"],"reviewing")
         with self.assertRaises(ValueError):update_request_status(ref,"confirmed")
         with self.assertRaises(LookupError):update_request_status("missing","closed")
+    def test_terminal_status_cannot_reopen(self):
+        ref=create_request(self.payload,"test-ip")
+        self.assertEqual(update_request_status(ref,"closed"),"closed")
+        self.assertEqual(update_request_status(ref,"closed"),"closed")
+        with self.assertRaisesRegex(ValueError,"cannot be reopened"):
+            update_request_status(ref,"new")
+        self.assertEqual(list_requests()[0]["status"],"closed")
+    def test_invalid_identifier_and_status_type(self):
+        ref=create_request(self.payload,"test-ip")
+        for identifier in (None,123,"x"*65):
+            with self.assertRaises(ValueError):update_request_status(identifier,"reviewing")
+        for status in (None,123,[],{}):
+            with self.assertRaises(ValueError):update_request_status(ref,status)
+        self.assertEqual(list_requests()[0]["status"],"new")
     def test_review_draft_idempotency(self):
         ref=create_request(self.payload,"test-ip")
         first=create_review_draft(ref,"quote")
