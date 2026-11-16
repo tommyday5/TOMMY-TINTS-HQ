@@ -753,6 +753,8 @@ def hq_assistant_plan():
 @required
 def hq_enquiry_analyse():
     """Authenticated HQ-only preview. No storage or external model calls."""
+    if not _assistant_csrf_valid():
+        return jsonify(error="Invalid CSRF token"), 403
     if not request.is_json:
         return jsonify(error="JSON body required"), 415
     if request.content_length is not None and request.content_length > 12000:
