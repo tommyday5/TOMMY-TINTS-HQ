@@ -7,7 +7,7 @@ from enquiry_agent import analyse_enquiry
 from hq_assistant import plan_request
 from assistant_task_store import create_task, list_tasks, review_task
 from assistant_memory import history as assistant_history, record_chat, clear_history, audit, audit_events
-from customer_request_store import create_request as save_customer_request, list_requests as list_customer_requests, update_request_status
+from customer_request_store import create_request as save_customer_request, list_requests as list_customer_requests, update_request_status, storage_ready
 from hq_openai import chat as openai_chat, configured as openai_configured, AssistantConfigurationError, AssistantUpstreamError
 from materials_costing import calculate_materials
 from job_material_store import read_log, write_log
@@ -770,12 +770,12 @@ def hq_enquiry_analyse():
 
 @app.get("/api/public/customer-request/status")
 def customer_request_status():
-    return jsonify(enabled=os.environ.get("HQ_PUBLIC_REQUESTS_ENABLED", "").lower()=="true")
+    return jsonify(enabled=os.environ.get("HQ_PUBLIC_REQUESTS_ENABLED", "").lower()=="true" and storage_ready())
 
 @app.post("/api/public/customer-request")
 def public_customer_request():
     """Unconfirmed customer enquiry intake; no booking, payment or outbound messaging."""
-    if os.environ.get("HQ_PUBLIC_REQUESTS_ENABLED", "").lower() != "true":
+    if os.environ.get("HQ_PUBLIC_REQUESTS_ENABLED", "").lower() != "true" or not storage_ready():
         return jsonify(error="Customer requests are not yet enabled"), 503
     if not request.is_json:
         return jsonify(error="JSON body required"), 415
