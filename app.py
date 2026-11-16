@@ -3,6 +3,7 @@ import os, secrets, time
 from threading import Lock
 from flask import Flask, jsonify, render_template_string, session, request, redirect, url_for
 from quote_engine import calculate_quote
+from enquiry_agent import analyse_enquiry
 from materials_costing import calculate_materials
 from job_material_store import read_log, write_log
 from job_profitability import profitability
@@ -628,6 +629,19 @@ def hq_pricing():
     except Exception:
         app.logger.exception("Read-only Google Sheets sync failed")
         return jsonify(error="Unable to read HQ spreadsheet. Reconnect Google Sheets and check API permissions."), 502
+
+@app.post("/api/hq/enquiry/analyse")
+@required
+def hq_enquiry_analyse():
+    """Authenticated HQ-only preview. No storage or external model calls."""
+    if not request.is_json:
+        return jsonify(error="JSON body required"), 415
+    if request.content_length is not None and request.content_length > 12000:
+        return jsonify(error="Request too large"), 413
+    try:
+        return jsonify(analyse_enquiry(request.get_json(silent=True)))
+    except (ValueError, TypeError) as exc:
+        return jsonify(error=str(exc)), 400
 
 @app.get("/book")
 def customer_booking_preview():
