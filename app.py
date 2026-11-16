@@ -765,6 +765,10 @@ def hq_enquiry_analyse():
     except (ValueError, TypeError) as exc:
         return jsonify(error=str(exc)), 400
 
+@app.get("/api/public/customer-request/status")
+def customer_request_status():
+    return jsonify(enabled=os.environ.get("HQ_PUBLIC_REQUESTS_ENABLED", "").lower()=="true")
+
 @app.post("/api/public/customer-request")
 def public_customer_request():
     """Unconfirmed customer enquiry intake; no booking, payment or outbound messaging."""
