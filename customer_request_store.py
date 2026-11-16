@@ -102,7 +102,10 @@ def update_request_status(request_id,status):
 
 def create_review_draft(request_id,draft_type):
     """Idempotent internal draft. Never creates an actual job or sends a quote."""
-    if draft_type not in {"quote","job"}: raise ValueError("Invalid draft type")
+    if not isinstance(request_id,str) or not 1 <= len(request_id) <= 64:
+        raise ValueError("Invalid request identifier")
+    if not isinstance(draft_type,str) or draft_type not in {"quote","job"}:
+        raise ValueError("Invalid draft type")
     with connect() as db:
         row=db.execute("SELECT id,kind,status FROM customer_requests WHERE id=?",(request_id,)).fetchone()
         if row is None: raise LookupError("Customer request not found")

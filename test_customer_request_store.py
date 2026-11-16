@@ -54,6 +54,16 @@ class CustomerRequestTests(unittest.TestCase):
         self.assertEqual(first["id"],second["id"])
         self.assertEqual(list_review_drafts()[0]["email"],"customer@example.org")
         with self.assertRaises(ValueError):create_review_draft(ref,"job")
+    def test_review_draft_rejects_malformed_inputs(self):
+        ref=create_request(self.payload,"test-ip")
+        for identifier in (None,123,[],{}, "x"*65, ""):
+            with self.subTest(identifier=repr(identifier)):
+                with self.assertRaises(ValueError):create_review_draft(identifier,"quote")
+        for draft_type in (None,123,[],{}, "invoice"):
+            with self.subTest(draft_type=repr(draft_type)):
+                with self.assertRaises(ValueError):create_review_draft(ref,draft_type)
+        self.assertEqual(list_review_drafts(),[])
+
     def test_closed_request_cannot_be_converted(self):
         ref=create_request(self.payload,"test-ip")
         update_request_status(ref,"closed")
