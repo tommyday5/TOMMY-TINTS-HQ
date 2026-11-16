@@ -69,3 +69,14 @@ def list_requests(limit=100):
     with connect() as db:
         rows=db.execute("""SELECT id,kind,name,email,phone,service,vehicle_make,vehicle_model,vehicle_year,registration,preferred_date,preferred_time,notes,status,created_at FROM customer_requests ORDER BY created_at DESC LIMIT ?""",(min(100,max(1,int(limit))),)).fetchall()
     return [dict(row) for row in rows]
+
+VALID_STATUSES={"new","reviewing","quoted","declined","closed"}
+
+def update_request_status(request_id,status):
+    if status not in VALID_STATUSES: raise ValueError("Invalid request status")
+    with connect() as db:
+        existing=db.execute("SELECT status FROM customer_requests WHERE id=?",(request_id,)).fetchone()
+        if not existing: raise LookupError("Customer request not found")
+        if existing["status"]==status: return status
+        db.execute("UPDATE customer_requests SET status=? WHERE id=?",(status,request_id))
+    return status
