@@ -4,6 +4,9 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Keep at most 100 conversation turns on disk; older messages are removed.
+MAX_CHAT_MESSAGES = 200
+
 def connect():
     base=Path(os.environ.get("HQ_DATA_DIR", "/tmp/tommy-tints-hq"))
     base.mkdir(parents=True,exist_ok=True)
@@ -29,6 +32,9 @@ def record_chat(user_message,assistant_reply):
     with connect() as db:
         db.executemany("INSERT INTO chat_messages(role,content,created_at) VALUES(?,?,?)",
                        [("user",user_message,now),("assistant",assistant_reply,now)])
+        db.execute("""DELETE FROM chat_messages WHERE id NOT IN
+                      (SELECT id FROM chat_messages ORDER BY id DESC LIMIT ?)""",
+                   (MAX_CHAT_MESSAGES,))
         db.execute("INSERT INTO assistant_audit(event,details,created_at) VALUES(?,?,?)",
                    ("chat_reply","Read-only AI response stored; no external action",now))
 
