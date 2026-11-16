@@ -79,12 +79,25 @@ def list_requests(limit=100):
 VALID_STATUSES={"new","reviewing","quoted","declined","closed"}
 
 def update_request_status(request_id,status):
-    if status not in VALID_STATUSES: raise ValueError("Invalid request status")
+    """Review a request without reopening closed or declined records."""
+    if not isinstance(request_id,str) or not 1 <= len(request_id) <= 64:
+        raise ValueError("Invalid request identifier")
+    if not isinstance(status,str) or status not in VALID_STATUSES:
+        raise ValueError("Invalid request status")
     with connect() as db:
-        existing=db.execute("SELECT status FROM customer_requests WHERE id=?",(request_id,)).fetchone()
-        if not existing: raise LookupError("Customer request not found")
-        if existing["status"]==status: return status
-        db.execute("UPDATE customer_requests SET status=? WHERE id=?",(status,request_id))
+        row=db.execute("SELECT status FROM customer_requests WHERE id=?",(request_id,)).fetchone()
+        if row is None:
+            raise LookupError("Customer request not found")
+        previous=row["status"]
+        if previous==status:
+            return status
+        if previous in {"closed","declined"}:
+            raise ValueError("Closed or declined requests cannot be reopened")
+        changed=db.execute(
+            "UPDATE customer_requests SET status=? WHERE id=? AND status=?",
+            (status,request_id,previous))
+        if changed.rowcount!=1:
+            raise ValueError("Request status changed concurrently; refresh and retry")
     return status
 
 def create_review_draft(request_id,draft_type):
