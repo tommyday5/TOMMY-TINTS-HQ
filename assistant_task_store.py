@@ -51,12 +51,13 @@ def review_task(task_id, decision):
     if not isinstance(task_id, str) or len(task_id) > 64:
         raise ValueError("Invalid task identifier")
     with connect() as db:
-        row = db.execute("SELECT status FROM assistant_tasks WHERE id=?", (task_id,)).fetchone()
-        if row is None:
-            raise LookupError("Task not found")
-        if row["status"] != "draft":
+        changed = db.execute(
+            "UPDATE assistant_tasks SET status=?,updated_at=? WHERE id=? AND status='draft'",
+            (decision, datetime.now(timezone.utc).isoformat(), task_id))
+        if changed.rowcount != 1:
+            exists = db.execute("SELECT 1 FROM assistant_tasks WHERE id=?", (task_id,)).fetchone()
+            if exists is None:
+                raise LookupError("Task not found")
             raise ValueError("Only draft tasks can be reviewed")
-        db.execute("UPDATE assistant_tasks SET status=?,updated_at=? WHERE id=?",
-                   (decision, datetime.now(timezone.utc).isoformat(), task_id))
         updated = db.execute("SELECT * FROM assistant_tasks WHERE id=?", (task_id,)).fetchone()
     return dict(updated)

@@ -14,6 +14,16 @@ class AssistantTaskStoreTests(unittest.TestCase):
             self.assertEqual(reviewed["status"],"approved")
             with self.assertRaises(ValueError):review_task(task["id"],"rejected")
             self.assertEqual(list_tasks()[0]["status"],"approved")
+    def test_review_is_one_way_and_missing_task_is_distinct(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"HQ_DATA_DIR":directory}):
+            task=create_task({"title":"Review quote","category":"quote"})
+            self.assertEqual(review_task(task["id"],"rejected")["status"],"rejected")
+            with self.assertRaisesRegex(ValueError,"Only draft"):
+                review_task(task["id"],"approved")
+            with self.assertRaisesRegex(LookupError,"not found"):
+                review_task("missing-id","approved")
+            self.assertEqual(list_tasks()[0]["status"],"rejected")
+
     def test_invalid_task(self):
         with self.assertRaises(ValueError):create_task({"title":"x"})
         with self.assertRaises(ValueError):create_task({"title":"Valid title","category":"unknown"})
