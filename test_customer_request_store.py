@@ -15,7 +15,8 @@ class CustomerRequestTests(unittest.TestCase):
         self.env.stop()
         self.tmp.cleanup()
     def test_storage_readiness_requires_explicit_path(self):
-        self.assertTrue(storage_ready())
+        with patch.dict(os.environ,{"HQ_DATA_DIR":"/mnt/data/hq"}):
+            self.assertTrue(storage_ready())
         with patch.dict(os.environ,{"HQ_DATA_DIR":"/tmp/tommy-tints-hq"}):
             self.assertFalse(storage_ready())
         with patch.dict(os.environ,{"HQ_DATA_DIR":""}):
