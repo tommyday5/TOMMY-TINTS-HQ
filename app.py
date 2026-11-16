@@ -7,7 +7,7 @@ from enquiry_agent import analyse_enquiry
 from hq_assistant import plan_request
 from assistant_task_store import create_task, list_tasks, review_task
 from assistant_memory import history as assistant_history, record_chat, clear_history, audit, audit_events
-from customer_request_store import create_request as save_customer_request, list_requests as list_customer_requests, update_request_status, storage_ready
+from customer_request_store import create_request as save_customer_request, list_requests as list_customer_requests, update_request_status, storage_ready, create_review_draft, list_review_drafts
 from hq_openai import chat as openai_chat, configured as openai_configured, AssistantConfigurationError, AssistantUpstreamError
 from materials_costing import calculate_materials
 from job_material_store import read_log, write_log
@@ -811,6 +811,31 @@ def hq_customer_request_status(request_id):
         status=update_request_status(request_id,data.get("status"))
         audit("customer_request_reviewed","Request "+request_id+" marked "+status+"; no external action executed")
         return jsonify(id=request_id,status=status,actions_executed=0)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    except LookupError as exc:
+        return jsonify(error=str(exc)), 404
+
+@app.get("/api/hq/customer-request-drafts")
+@required
+def hq_customer_request_drafts():
+    return jsonify(drafts=list_review_drafts())
+
+@app.post("/api/hq/customer-requests/<request_id>/draft")
+@required
+def hq_customer_request_draft(request_id):
+    """Create an internal review draft, not a quote sent or a job scheduled."""
+    if not _assistant_csrf_valid():
+        return jsonify(error="Invalid CSRF token"), 403
+    if not request.is_json:
+        return jsonify(error="JSON body required"), 415
+    data=request.get_json(silent=True)
+    if not isinstance(data,dict):
+        return jsonify(error="JSON object required"), 400
+    try:
+        draft=create_review_draft(request_id,data.get("draft_type"))
+        audit("customer_request_draft","Internal "+draft["draft_type"]+" draft "+draft["id"]+" linked to request "+request_id+"; no external action executed")
+        return jsonify(draft=draft,external_actions=0), 201
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
     except LookupError as exc:
