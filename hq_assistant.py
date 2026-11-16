@@ -9,7 +9,7 @@ INTENTS = (
     ("customer", ("customer", "client", "follow up"), "Review customer records", "Customer record edits require a connected verified data source."),
     ("daily", ("today", "daily", "morning", "sort out my business"), "Daily operations review", "Live inbox, booking and finance sources are not all connected."),
 )
-SENSITIVE = ("send", "pay", "refund", "delete", "cancel", "transfer", "legal", "creditor", "court", "hmrc", "publish")
+SENSITIVE = ("send", "sent", "forward", "reply", "respond", "pay", "refund", "delete", "remove", "cancel", "reschedule", "rebook", "book", "transfer", "purchase", "buy", "order", "submit", "file", "publish", "post", "archive", "approve", "accept", "update", "edit", "change", "create", "legal", "creditor", "court", "hmrc")
 def plan_request(data):
     if not isinstance(data, dict):
         raise ValueError("JSON object required")
