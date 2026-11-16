@@ -2,7 +2,7 @@
 import re
 
 INTENTS = (
-    ("email", ("email", "inbox", "reply", "message"), "Review correspondence", "Gmail access and action permissions are not yet wired into the HQ assistant."),
+    ("email", ("email", "emails", "inbox", "reply", "message"), "Review correspondence", "Gmail access and action permissions are not yet wired into the HQ assistant."),
     ("calendar", ("book", "appointment", "calendar", "schedule"), "Review appointments", "Google Calendar has a read-only check; creating appointments is not enabled."),
     ("quote", ("quote", "estimate", "price"), "Prepare a quote", "Use HQ pricing calculations and obtain owner approval before sending."),
     ("payments", ("payment", "invoice", "overdue", "owed", "debt"), "Review receivables", "Payment and invoice records must be connected and verified."),
