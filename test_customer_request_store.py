@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from datetime import date, timedelta
-from customer_request_store import create_request,list_requests,update_request_status
+from customer_request_store import create_request,list_requests,update_request_status,storage_ready
 
 class CustomerRequestTests(unittest.TestCase):
     def setUp(self):
@@ -14,6 +14,13 @@ class CustomerRequestTests(unittest.TestCase):
     def tearDown(self):
         self.env.stop()
         self.tmp.cleanup()
+    def test_storage_readiness_requires_explicit_path(self):
+        with patch.dict(os.environ,{"HQ_DATA_DIR":"/mnt/data/hq"}):
+            self.assertTrue(storage_ready())
+        with patch.dict(os.environ,{"HQ_DATA_DIR":"/tmp/tommy-tints-hq"}):
+            self.assertFalse(storage_ready())
+        with patch.dict(os.environ,{"HQ_DATA_DIR":""}):
+            self.assertFalse(storage_ready())
     def test_store_unconfirmed_request(self):
         ref=create_request(self.payload,"test-ip")
         rows=list_requests()

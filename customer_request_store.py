@@ -9,6 +9,11 @@ from pathlib import Path
 SERVICES = {"Window Tinting","Vehicle Wrapping","Bodywork & Paint","Wheel Refurbishment","Valeting & Detailing","Other / Bespoke Work"}
 KINDS = {"booking","quote"}
 
+def storage_ready():
+    """Public submissions require a deliberately configured persistent storage path."""
+    path = os.environ.get("HQ_DATA_DIR", "").strip()
+    return bool(path) and Path(path).is_absolute() and not Path(path).resolve().is_relative_to(Path("/tmp"))
+
 def connect():
     root = Path(os.environ.get("HQ_DATA_DIR", "/tmp/tommy-tints-hq"))
     root.mkdir(parents=True,exist_ok=True)
