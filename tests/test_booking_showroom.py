@@ -15,6 +15,7 @@ class BookingShowroomTests(unittest.TestCase):
             with client.get("/book", follow_redirects=True) as response:
                 self.assertEqual(response.status_code, 200)
                 self.assertIn(b'YOUR VEHICLE. <span>OUR CRAFT.</span>', response.data)
+                self.assertRegex(response.get_data(as_text=True), r"\.hidden\s*\{\s*display\s*:\s*none")
                 self.assertIn(b'/static/booking/icon-180.png', response.data)
                 self.assertIn(b'/api/public/customer-request/status', response.data)
                 self.assertEqual(response.headers["Cache-Control"], "no-store")
