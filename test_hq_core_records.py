@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from datetime import date,timedelta
 from unittest.mock import patch
-from customer_request_store import create_request,create_review_draft,update_request_status
+from customer_request_store import connect,create_request,create_review_draft,update_request_status
 from hq_core_records import create_internal_work_record,list_work_records,set_draft_financials,change_work_status,work_summary,create_test_job,delete_test_job
 
 class CoreRecordsTests(unittest.TestCase):
@@ -44,12 +44,33 @@ class CoreRecordsTests(unittest.TestCase):
         set_draft_financials(work,20000,5000)
         self.assertEqual(change_work_status(work,"approved"),"approved")
         self.assertEqual(change_work_status(work,"approved"),"approved")
+        self.assertEqual(create_internal_work_record(ref), work)
+        rows = list_work_records()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(
+            tuple(rows[0][key] for key in ("id", "kind", "source_request_id", "price_pence",
+                                          "deposit_pence", "email", "registration")),
+            (work, "job", ref, 20000, 5000, "test@example.org", "AB20 XYZ"),
+        )
+        with self.assertRaises(LookupError):
+            set_draft_financials(work, 21000, 5000)
         self.assertEqual(work_summary()["outstanding_recorded_pence"],15000)
         self.assertFalse(work_summary()["payment_verified"])
         with self.assertRaises(ValueError):change_work_status(work,"draft")
         self.assertEqual(change_work_status(work,"in_progress"),"in_progress")
         self.assertEqual(change_work_status(work,"completed"),"completed")
         with self.assertRaises(ValueError):change_work_status(work,"cancelled")
+    def test_legacy_approved_quote_is_promoted_when_work_starts(self):
+        ref = create_request(self.payload, "ip")
+        create_review_draft(ref, "quote")
+        work = create_internal_work_record(ref)
+        set_draft_financials(work, 25000, 5000)
+        with connect() as db:
+            db.execute("UPDATE hq_work_records SET status='approved' WHERE id=?", (work,))
+        self.assertEqual(change_work_status(work, "in_progress"), "in_progress")
+        row, = list_work_records()
+        self.assertEqual((row["id"], row["kind"], row["price_pence"]), (work, "job", 25000))
+
     def test_synthetic_job_creation_and_cleanup(self):
         work=create_test_job()
         row=next(r for r in list_work_records() if r["id"]==work)
