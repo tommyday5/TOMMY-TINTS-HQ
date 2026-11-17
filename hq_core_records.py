@@ -66,6 +66,39 @@ def list_work_records(limit=100):
             ORDER BY w.created_at DESC LIMIT ?""",(min(100,max(1,int(limit))),)).fetchall()
         return [dict(row) for row in rows]
 
+
+def read_work_record(record_id):
+    """One internal record with linked customer and vehicle, for owner-only review."""
+    if not isinstance(record_id, str) or len(record_id) != 32 or any(
+        c not in "0123456789abcdef" for c in record_id
+    ):
+        raise ValueError("Invalid HQ record reference")
+    with connect() as db:
+        _schema(db)
+        row = db.execute("""SELECT w.id,w.source_request_id,w.kind,w.service,w.notes,
+            w.preferred_date,w.preferred_time,w.status,w.price_pence,w.deposit_pence,w.created_at,
+            c.name,c.email,c.phone,v.make,v.model,v.model_year,v.registration
+            FROM hq_work_records w JOIN hq_customers c ON c.id=w.customer_id
+            JOIN hq_vehicles v ON v.id=w.vehicle_id WHERE w.id=?""", (record_id,)).fetchone()
+    if row is None:
+        raise LookupError("HQ record not found")
+    return dict(row)
+
+
+def recent_work_records(kind, limit=5):
+    """Bounded work/quote index, without contact details or registration numbers."""
+    if kind not in ("job", "quote"):
+        raise ValueError("Invalid HQ record kind")
+    if type(limit) is not int or not 1 <= limit <= 10:
+        raise ValueError("Invalid HQ record limit")
+    with connect() as db:
+        _schema(db)
+        rows = db.execute("""SELECT id,source_request_id,kind,service,status,
+            price_pence,deposit_pence
+            FROM hq_work_records WHERE kind=?
+            ORDER BY created_at DESC,id DESC LIMIT ?""", (kind, limit)).fetchall()
+    return [dict(row) for row in rows]
+
 def set_draft_financials(record_id,price_pence,deposit_pence):
     if not isinstance(record_id,str) or len(record_id)!=32 or any(c not in "0123456789abcdef" for c in record_id): raise ValueError("Invalid record")
     if type(price_pence) is not int or type(deposit_pence) is not int:
