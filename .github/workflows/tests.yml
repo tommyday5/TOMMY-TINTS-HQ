@@ -13,6 +13,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: Check dependencies
         run: |
           python -m pip install -r requirements.txt
@@ -25,3 +28,5 @@ jobs:
           if [ -d tests ]; then
             python -m unittest discover -s tests -v
           fi
+      - name: Test app update detection
+        run: node --test tests/hq-updates.test.cjs
