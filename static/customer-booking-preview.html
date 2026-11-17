@@ -6,7 +6,17 @@ body{background:#09090c}main{max-width:1200px}header{max-width:1200px}
 .hero::after{content:"";position:absolute;inset:auto 0 0;height:3px;background:linear-gradient(90deg,transparent,#ed172d 55%,#f5ca41,transparent);pointer-events:none}
 .hero h1{font-size:clamp(42px,7vw,85px);font-weight:950;letter-spacing:-.068em;line-height:.94;margin:16px 0;color:#fff}
 .hero h1 span{display:block;color:#e4e4eb;background:linear-gradient(#fff,#a6a8b0);background-clip:text;-webkit-text-fill-color:transparent}
-.hero p{color:#d1cbd1;max-width:440px}.hero-logo{display:block;width:min(100%,355px);height:auto;justify-self:center;border-radius:20%;filter:drop-shadow(0 14px 32px #000b)}
+.hero p{color:#d1cbd1;max-width:440px}.company-logo-stage{position:relative;isolation:isolate;width:min(100%,240px);aspect-ratio:1;justify-self:center;perspective:900px}
+.company-logo-stage::before{content:"";position:absolute;inset:-14%;z-index:-1;background:radial-gradient(ellipse at 28% 55%,#ec17354d,transparent 58%),radial-gradient(ellipse at 76% 68%,#f5cb292b,transparent 55%);pointer-events:none}
+.company-logo-art{position:relative;width:100%;height:100%;overflow:hidden;transform-origin:50% 60%}
+.hero-logo{display:block;width:100%;height:100%;object-fit:contain}
+.company-logo-art::after{content:"";position:absolute;inset:-20% -45%;background:linear-gradient(112deg,transparent 40%,#d8e3ee08 44%,#fff9 49%,#d3dce333 52%,transparent 58%);mix-blend-mode:screen;opacity:0;pointer-events:none}
+.hero h1,.hero .actions{position:relative}
+@keyframes company-logo-enter{from{opacity:.2;transform:translate3d(0,8px,-45px) scale(.95)}to{opacity:1;transform:translate3d(0,0,0) scale(1)}}
+@keyframes company-chrome-sweep{0%{opacity:0;transform:translateX(-80%)}18%{opacity:.65}75%{opacity:.4}100%{opacity:0;transform:translateX(80%)}}
+@keyframes company-light-reveal{from{opacity:.2}to{opacity:1}}
+@keyframes company-copy-reveal{from{opacity:.55;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+
 .brand img{width:54px;height:54px;border-radius:10px;mix-blend-mode:normal}
 .services-showroom{margin:32px 0}.services-showroom h2,#step-title{letter-spacing:-.04em}
 #showroom,#services{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,215px),1fr));gap:12px}
@@ -16,14 +26,27 @@ body{background:#09090c}main{max-width:1200px}header{max-width:1200px}
 .service-tile:hover,.service-tile[aria-pressed=true],.option-chip[aria-pressed=true]{border-color:#ff4556;background:#39141e}
 .option-list{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 20px}.option-chip{background:#25242b;border:1px solid #55505b;min-height:44px}
 button:focus-visible,a:focus-visible{outline:2px solid #ffdb52;outline-offset:3px}
-@media(max-width:700px){header{padding:10px 16px}header>.eyebrow{display:none}main{padding:16px 14px 38px}.hero{grid-template-columns:1fr;gap:12px;padding:23px;min-height:0}.hero-logo{width:155px;grid-row:1;justify-self:start}.hero h1{font-size:clamp(40px,10.5vw,63px)}.hero .actions{display:grid;grid-template-columns:1fr}.hero .actions button{min-height:48px}#showroom,#services{grid-template-columns:repeat(2,minmax(0,1fr))}.service-tile strong,.service-tile small{padding:0 8px}.service-tile strong{font-size:13px}}
-@media(prefers-reduced-motion:no-preference){.service-tile{transition:border-color .16s,background .16s}.hero-logo{animation:arrival .45s ease-out}@keyframes arrival{from{opacity:.55;transform:translateY(5px)}to{opacity:1;transform:none}}}
-</style></head><body><header><div class="brand"><img class="logo" src="/static/booking/icon-180.png" alt="Tommy Tints Bookings"><span class="wordmark">TOMMY <b>TINTS</b> <em>BOOK</em></span></div><span class="eyebrow">CUSTOMISATION &amp; REPAIR</span></header><main>
+@media(max-width:700px){header{padding:10px 16px}header>.eyebrow{display:none}main{padding:16px 14px 38px}.hero{grid-template-columns:1fr;gap:12px;padding:23px;min-height:0}.company-logo-stage{width:160px;grid-row:1;justify-self:start}.hero h1{font-size:clamp(40px,10.5vw,63px)}.hero .actions{display:grid;grid-template-columns:1fr}.hero .actions button{min-height:48px}#showroom,#services{grid-template-columns:repeat(2,minmax(0,1fr))}.service-tile strong,.service-tile small{padding:0 8px}.service-tile strong{font-size:13px}}
+@media(prefers-reduced-motion:no-preference){
+.service-tile{transition:border-color .16s,background .16s}
+.company-logo-art{animation:company-logo-enter .9s cubic-bezier(.2,.65,.3,1) both}
+.company-logo-stage::before{animation:company-light-reveal 1.6s ease-out both}
+.company-logo-art::after{animation:company-chrome-sweep 1.3s ease-in-out .7s both}
+.hero h1{animation:company-copy-reveal .7s ease-out .8s both}
+.hero .actions{animation:company-copy-reveal .65s ease-out 1.25s both}
+}
+.company-arrived .company-logo-art,.company-arrived .company-logo-stage::before,.company-arrived .hero h1,.company-arrived .hero .actions{animation:none;opacity:1;transform:none}
+.company-arrived .company-logo-art::after{animation:none;display:none}
+@media(prefers-reduced-motion:reduce){
+.company-logo-art,.company-logo-stage::before,.hero h1,.hero .actions{animation:none;transform:none;opacity:1}
+.company-logo-art::after{animation:none;display:none}
+}
+</style></head><body><header><div class="brand"><img class="logo" width="160" height="160" src="/static/tommy-tints-logo.webp" alt="Tommy Tints Vehicle Customisation"><span class="wordmark">TOMMY <b>TINTS</b> <em>BOOK</em></span></div><span class="eyebrow">CUSTOMISATION &amp; REPAIR</span></header><main>
 <div id="home"><section class="hero"><div><h1>YOUR VEHICLE. <span>OUR CRAFT.</span></h1>
 <p>Customisation and repairs for cars and vans, from window tinting and wraps to paintwork, wheels and interiors.</p>
 <div class="actions"><button class="primary" id="begin">Book a Service</button><button class="outline" id="quote">Request a Quote</button><a class="outline" href="/book/shop" style="display:inline-flex;align-items:center;padding:13px 20px;border:1px solid #60545c;border-radius:10px;color:#fff">Shop products</a></div>
 <p class="hint" id="intakeMessage" role="status">Checking request availability…</p></div>
-<img class="hero-logo" width="512" height="512" src="/static/booking/icon-512.png" alt="Tommy Tints Bookings"></section>
+<div class="company-logo-stage"><div class="company-logo-art"><img class="hero-logo" width="160" height="160" src="/static/tommy-tints-logo.webp" alt="Tommy Tints Vehicle Customisation" fetchpriority="high"></div></div></section>
 <section class="services-showroom"><h2>Explore our services</h2><div id="showroom"></div><p class="hint">Service images are illustrative.</p></section></div>
 <section id="wizard" class="hidden"><div class="eyebrow">TOMMY TINTS • CUSTOMER BOOKING</div><h2 id="step-title">Choose your service</h2><div class="steps" id="steps"><span class="step current">1. Service</span><span class="step">2. Vehicle</span><span class="step">3. Work details</span><span class="step">4. Review</span></div>
 <div class="panel" id="stage1"><p>What would you like us to help with?</p><div class="choices" id="services"></div></div>
@@ -44,6 +67,9 @@ const services = [
 const $ = id => document.getElementById(id);
 let step = 1, service = "", requestIntakeEnabled = false, requestKind = "booking";
 const selections = new Set();
+$("home").addEventListener("animationend",event=>{
+ if(event.animationName==="company-chrome-sweep")$("home").classList.add("company-arrived");
+});
 const list = $("services");
 function tile(name, label, image, action) {
  const b = document.createElement("button"); b.type = "button"; b.className = "service-tile";
@@ -67,7 +93,7 @@ for (const [name,label,image] of services) {
  const choice = tile(name,label,image,()=>choose(name)); choice.dataset.service=name;choice.setAttribute("aria-pressed","false");list.append(choice);
  $("showroom").append(tile(name,label,image,()=>{requestKind="booking";choose(name);show(1);}));
 }
-function show(n){step=n;$("home").classList.add("hidden");$("wizard").classList.remove("hidden");for(let i=1;i<=4;i++){$("stage"+i).classList.toggle("hidden",i!==n);const el=$("steps").children[i-1];el.className="step"+(i===n?" current":i<n?" done":"")}const names=["Choose your service","Your vehicle details","Configure your work","Review your request"];$("step-title").textContent=names[n-1];$("next").classList.toggle("hidden",n===4);$("next").textContent=n===3?"Review Request →":"Continue →";if(n===4){const lines=[["Service",service],["Vehicle",[$("year").value,$("make").value,$("model").value].filter(Boolean).join(" ")],["Registration",$("reg").value||"Not provided"],["Work options",[...selections].join(", ")||"Discuss with Tommy Tints"],["Preferred date",$("date").value||"Not specified"],["Preferred time",$("time").value]];const host=$("summary");host.replaceChildren();for(const [k,v] of lines){const row=document.createElement("div");const key=document.createElement("strong");key.textContent=k+": ";row.append(key,document.createTextNode(v));host.appendChild(row)}}$("step-title").tabIndex=-1;$("step-title").focus({preventScroll:true});window.scrollTo(0,0)}
+function show(n){$("home").classList.add("company-arrived");step=n;$("home").classList.add("hidden");$("wizard").classList.remove("hidden");for(let i=1;i<=4;i++){$("stage"+i).classList.toggle("hidden",i!==n);const el=$("steps").children[i-1];el.className="step"+(i===n?" current":i<n?" done":"")}const names=["Choose your service","Your vehicle details","Configure your work","Review your request"];$("step-title").textContent=names[n-1];$("next").classList.toggle("hidden",n===4);$("next").textContent=n===3?"Review Request →":"Continue →";if(n===4){const lines=[["Service",service],["Vehicle",[$("year").value,$("make").value,$("model").value].filter(Boolean).join(" ")],["Registration",$("reg").value||"Not provided"],["Work options",[...selections].join(", ")||"Discuss with Tommy Tints"],["Preferred date",$("date").value||"Not specified"],["Preferred time",$("time").value]];const host=$("summary");host.replaceChildren();for(const [k,v] of lines){const row=document.createElement("div");const key=document.createElement("strong");key.textContent=k+": ";row.append(key,document.createTextNode(v));host.appendChild(row)}}$("step-title").tabIndex=-1;$("step-title").focus({preventScroll:true});window.scrollTo(0,0)}
 $("begin").onclick=()=>{requestKind="booking";$("appointmentHint").textContent="Choose a preferred date and time. We’ll confirm availability after review.";show(1)};$("quote").onclick=()=>{requestKind="quote";$("appointmentHint").textContent="A preferred date and time are optional for a quote.";show(1);$("step-title").textContent="Request a service quote"};$("previous").onclick=()=>step===1?($("wizard").classList.add("hidden"),$("home").classList.remove("hidden")):show(step-1);
 $("next").onclick=()=>{if(step===1&&!service)return alert("Please choose a service.");if(step===2&&(!$("make").value.trim()||!$("model").value.trim()))return alert("Please enter the vehicle make and model.");if(step===3&&requestKind==="booking"&&(!$("date").value||!$("time").value))return alert("Please choose a preferred date and time.");if(step<4)show(step+1)};
 $("restart").onclick=()=>{service="";selections.clear();list.querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed","false"));show(1)};
