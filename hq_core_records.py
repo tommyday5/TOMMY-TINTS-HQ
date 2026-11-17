@@ -75,7 +75,7 @@ def set_draft_financials(record_id,price_pence,deposit_pence):
     with connect() as db:
         _schema(db)
         changed=db.execute("""UPDATE hq_work_records SET price_pence=?,deposit_pence=?
-          WHERE id=? AND status='draft'""",(price_pence,deposit_pence,record_id))
+          WHERE id=? AND status IN ('draft','ready_for_review')""",(price_pence,deposit_pence,record_id))
         if not changed.rowcount: raise LookupError("Editable draft not found")
     return {"id":record_id,"price_pence":price_pence,"deposit_pence":deposit_pence,
             "balance_pence":price_pence-deposit_pence}
