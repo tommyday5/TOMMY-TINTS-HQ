@@ -67,7 +67,7 @@ def list_work_records(limit=100):
         return [dict(row) for row in rows]
 
 def set_draft_financials(record_id,price_pence,deposit_pence):
-    if not isinstance(record_id,str) or len(record_id)!=32: raise ValueError("Invalid record")
+    if not isinstance(record_id,str) or len(record_id)!=32 or any(c not in "0123456789abcdef" for c in record_id): raise ValueError("Invalid record")
     if type(price_pence) is not int or type(deposit_pence) is not int:
         raise ValueError("Amounts must be integer pence")
     if not 0 <= deposit_pence <= price_pence <= 100000000:
@@ -165,7 +165,7 @@ def create_test_job():
 
 def delete_test_job(record_id):
     """Only delete synthetic test records; preserve every real customer record."""
-    if not isinstance(record_id,str) or len(record_id)!=32:
+    if not isinstance(record_id,str) or len(record_id)!=32 or any(c not in "0123456789abcdef" for c in record_id):
         raise ValueError("Invalid record")
     with connect() as db:
         _schema(db)
