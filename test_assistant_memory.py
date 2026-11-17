@@ -36,7 +36,7 @@ class AssistantMemoryTests(unittest.TestCase):
 
     def test_audit_rejects_blank_event_names_without_writing(self):
         with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {"HQ_DATA_DIR": d}):
-            for name in ("", "   ", "\\n\\t", "x" * 81, None):
+            for name in ("", "   ", "\n\t", "x" * 81, None):
                 with self.subTest(name=name), self.assertRaises(ValueError):
                     audit(name, "details")
             self.assertEqual(audit_events(), [])
