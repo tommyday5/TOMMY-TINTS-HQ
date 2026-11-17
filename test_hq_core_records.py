@@ -4,7 +4,7 @@ import unittest
 from datetime import date,timedelta
 from unittest.mock import patch
 from customer_request_store import create_request,create_review_draft,update_request_status
-from hq_core_records import create_internal_work_record,list_work_records,set_draft_financials
+from hq_core_records import create_internal_work_record,list_work_records,set_draft_financials,change_work_status,work_summary
 
 class CoreRecordsTests(unittest.TestCase):
     def setUp(self):
@@ -34,6 +34,22 @@ class CoreRecordsTests(unittest.TestCase):
         self.assertEqual(amounts["balance_pence"],17400)
         with self.assertRaises(ValueError):set_draft_financials(first,1000,2000)
         self.assertEqual(list_work_records()[0]["price_pence"],25000)
+    def test_internal_review_lifecycle_and_summary(self):
+        ref=create_request(self.payload,"ip")
+        create_review_draft(ref,"quote")
+        work=create_internal_work_record(ref)
+        with self.assertRaises(ValueError):change_work_status(work,"approved")
+        self.assertEqual(change_work_status(work,"ready_for_review"),"ready_for_review")
+        with self.assertRaises(ValueError):change_work_status(work,"approved")
+        set_draft_financials(work,20000,5000)
+        self.assertEqual(change_work_status(work,"approved"),"approved")
+        self.assertEqual(change_work_status(work,"approved"),"approved")
+        self.assertEqual(work_summary()["outstanding_recorded_pence"],15000)
+        self.assertFalse(work_summary()["payment_verified"])
+        with self.assertRaises(ValueError):change_work_status(work,"draft")
+        self.assertEqual(change_work_status(work,"in_progress"),"in_progress")
+        self.assertEqual(change_work_status(work,"completed"),"completed")
+        with self.assertRaises(ValueError):change_work_status(work,"cancelled")
     def test_closed_request_not_converted(self):
         ref=create_request(self.payload,"ip")
         create_review_draft(ref,"job")
