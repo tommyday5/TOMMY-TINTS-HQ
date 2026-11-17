@@ -32,7 +32,7 @@ def configured():
 def chat(message, history=None, post=None):
     if not configured():
         raise AssistantConfigurationError("AI chat is not configured yet. Add OPENAI_API_KEY and OPENAI_MODEL to Railway.")
-    if not isinstance(message, str) or not 1 <= len(message.strip()) <= 3000:
+    if not isinstance(message, str) or not 1 <= len(message.strip()) or len(message) > 3000:
         raise ValueError("Message must contain 1 to 3000 characters")
     if history is None:
         history = []
@@ -43,7 +43,7 @@ def chat(message, history=None, post=None):
         if not isinstance(item, dict) or item.get("role") not in ("user", "assistant"):
             raise ValueError("Invalid conversation history role")
         content = item.get("content")
-        if not isinstance(content, str) or len(content) > 3000:
+        if not isinstance(content, str) or not content.strip() or len(content) > 3000:
             raise ValueError("Invalid conversation history message")
         messages.append({"role": item["role"], "content": content})
     messages.append({"role": "user", "content": message.strip()})
