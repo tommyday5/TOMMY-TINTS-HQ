@@ -21,6 +21,7 @@ class FinanceTests(unittest.TestCase):
           {'startRow':11,'startColumn':4,'rowData':[{'values':[{'effectiveValue':{'numberValue':-1234.567},'formattedValue':'-£1,234.57','userEnteredValue':{'formulaValue':'=B2'}}]}]},
           {'startRow':3,'startColumn':1,'rowData':[{'values':[{'effectiveValue':{'numberValue':46343}}]}]},
           {'startRow':3,'startColumn':7,'rowData':[{'values':[{'formattedValue':'CURRENT'}]}]}]}]}
+        payload['sheets'].append({'properties':{'title':'Settings'},'data':[{'startRow':35,'startColumn':1,'rowData':[{'values':[{'effectiveValue':{'numberValue':3}}]}]}]})
         s=finance_snapshot(payload,datetime(2026,11,17,tzinfo=timezone.utc))
         self.assertEqual(s['metrics'][0]['pence'],-123457)
         self.assertEqual(s['metrics'][0]['formula'],'=B2')
