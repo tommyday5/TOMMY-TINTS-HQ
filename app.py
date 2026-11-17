@@ -1,5 +1,8 @@
 """Tommy Tints HQ interactive preview. No customer data is served until auth is configured."""
 import os, secrets, time, hmac, hashlib
+from functools import lru_cache
+from pathlib import Path
+from flask import Response
 from threading import Lock
 from flask import Flask, jsonify, render_template_string, session, request, redirect, url_for
 from quote_engine import calculate_quote
@@ -29,7 +32,7 @@ app.config['GOOGLE_CLIENT_ID'] = os.environ.get('GOOGLE_CLIENT_ID', '')
 app.config['GOOGLE_CLIENT_SECRET'] = os.environ.get('GOOGLE_CLIENT_SECRET', '')
 oauth.init_app(app)
 app.register_blueprint(auth)
-PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tommy Tints HQ</title><meta name="theme-color" content="#0b0f16"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Tommy Tints HQ"><link rel="icon" type="image/svg+xml" href="/static/tommy-tints-hq-icon.svg"><link rel="apple-touch-icon" href="/static/tommy-tints-hq-icon.svg"><link rel="manifest" href="/static/manifest.webmanifest"><style>
+PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tommy Tints HQ</title><meta name="theme-color" content="#0b0f16"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Tommy Tints HQ"><link rel="icon" type="image/svg+xml" href="/static/tommy-tints-hq-icon.svg"><link rel="apple-touch-icon" sizes="180x180" href="/hq-icon-180.png"><link rel="manifest" href="/static/manifest.webmanifest"><style>
 :root{font-family:system-ui,Arial;color:#eef2f8;background:#0b0f16}*{box-sizing:border-box}body{margin:0}.shell{display:flex;min-height:100vh}aside{width:235px;background:#111824;padding:24px;border-right:1px solid #283344}main{padding:30px;flex:1;min-width:0;max-width:1250px}h1{font-size:32px;margin:0 0 8px}h2{font-size:21px}p,small{color:#aab6c8}.brand{font-size:23px;font-weight:900;margin-bottom:28px}.brand b{color:#f0444d}button,.button{background:#263447;color:white;border:1px solid #43536a;padding:11px 14px;border-radius:9px;cursor:pointer;font-weight:650}button:hover{background:#364c67}button.active,.primary{background:#c82737;border-color:#e03a49}.nav{display:block;width:100%;text-align:left;margin:7px 0}.card{background:#151e2b;border:1px solid #2c394b;padding:20px;border-radius:14px;margin:15px 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:13px}.grid .card{margin:0}.muted{color:#9baac0}.value{font-size:27px;font-weight:800}.hidden{display:none}label{display:block;margin:12px 0 5px;color:#c6d0df}input,select{background:#0d1420;color:white;border:1px solid #45536a;padding:11px;border-radius:8px;width:100%;max-width:420px}table{border-collapse:collapse;width:100%;margin-top:12px}td,th{padding:11px;border-bottom:1px solid #344055;text-align:left}a{color:#ff7c84}.notice{border-left:3px solid #eab44c;padding:12px 15px;background:#302718;margin:15px 0;color:#f0d99d}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}#timer{font-size:40px;font-variant-numeric:tabular-nums} @media(max-width:750px){.shell{display:block}aside{width:100%;padding:14px}.brand{margin-bottom:8px}.nav{display:inline-block;width:auto;margin:4px;font-size:12px}main{padding:17px}}
 
 /* Tommy Tints HQ branded interface — responsive design layer */
@@ -914,6 +917,21 @@ def hq_work_record_financials(record_id):
         return jsonify(result)
     except ValueError as exc: return jsonify(error=str(exc)),400
     except LookupError as exc: return jsonify(error=str(exc)),404
+
+@lru_cache(maxsize=3)
+def _hq_icon_png(size):
+    """Render the existing approved vector mark at native iOS/PWA resolution."""
+    import cairosvg
+    source=Path(app.static_folder)/"tommy-tints-hq-icon.svg"
+    return cairosvg.svg2png(bytestring=source.read_bytes(),output_width=size,output_height=size)
+
+@app.get("/hq-icon-180.png")
+def hq_apple_icon():
+    return Response(_hq_icon_png(180),mimetype="image/png",headers={"Cache-Control":"public, max-age=86400"})
+
+@app.get("/hq-icon-512.png")
+def hq_large_icon():
+    return Response(_hq_icon_png(512),mimetype="image/png",headers={"Cache-Control":"public, max-age=86400"})
 
 @app.get("/book")
 def customer_booking_preview():
