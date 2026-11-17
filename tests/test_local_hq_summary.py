@@ -36,8 +36,8 @@ class LocalSummaryTests(unittest.TestCase):
                 self.assertEqual(client.post("/api/hq/assistant/chat", json={"message": "HQ work summary"}).status_code, 302)
                 with client.session_transaction() as sess:
                     with auth_db() as db:
-                        sess["hq_sid"] = issue_session(db, "test-owner")
-                    sess.update(csrf="csrf")
+                    sess["hq_sid"] = issue_session(db, "test-owner")
+                sess.update(csrf="csrf")
                 self.assertEqual(client.post("/api/hq/assistant/chat", json={"message": "HQ work summary"}).status_code, 403)
                 result = client.post("/api/hq/assistant/chat",
                     headers={"X-HQ-CSRF": "csrf"}, json={"message": "HQ work summary"})
@@ -86,8 +86,8 @@ class LocalSummaryTests(unittest.TestCase):
             self.assertEqual(client.post(path, json={"message": "HQ recent quotes"}).status_code, 302)
             with client.session_transaction() as sess:
                 with auth_db() as db:
-                        sess["hq_sid"] = issue_session(db, "test-owner")
-                    sess.update(csrf="csrf")
+                    sess["hq_sid"] = issue_session(db, "test-owner")
+                sess.update(csrf="csrf")
             self.assertEqual(client.post(path, json={"message": "HQ recent quotes"}).status_code, 403)
             def ask(msg):
                 return client.post(path, headers={"X-HQ-CSRF": "csrf"}, json={"message": msg})
@@ -126,8 +126,8 @@ class LocalSummaryTests(unittest.TestCase):
         with app.test_client() as client, patch("app.openai_chat") as provider:
             with client.session_transaction() as sess:
                 with auth_db() as db:
-                        sess["hq_sid"] = issue_session(db, "test-owner")
-                    sess.update(csrf="csrf")
+                    sess["hq_sid"] = issue_session(db, "test-owner")
+                sess.update(csrf="csrf")
             response = client.post("/api/hq/assistant/chat",
                 headers={"X-HQ-CSRF": "csrf"}, json={"message": "HQ record " + "a" * 32})
             self.assertEqual(response.status_code, 404)
