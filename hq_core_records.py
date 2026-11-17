@@ -1,4 +1,5 @@
 """Durable internal customer, vehicle and work records. No external integrations."""
+import json
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -21,9 +22,37 @@ def _schema(db):
         kind TEXT NOT NULL, service TEXT NOT NULL, notes TEXT NOT NULL,
         preferred_date TEXT NOT NULL, preferred_time TEXT NOT NULL,
         status TEXT NOT NULL, price_pence INTEGER, deposit_pence INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
         FOREIGN KEY(customer_id) REFERENCES hq_customers(id),
         FOREIGN KEY(vehicle_id) REFERENCES hq_vehicles(id))""")
+    # Additive migration: preserve all legacy work records on the /data volume.
+    if not any(r["name"] == "revision" for r in db.execute("PRAGMA table_info(hq_work_records)")):
+        try:
+            db.execute("ALTER TABLE hq_work_records ADD COLUMN revision INTEGER NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_work_audit (
+        id TEXT PRIMARY KEY, work_id TEXT NOT NULL, revision INTEGER NOT NULL,
+        action TEXT NOT NULL, before_value TEXT NOT NULL,
+        after_value TEXT NOT NULL, created_at TEXT NOT NULL)""")
+
+
+class StaleWorkRecordError(ValueError):
+    """A stored record changed after the owner loaded the edit form."""
+
+
+def _validate_revision(value):
+    if value is not None and (type(value) is not int or not 0 <= value < 2**63 - 1):
+        raise ValueError("Invalid expected work revision")
+
+
+def _audit_work(db, record_id, revision, action, before, after):
+    """Write PII-free internal change metadata in the same DB transaction."""
+    db.execute("INSERT INTO hq_work_audit VALUES(?,?,?,?,?,?,?)", (
+        uuid.uuid4().hex, record_id, revision, action,
+        json.dumps(before, sort_keys=True), json.dumps(after, sort_keys=True), _now()))
+
 
 def create_internal_work_record(request_id):
     """Idempotent conversion from a reviewed request to an internal work record."""
@@ -59,7 +88,7 @@ def list_work_records(limit=100):
     with connect() as db:
         _schema(db)
         rows=db.execute("""SELECT w.id,w.source_request_id,w.kind,w.service,w.notes,
-            w.preferred_date,w.preferred_time,w.status,w.price_pence,w.deposit_pence,w.created_at,
+            w.preferred_date,w.preferred_time,w.status,w.price_pence,w.deposit_pence,w.revision,w.created_at,
             w.customer_id,c.name,c.email,c.phone,v.make,v.model,v.model_year,v.registration
             FROM hq_work_records w JOIN hq_customers c ON c.id=w.customer_id
             JOIN hq_vehicles v ON v.id=w.vehicle_id
@@ -112,7 +141,7 @@ def search_work_records(query="", kind="", status="", limit=25, offset=0):
         total = db.execute("SELECT COUNT(*)" + joins + predicate, args).fetchone()[0]
         rows = db.execute("""SELECT w.id,w.source_request_id,w.kind,w.service,
             w.notes,w.preferred_date,w.preferred_time,w.status,
-            w.price_pence,w.deposit_pence,w.created_at,w.customer_id,
+            w.price_pence,w.deposit_pence,w.revision,w.created_at,w.customer_id,
             c.name,c.email,c.phone,v.make,v.model,v.model_year,v.registration"""
             + joins + predicate + " ORDER BY w.created_at DESC,w.id DESC LIMIT ? OFFSET ?",
             [*args, limit, offset]).fetchall()
@@ -130,7 +159,7 @@ def read_work_record(record_id):
     with connect() as db:
         _schema(db)
         row = db.execute("""SELECT w.id,w.source_request_id,w.kind,w.service,w.notes,
-            w.preferred_date,w.preferred_time,w.status,w.price_pence,w.deposit_pence,w.created_at,
+            w.preferred_date,w.preferred_time,w.status,w.price_pence,w.deposit_pence,w.revision,w.created_at,
             c.name,c.email,c.phone,v.make,v.model,v.model_year,v.registration
             FROM hq_work_records w JOIN hq_customers c ON c.id=w.customer_id
             JOIN hq_vehicles v ON v.id=w.vehicle_id WHERE w.id=?""", (record_id,)).fetchone()
@@ -148,24 +177,50 @@ def recent_work_records(kind, limit=5):
     with connect() as db:
         _schema(db)
         rows = db.execute("""SELECT id,source_request_id,kind,service,status,
-            price_pence,deposit_pence
+            price_pence,deposit_pence,revision
             FROM hq_work_records WHERE kind=?
             ORDER BY created_at DESC,id DESC LIMIT ?""", (kind, limit)).fetchall()
     return [dict(row) for row in rows]
 
-def set_draft_financials(record_id,price_pence,deposit_pence):
-    if not isinstance(record_id,str) or len(record_id)!=32 or any(c not in "0123456789abcdef" for c in record_id): raise ValueError("Invalid record")
+def set_draft_financials(record_id, price_pence, deposit_pence, expected_revision=None):
+    """Prevent older forms from overwriting updated draft financials.
+
+    HTTP writes require a revision. The optional Python argument preserves
+    backward compatibility for existing trusted internal callers.
+    """
+    if not isinstance(record_id, str) or len(record_id) != 32 or any(
+        c not in "0123456789abcdef" for c in record_id
+    ):
+        raise ValueError("Invalid record")
     if type(price_pence) is not int or type(deposit_pence) is not int:
         raise ValueError("Amounts must be integer pence")
     if not 0 <= deposit_pence <= price_pence <= 100000000:
         raise ValueError("Invalid price or deposit")
+    _validate_revision(expected_revision)
     with connect() as db:
         _schema(db)
-        changed=db.execute("""UPDATE hq_work_records SET price_pence=?,deposit_pence=?
-          WHERE id=? AND status IN ('draft','ready_for_review')""",(price_pence,deposit_pence,record_id))
-        if not changed.rowcount: raise LookupError("Editable draft not found")
-    return {"id":record_id,"price_pence":price_pence,"deposit_pence":deposit_pence,
-            "balance_pence":price_pence-deposit_pence}
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("""SELECT status,price_pence,deposit_pence,revision
+            FROM hq_work_records WHERE id=?""", (record_id,)).fetchone()
+        if not row or row["status"] not in ("draft", "ready_for_review"):
+            raise LookupError("Editable draft not found")
+        unchanged = row["price_pence"] == price_pence and row["deposit_pence"] == deposit_pence
+        if expected_revision is not None and row["revision"] != expected_revision and not unchanged:
+            raise StaleWorkRecordError("This work record changed. Refresh it before saving.")
+        revision = row["revision"]
+        if not unchanged:
+            changed = db.execute("""UPDATE hq_work_records SET price_pence=?,
+                deposit_pence=?,revision=revision+1 WHERE id=? AND revision=?""",
+                (price_pence, deposit_pence, record_id, revision))
+            if changed.rowcount != 1:
+                raise StaleWorkRecordError("This work record changed. Refresh it before saving.")
+            revision += 1
+            _audit_work(db, record_id, revision, "financials",
+                {"price_pence": row["price_pence"], "deposit_pence": row["deposit_pence"]},
+                {"price_pence": price_pence, "deposit_pence": deposit_pence})
+    return {"id": record_id, "price_pence": price_pence,
+            "deposit_pence": deposit_pence, "balance_pence": price_pence - deposit_pence,
+            "revision": revision}
 
 WORK_TRANSITIONS = {
     "draft": {"ready_for_review"},
@@ -176,30 +231,39 @@ WORK_TRANSITIONS = {
     "cancelled": set(),
 }
 
-def change_work_status(record_id, new_status):
-    """Owner-reviewed internal state only. Does not book, message or charge."""
-    if not isinstance(record_id,str) or len(record_id)!=32 or any(c not in "0123456789abcdef" for c in record_id):
+def change_work_status(record_id, new_status, expected_revision=None):
+    """Owner-reviewed internal state only; never books, messages or charges."""
+    if not isinstance(record_id, str) or len(record_id) != 32 or any(
+        c not in "0123456789abcdef" for c in record_id
+    ):
         raise ValueError("Invalid record identifier")
-    if not isinstance(new_status,str) or new_status not in WORK_TRANSITIONS:
+    if not isinstance(new_status, str) or new_status not in WORK_TRANSITIONS:
         raise ValueError("Invalid work status")
+    _validate_revision(expected_revision)
     with connect() as db:
         _schema(db)
         db.execute("BEGIN IMMEDIATE")
-        row=db.execute("SELECT status,kind,price_pence FROM hq_work_records WHERE id=?",(record_id,)).fetchone()
-        if row is None: raise LookupError("Work record not found")
-        old=row["status"]
+        row = db.execute("""SELECT status,kind,price_pence,revision
+            FROM hq_work_records WHERE id=?""", (record_id,)).fetchone()
+        if row is None:
+            raise LookupError("Work record not found")
+        old = row["status"]
+        kind = "job" if row["kind"] == "quote" and new_status in ("approved", "in_progress") else row["kind"]
+        unchanged = old == new_status and kind == row["kind"]
+        if expected_revision is not None and row["revision"] != expected_revision and not unchanged:
+            raise StaleWorkRecordError("This work record changed. Refresh it before updating status.")
         if old != new_status and new_status not in WORK_TRANSITIONS[old]:
             raise ValueError("Invalid status transition")
         if old != new_status and new_status == "approved" and row["price_pence"] is None:
             raise ValueError("Set and review a draft price before approval")
-        # Keep the request link, reviewed quote draft and financials on the same
-        # work record. Also promote legacy approved quotes on retry or job start.
-        kind = row["kind"]
-        if kind == "quote" and new_status in ("approved", "in_progress"):
-            kind = "job"
-        if old != new_status or kind != row["kind"]:
-            db.execute("UPDATE hq_work_records SET status=?, kind=? WHERE id=?",
-                       (new_status, kind, record_id))
+        if not unchanged:
+            changed = db.execute("""UPDATE hq_work_records SET status=?,kind=?,
+                revision=revision+1 WHERE id=? AND revision=?""",
+                (new_status, kind, record_id, row["revision"]))
+            if changed.rowcount != 1:
+                raise StaleWorkRecordError("This work record changed. Refresh it before updating status.")
+            _audit_work(db, record_id, row["revision"] + 1, "status",
+                {"status": old, "kind": row["kind"]}, {"status": new_status, "kind": kind})
     return new_status
 
 def work_summary():
