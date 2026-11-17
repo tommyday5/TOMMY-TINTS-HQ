@@ -67,6 +67,60 @@ def list_work_records(limit=100):
         return [dict(row) for row in rows]
 
 
+
+def search_work_records(query="", kind="", status="", limit=25, offset=0):
+    """Search all linked internal work records, with bounded stable pagination.
+
+    This is read-only and deliberately does not consult external Sheets, Square,
+    bank accounts, or customer messages. Caller must enforce owner access.
+    """
+    if not isinstance(query, str) or len(query) > 80:
+        raise ValueError("Search must be at most 80 characters")
+    if kind not in ("", "job", "quote") or not isinstance(kind, str):
+        raise ValueError("Invalid work type")
+    if not isinstance(status, str) or (status and status not in WORK_TRANSITIONS):
+        raise ValueError("Invalid work status")
+    if type(limit) is not int or not 1 <= limit <= 50:
+        raise ValueError("Page size must be between 1 and 50")
+    if type(offset) is not int or not 0 <= offset <= 100000:
+        raise ValueError("Invalid page offset")
+
+    where, args = [], []
+    term = query.strip()
+    if term:
+        # instr treats % and _ literally, unlike unescaped SQL LIKE patterns.
+        columns = ("c.name", "c.email", "c.phone", "v.registration",
+                   "v.make", "v.model", "w.service")
+        where.append("(" + " OR ".join(
+            f"instr(lower({col}), lower(?)) > 0" for col in columns
+        ) + ")")
+        args.extend([term] * len(columns))
+    if kind:
+        where.append("w.kind=?")
+        args.append(kind)
+    if status:
+        where.append("w.status=?")
+        args.append(status)
+    predicate = " WHERE " + " AND ".join(where) if where else ""
+    joins = """ FROM hq_work_records w
+        JOIN hq_customers c ON c.id=w.customer_id
+        JOIN hq_vehicles v ON v.id=w.vehicle_id"""
+    with connect() as db:
+        _schema(db)
+        # Both queries use the same read transaction for a consistent count/page.
+        db.execute("BEGIN")
+        total = db.execute("SELECT COUNT(*)" + joins + predicate, args).fetchone()[0]
+        rows = db.execute("""SELECT w.id,w.source_request_id,w.kind,w.service,
+            w.notes,w.preferred_date,w.preferred_time,w.status,
+            w.price_pence,w.deposit_pence,w.created_at,w.customer_id,
+            c.name,c.email,c.phone,v.make,v.model,v.model_year,v.registration"""
+            + joins + predicate + " ORDER BY w.created_at DESC,w.id DESC LIMIT ? OFFSET ?",
+            [*args, limit, offset]).fetchall()
+    records = [dict(row) for row in rows]
+    return {"records": records, "total": total, "limit": limit,
+            "offset": offset, "has_more": offset + len(records) < total}
+
+
 def read_work_record(record_id):
     """One internal record with linked customer and vehicle, for owner-only review."""
     if not isinstance(record_id, str) or len(record_id) != 32 or any(
