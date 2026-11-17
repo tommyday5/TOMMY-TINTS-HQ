@@ -81,6 +81,8 @@ def chat(message, history=None, post=None):
         answer = "\n".join(parts).strip()
         if not answer:
             raise AssistantUpstreamError("The AI returned no readable answer. Please try again.")
+        if len(answer) > 12000:
+            raise AssistantUpstreamError("The AI response was too long. Please try a shorter request.")
         return {"reply": answer, "mode": "openai_read_only", "actions_executed": 0}
     except requests.RequestException as exc:
         raise AssistantUpstreamError("The AI service could not complete the request. Check API configuration, credits and connectivity.") from exc
