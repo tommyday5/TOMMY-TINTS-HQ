@@ -46,7 +46,7 @@ class HQVersionTests(unittest.TestCase):
         self.assertIn(f'/static/hq-updates.js?v={UPDATE_SCRIPT_VERSION}', html)
 
     def test_only_matching_versioned_script_and_icon_are_immutable(self):
-        for path in (f"/static/hq-updates.js?v={UPDATE_SCRIPT_VERSION}", "/hq-icon-180.png?v=20261117c"):
+        for path in (f"/static/hq-updates.js?v={UPDATE_SCRIPT_VERSION}", "/hq-icon-180.png?v=20261117d"):
             with self.client.get(path) as response:
                 self.assertEqual(response.status_code, 200)
                 self.assertIn("immutable", response.headers["Cache-Control"])
