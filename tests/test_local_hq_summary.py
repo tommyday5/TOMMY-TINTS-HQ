@@ -80,7 +80,7 @@ class LocalSummaryTests(unittest.TestCase):
         quote = create_internal_work_record(ref)
         set_draft_financials(quote, 25000, 7600)
         job = create_test_job()
-        with app.test_client() as client, patch("app.openai_chat", return_value={"reply": "Remote AI reply"}) as provider:
+        with app.test_client() as client, patch("app.openai_chat", return_value={"reply": "Remote AI reply"}) as provider, patch("hq_assistant_local.storage_ready", return_value=True):
             path = "/api/hq/assistant/chat"
             # Owner sign-in and CSRF remain mandatory for each local lookup.
             self.assertEqual(client.post(path, json={"message": "HQ recent quotes"}).status_code, 302)
@@ -123,7 +123,7 @@ class LocalSummaryTests(unittest.TestCase):
                                  or "AB20 XYZ" in m["content"] for m in history_sent))
 
     def test_missing_and_invalid_local_records_never_call_provider(self):
-        with app.test_client() as client, patch("app.openai_chat") as provider:
+        with app.test_client() as client, patch("app.openai_chat") as provider, patch("hq_assistant_local.storage_ready", return_value=True):
             with client.session_transaction() as sess:
                 with auth_db() as db:
                     sess["hq_sid"] = issue_session(db, "test-owner")
