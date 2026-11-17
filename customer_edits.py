@@ -1,5 +1,6 @@
 """Owner edits to internal customers and local maintenance-sheet overrides."""
 from contextlib import closing
+from datetime import datetime, timezone
 import os
 import re
 import secrets
@@ -21,6 +22,25 @@ def _tables(db):
     db.execute("""CREATE TABLE IF NOT EXISTS maintenance_customer_edits (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL, phone TEXT NOT NULL,
         address TEXT NOT NULL, postcode TEXT NOT NULL)""")
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_customer_edit_audit (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        scope TEXT NOT NULL CHECK (scope IN ('internal', 'maintenance')),
+        record_id TEXT NOT NULL, changed_fields TEXT NOT NULL, changed_at TEXT NOT NULL)""")
+
+
+
+def _changed_fields(previous, values):
+    """Record which fields changed without duplicating personal details in the audit."""
+    if previous is None:
+        return ",".join(FIELDS)
+    return ",".join(key for key in FIELDS if (previous[key] or "") != values[key])
+
+
+def _record_audit(db, scope, ref, changed_fields):
+    if changed_fields:
+        db.execute("""INSERT INTO hq_customer_edit_audit
+            (scope, record_id, changed_fields, changed_at) VALUES (?,?,?,?)""",
+            (scope, ref, changed_fields, datetime.now(timezone.utc).isoformat()))
 
 
 def form_values():
@@ -53,10 +73,16 @@ def maintenance_edits():
 def save_maintenance_edit(ref, values):
     with closing(connect()) as db, db:
         _tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        previous = db.execute("SELECT * FROM maintenance_customer_edits WHERE id=?", (ref,)).fetchone()
+        changed = _changed_fields(previous, values)
+        if not changed:
+            return
         db.execute("""INSERT INTO maintenance_customer_edits VALUES (?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET name=excluded.name, email=excluded.email,
             phone=excluded.phone, address=excluded.address, postcode=excluded.postcode""",
             (ref, *(values[k] for k in FIELDS)))
+        _record_audit(db, "maintenance", ref, changed)
 
 
 @customer_edits.route("/hq/customers/<customer_id>/edit", methods=["GET", "POST"])
@@ -78,10 +104,20 @@ def internal_customer(customer_id):
                 values = form_values()
             except ValueError as exc:
                 return edit_page(request.form, "/?page=jobs", str(exc))
-            db.execute("UPDATE hq_customers SET name=?,email=?,phone=? WHERE id=?",
-                       (values["name"], values["email"], values["phone"], customer_id))
-            db.execute("""INSERT INTO hq_customer_addresses VALUES (?,?,?)
-                ON CONFLICT(customer_id) DO UPDATE SET address=excluded.address,postcode=excluded.postcode""",
-                (customer_id, values["address"], values["postcode"]))
+            db.execute("BEGIN IMMEDIATE")
+            # Re-read under the write lock to audit the actual previously saved values.
+            row = db.execute("""SELECT c.name, c.email, c.phone, a.address, a.postcode
+                FROM hq_customers c LEFT JOIN hq_customer_addresses a ON a.customer_id=c.id
+                WHERE c.id=?""", (customer_id,)).fetchone()
+            if row is None:
+                abort(404)
+            changed = _changed_fields(row, values)
+            if changed:
+                db.execute("UPDATE hq_customers SET name=?,email=?,phone=? WHERE id=?",
+                           (values["name"], values["email"], values["phone"], customer_id))
+                db.execute("""INSERT INTO hq_customer_addresses VALUES (?,?,?)
+                    ON CONFLICT(customer_id) DO UPDATE SET address=excluded.address,postcode=excluded.postcode""",
+                    (customer_id, values["address"], values["postcode"]))
+                _record_audit(db, "internal", customer_id, changed)
             return redirect(url_for(".internal_customer", customer_id=customer_id, saved=1), 303)
         return edit_page(row, "/?page=jobs")
