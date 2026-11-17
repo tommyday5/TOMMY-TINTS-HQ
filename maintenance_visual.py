@@ -5,11 +5,12 @@ import os
 import re
 from zoneinfo import ZoneInfo
 
-from flask import Blueprint, current_app, jsonify, render_template, request, session
+from flask import Blueprint, current_app, abort, jsonify, redirect, render_template, request, session, url_for
 import requests
 import secrets
 
 from hq_auth import required
+from customer_edits import edit_page, form_values, maintenance_edits, save_maintenance_edit
 from maintenance_economics import decimal, pounds
 from maintenance_planner import maintenance_data
 from maintenance_suggestions import parse_due
@@ -17,8 +18,9 @@ from maintenance_suggestions import parse_due
 visual_routes = Blueprint("visual_routes", __name__)
 
 
-def route_customers(data, today=None):
+def route_customers(data, today=None, edits=None):
     today = today or datetime.now(ZoneInfo("Europe/London")).date()
+    edits = edits or {}
     visits = {}
     for row in data["visits"]:
         day = parse_due(row.get("Visit Date"))
@@ -38,6 +40,9 @@ def route_customers(data, today=None):
         postcode = row.get("Postcode", "").strip()
         address = next((row.get(field, "").strip() for field in
                         ("Full Address", "Address", "Service Address", "Address Line 1") if row.get(field)), "")
+        edit = edits.get(ref)
+        if edit is not None:
+            address, postcode = edit["address"], edit["postcode"]
         if not address or not postcode or re.sub(r"\s+", "", address).casefold() == postcode.replace(" ", "").casefold():
             address = ""
         elif postcode.replace(" ", "").casefold() not in re.sub(r"\s+", "", address).casefold():
@@ -47,7 +52,7 @@ def route_customers(data, today=None):
             price = pounds(decimal(str(raw_price).replace("£", "").replace(",", ""), "Visit price"))
         except ValueError:
             price = None
-        customers[ref] = {"id": ref, "name": row.get("Customer") or ref, "address": address,
+        customers[ref] = {"id": ref, "name": (edit["name"] if edit is not None else row.get("Customer")) or ref, "address": address,
                           "frequency": row.get("Frequency"), "due": due.isoformat() if due else None,
                           "status": state, "price": price}
     return customers
@@ -125,7 +130,7 @@ def data():
     if not token:
         return jsonify(error="Connect Google Sheets to load maintenance customers"), 401
     try:
-        customers = route_customers(maintenance_data(token))
+        customers = route_customers(maintenance_data(token), edits=maintenance_edits())
     except Exception:
         return jsonify(error="Unable to load the maintenance sheet"), 502
     if request.method == "GET":
@@ -136,3 +141,40 @@ def data():
         return jsonify(error=str(exc)), 400
     except Exception:
         return jsonify(error="Google could not verify the route. Check addresses and Routes API access."), 502
+
+
+@visual_routes.route("/hq/maintenance/customer/edit", methods=["GET", "POST"])
+@required
+def edit_maintenance():
+    ref = request.args.get("id", "")
+    if not 1 <= len(ref) <= 120:
+        abort(404)
+    token = _token()
+    if not token:
+        return redirect("/auth/sheets/connect")
+    try:
+        source = maintenance_data(token)
+        rows = [row for row in source["clients"] if row["Client ID"] == ref]
+    except Exception:
+        return "Unable to load maintenance customer", 502
+    if len(rows) != 1:
+        abort(404)
+    back = url_for(".planner")
+    if request.method == "POST":
+        try:
+            values = form_values()
+        except ValueError as exc:
+            return edit_page(request.form, back, str(exc), maintenance=True)
+        save_maintenance_edit(ref, values)
+        return redirect(url_for(".edit_maintenance", id=ref, saved=1), 303)
+    row = rows[0]
+    customer = maintenance_edits().get(ref)
+    if customer is None:
+        customer = {
+            "name": row.get("Customer") or ref, "email": row.get("Email") or "",
+            "phone": row.get("Phone") or row.get("Mobile") or "",
+            "address": next((row[field] for field in ("Full Address", "Address", "Service Address",
+                                                       "Address Line 1") if row.get(field)), ""),
+            "postcode": row.get("Postcode") or "",
+        }
+    return edit_page(customer, back, maintenance=True)

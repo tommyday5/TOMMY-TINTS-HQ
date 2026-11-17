@@ -85,7 +85,12 @@
             const details = text("span", summary(data) + (data.address ? "" : " · Full address needed"));
             details.dataset.status = data.status;
             card.append(details);
-            cards.append(card);
+            const group = document.createElement("div");
+            const edit = text("a", "Edit customer");
+            edit.href = "/hq/maintenance/customer/edit?" + new URLSearchParams({id});
+            edit.setAttribute("aria-label", "Edit " + data.name);
+            group.append(card, edit);
+            cards.append(group);
         }
         if (!cards.children.length) cards.append(text("p", "No customers match this view."));
         const list = byId("stopList");

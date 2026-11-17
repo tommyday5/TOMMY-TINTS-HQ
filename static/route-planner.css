@@ -28,3 +28,5 @@ li{margin-bottom:14px}
 li a{display:inline-flex;align-items:center;min-height:44px;padding:0 5px}
 summary{padding:10px 0;cursor:pointer}
 @media(max-width:760px){main{padding:12px}.layout{grid-template-columns:1fr}}
+#customerList>div{display:grid;align-content:start;gap:4px}
+#customerList>div>a{display:flex;align-items:center;min-height:44px;padding:0 9px}
