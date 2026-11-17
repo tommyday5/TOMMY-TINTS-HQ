@@ -398,6 +398,31 @@ $("loadSheets").addEventListener("click",async()=>{
 $("calculate").click();render();
 loadMat();$("loadSheets").click();
 </script></body></html>"""
+@app.get("/install-hq")
+def install_hq():
+    """Public, no-data installation landing with explicit Apple touch icon."""
+    return """<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tommy Tints HQ</title><meta name="theme-color" content="#0b0f16">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Tommy Tints HQ">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" sizes="180x180" href="/hq-icon-180.png?v=20261117b">
+<link rel="apple-touch-icon-precomposed" href="/hq-icon-180.png?v=20261117b">
+<link rel="icon" type="image/png" sizes="512x512" href="/hq-icon-512.png?v=20261117b">
+<link rel="manifest" href="/static/manifest.webmanifest?v=20261117b">
+<style>body{background:#0b0f16;color:#fff;font:16px system-ui,sans-serif;
+margin:0;min-height:100vh;display:grid;place-items:center;text-align:center}
+main{padding:28px}img{width:180px;height:180px;border-radius:32px}
+h1{font-size:28px}p{color:#b9c3d2;line-height:1.5}
+a{display:inline-block;background:#d51a27;color:#fff;text-decoration:none;
+padding:14px 22px;border-radius:12px;font-weight:700}</style>
+</head><body><main><img src="/hq-icon-180.png?v=20261117b"
+alt="Tommy Tints HQ icon"><h1>Tommy Tints HQ</h1>
+<p>To install: Safari Share → Add to Home Screen.<br>
+The icon preview should match the logo above.</p>
+<a href="/">Open HQ</a></main></body></html>"""
+
 @app.get("/")
 def home():
     if not configured():
