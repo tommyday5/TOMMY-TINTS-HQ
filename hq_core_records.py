@@ -60,7 +60,7 @@ def list_work_records(limit=100):
         _schema(db)
         rows=db.execute("""SELECT w.id,w.source_request_id,w.kind,w.service,w.notes,
             w.preferred_date,w.preferred_time,w.status,w.price_pence,w.deposit_pence,w.created_at,
-            c.name,c.email,c.phone,v.make,v.model,v.model_year,v.registration
+            w.customer_id,c.name,c.email,c.phone,v.make,v.model,v.model_year,v.registration
             FROM hq_work_records w JOIN hq_customers c ON c.id=w.customer_id
             JOIN hq_vehicles v ON v.id=w.vehicle_id
             ORDER BY w.created_at DESC LIMIT ?""",(min(100,max(1,int(limit))),)).fetchall()
