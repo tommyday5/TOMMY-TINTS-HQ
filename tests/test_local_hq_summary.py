@@ -6,7 +6,8 @@ from unittest.mock import patch
 
 from app import app
 from hq_assistant_local import answer, LocalRecordsUnavailable
-from hq_core_records import create_test_job, set_draft_financials
+from hq_core_records import create_test_job, set_draft_financials, create_internal_work_record
+from customer_request_store import create_request, create_review_draft
 
 
 class LocalSummaryTests(unittest.TestCase):
@@ -64,6 +65,65 @@ class LocalSummaryTests(unittest.TestCase):
             with self.subTest(message=str(message)[:15]), self.assertRaises(ValueError):
                 answer(message)
 
+
+    def test_read_only_quote_and_job_lookup_are_private_and_authenticated(self):
+        payload = dict(kind="quote", name="Example Workshop Customer", email="owner@example.test",
+                       phone="07123456789", service="Window Tinting", make="Audi", model="A4",
+                       year="2020", registration="AB20 XYZ", date="", time="",
+                       notes="Private repair notes", privacy_acknowledged=True)
+        ref = create_request(payload, "test-fingerprint")
+        create_review_draft(ref, "quote")
+        quote = create_internal_work_record(ref)
+        set_draft_financials(quote, 25000, 7600)
+        job = create_test_job()
+        with app.test_client() as client, patch("app.openai_chat", return_value={"reply": "Remote AI reply"}) as provider:
+            path = "/api/hq/assistant/chat"
+            # Owner sign-in and CSRF remain mandatory for each local lookup.
+            self.assertEqual(client.post(path, json={"message": "HQ recent quotes"}).status_code, 302)
+            with client.session_transaction() as sess:
+                sess.update(hq_auth=True, csrf="csrf")
+            self.assertEqual(client.post(path, json={"message": "HQ recent quotes"}).status_code, 403)
+            def ask(msg):
+                return client.post(path, headers={"X-HQ-CSRF": "csrf"}, json={"message": msg})
+            quotes = ask("HQ recent quotes")
+            self.assertEqual(quotes.status_code, 200)
+            self.assertIn(quote, quotes.json["reply"])
+            self.assertNotIn("Example Workshop Customer", quotes.json["reply"])
+            self.assertNotIn("AB20 XYZ", quotes.json["reply"])
+            jobs = ask("HQ recent jobs")
+            self.assertEqual(jobs.status_code, 200)
+            self.assertIn(job, jobs.json["reply"])
+            self.assertNotIn(quote, jobs.json["reply"])
+            detail = ask("HQ record " + quote)
+            self.assertEqual(detail.status_code, 200)
+            self.assertIn("Example Workshop Customer", detail.json["reply"])
+            self.assertIn("AB20 XYZ", detail.json["reply"])
+            self.assertIn("£250.00", detail.json["reply"])
+            self.assertIn("£174.00", detail.json["reply"])
+            self.assertNotIn("owner@example.test", detail.json["reply"])
+            self.assertEqual(detail.json["actions_executed"], 0)
+            self.assertEqual(ask("HQ record invalid").status_code, 400)
+            provider.assert_not_called()
+            # The complete local transcript is kept for the owner, never
+            # attached to subsequent external OpenAI requests.
+            visible = client.get("/api/hq/assistant/history").json["messages"]
+            self.assertTrue(any("Example Workshop Customer" in m["content"] for m in visible))
+            remote = ask("Good morning")
+            self.assertEqual(remote.status_code, 200)
+            self.assertEqual(remote.json["reply"], "Remote AI reply")
+            provider.assert_called_once()
+            history_sent = provider.call_args.args[1]
+            self.assertFalse(any("Example Workshop Customer" in m["content"]
+                                 or "AB20 XYZ" in m["content"] for m in history_sent))
+
+    def test_missing_and_invalid_local_records_never_call_provider(self):
+        with app.test_client() as client, patch("app.openai_chat") as provider:
+            with client.session_transaction() as sess:
+                sess.update(hq_auth=True, csrf="csrf")
+            response = client.post("/api/hq/assistant/chat",
+                headers={"X-HQ-CSRF": "csrf"}, json={"message": "HQ record " + "a" * 32})
+            self.assertEqual(response.status_code, 404)
+            provider.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()
