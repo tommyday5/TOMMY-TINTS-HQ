@@ -56,7 +56,7 @@ class SearchWorkRecordsTests(unittest.TestCase):
     def test_searches_customer_vehicle_service_and_literal_wildcards(self):
         quote = self.make_quote()
         job = create_test_job()
-        for query in ("alice", "EXAMPLE", "AB19", "Fiesta", "wHEEL", "alice@example.invalid",
+        for query in ("alice", "ALICE EXAMPLE", "AB19", "Fiesta", "wHEEL", "alice@example.invalid",
                       "071234"):
             with self.subTest(query=query):
                 result = search_work_records(query=query)
