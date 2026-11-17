@@ -10,7 +10,9 @@ import requests
 import secrets
 
 from hq_auth import required
-from customer_edits import edit_page, form_values, maintenance_edits, save_maintenance_edit
+from customer_edits import (CONFLICT_MESSAGE, StaleCustomerEdit, edit_page, form_values,
+                            maintenance_edit_snapshot, maintenance_edits, posted_revision,
+                            save_maintenance_edit)
 from maintenance_economics import decimal, pounds
 from maintenance_planner import maintenance_data
 from maintenance_suggestions import parse_due
@@ -160,21 +162,29 @@ def edit_maintenance():
     if len(rows) != 1:
         abort(404)
     back = url_for(".planner")
+    row = rows[0]
+    fallback = {
+        "name": row.get("Customer") or ref, "email": row.get("Email") or "",
+        "phone": row.get("Phone") or row.get("Mobile") or "",
+        "address": next((row[field] for field in ("Full Address", "Address", "Service Address",
+                                                   "Address Line 1") if row.get(field)), ""),
+        "postcode": row.get("Postcode") or "",
+    }
+    customer, revision = maintenance_edit_snapshot(ref, fallback)
     if request.method == "POST":
         try:
             values = form_values()
         except ValueError as exc:
-            return edit_page(request.form, back, str(exc), maintenance=True)
-        save_maintenance_edit(ref, values)
+            return edit_page(request.form, back, str(exc), maintenance=True,
+                             revision=request.form.get("revision", ""))
+        try:
+            expected_revision = posted_revision()
+            save_maintenance_edit(ref, values, expected_revision)
+        except StaleCustomerEdit:
+            # Another tab/session saved a newer customer while this page was open.
+            # Show the current values without applying the stale submitted form.
+            customer, revision = maintenance_edit_snapshot(ref, fallback)
+            return edit_page(customer, back, CONFLICT_MESSAGE, maintenance=True,
+                             revision=revision, status=409)
         return redirect(url_for(".edit_maintenance", id=ref, saved=1), 303)
-    row = rows[0]
-    customer = maintenance_edits().get(ref)
-    if customer is None:
-        customer = {
-            "name": row.get("Customer") or ref, "email": row.get("Email") or "",
-            "phone": row.get("Phone") or row.get("Mobile") or "",
-            "address": next((row[field] for field in ("Full Address", "Address", "Service Address",
-                                                       "Address Line 1") if row.get(field)), ""),
-            "postcode": row.get("Postcode") or "",
-        }
-    return edit_page(customer, back, maintenance=True)
+    return edit_page(customer, back, maintenance=True, revision=revision)
