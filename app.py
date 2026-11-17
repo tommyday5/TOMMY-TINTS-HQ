@@ -1015,10 +1015,13 @@ def hq_assistant_chat():
     if not isinstance(data, dict):
         return jsonify(error="JSON object required"), 400
     try:
-        result = local_hq_answer(data.get("message"))
-        if result is None:
-            result = openai_chat(data.get("message"), assistant_history())
-        record_chat(data.get("message"), result["reply"])
+        local_result = local_hq_answer(data.get("message"))
+        if local_result is None:
+            # Never pass private HQ record lookups to the external AI provider.
+            result = openai_chat(data.get("message"), assistant_history(provider_visible_only=True))
+        else:
+            result = local_result
+        record_chat(data.get("message"), result["reply"], provider_visible=local_result is None)
         return jsonify(result)
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
