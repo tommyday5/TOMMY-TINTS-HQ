@@ -79,3 +79,43 @@ def set_draft_financials(record_id,price_pence,deposit_pence):
         if not changed.rowcount: raise LookupError("Editable draft not found")
     return {"id":record_id,"price_pence":price_pence,"deposit_pence":deposit_pence,
             "balance_pence":price_pence-deposit_pence}
+
+WORK_TRANSITIONS = {
+    "draft": {"ready_for_review"},
+    "ready_for_review": {"draft", "approved"},
+    "approved": {"in_progress", "cancelled"},
+    "in_progress": {"completed", "cancelled"},
+    "completed": set(),
+    "cancelled": set(),
+}
+
+def change_work_status(record_id, new_status):
+    """Owner-reviewed internal state only. Does not book, message or charge."""
+    if not isinstance(record_id,str) or len(record_id)!=32 or any(c not in "0123456789abcdef" for c in record_id):
+        raise ValueError("Invalid record identifier")
+    if not isinstance(new_status,str) or new_status not in WORK_TRANSITIONS:
+        raise ValueError("Invalid work status")
+    with connect() as db:
+        _schema(db)
+        row=db.execute("SELECT status,price_pence FROM hq_work_records WHERE id=?",(record_id,)).fetchone()
+        if row is None: raise LookupError("Work record not found")
+        old=row["status"]
+        if old==new_status: return new_status
+        if new_status not in WORK_TRANSITIONS[old]:
+            raise ValueError("Invalid status transition")
+        if new_status=="approved" and row["price_pence"] is None:
+            raise ValueError("Set and review a draft price before approval")
+        changed=db.execute("UPDATE hq_work_records SET status=? WHERE id=? AND status=?",(new_status,record_id,old))
+        if changed.rowcount!=1: raise ValueError("Record changed; refresh and retry")
+    return new_status
+
+def work_summary():
+    records=list_work_records()
+    return {
+        "record_count":len(records),
+        "by_status":{status:sum(r["status"]==status for r in records) for status in WORK_TRANSITIONS},
+        "priced_draft_value_pence":sum(r["price_pence"] or 0 for r in records if r["status"] in {"draft","ready_for_review"}),
+        "outstanding_recorded_pence":sum((r["price_pence"] or 0)-r["deposit_pence"] for r in records if r["price_pence"] is not None and r["status"] not in {"cancelled"}),
+        "source":"internal_work_records_only",
+        "payment_verified":False,
+    }
