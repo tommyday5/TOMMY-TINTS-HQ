@@ -4,7 +4,7 @@ import unittest
 from datetime import date,timedelta
 from unittest.mock import patch
 from customer_request_store import create_request,create_review_draft,update_request_status
-from hq_core_records import create_internal_work_record,list_work_records,set_draft_financials,change_work_status,work_summary
+from hq_core_records import create_internal_work_record,list_work_records,set_draft_financials,change_work_status,work_summary,create_test_job,delete_test_job
 
 class CoreRecordsTests(unittest.TestCase):
     def setUp(self):
@@ -50,6 +50,23 @@ class CoreRecordsTests(unittest.TestCase):
         self.assertEqual(change_work_status(work,"in_progress"),"in_progress")
         self.assertEqual(change_work_status(work,"completed"),"completed")
         with self.assertRaises(ValueError):change_work_status(work,"cancelled")
+    def test_synthetic_job_creation_and_cleanup(self):
+        work=create_test_job()
+        row=next(r for r in list_work_records() if r["id"]==work)
+        self.assertTrue(row["source_request_id"].startswith("TEST-"))
+        self.assertIn("TEST CUSTOMER",row["name"])
+        self.assertEqual(row["status"],"draft")
+        set_draft_financials(work,25000,5000)
+        change_work_status(work,"ready_for_review")
+        change_work_status(work,"approved")
+        self.assertTrue(delete_test_job(work))
+        self.assertFalse(list_work_records())
+    def test_real_job_cannot_be_deleted_as_test(self):
+        ref=create_request(self.payload,"ip")
+        create_review_draft(ref,"job")
+        work=create_internal_work_record(ref)
+        with self.assertRaises(ValueError):delete_test_job(work)
+        self.assertEqual(len(list_work_records()),1)
     def test_closed_request_not_converted(self):
         ref=create_request(self.payload,"ip")
         create_review_draft(ref,"job")
