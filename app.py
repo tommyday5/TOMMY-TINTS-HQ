@@ -1,5 +1,5 @@
 """Tommy Tints HQ interactive preview. No customer data is served until auth is configured."""
-import os, secrets, time, hmac, hashlib
+import os, secrets, time, hmac, hashlib, sqlite3
 from threading import Lock
 from flask import Flask, jsonify, render_template_string, session, request, redirect, url_for
 from quote_engine import calculate_quote
@@ -21,6 +21,7 @@ from maintenance_suggestions import booking_suggestions
 from maintenance_calendar import check_booking_window
 from maintenance_calendar_google import live_conflicts
 from hq_sheets_live import configured as sheets_configured, read_workbook, read_workbook_with_access_token
+import hq_gmail_enquiries as gmail
 from hq_integration_health import integration_status, record_check
 from hq_auth import auth, oauth, google, required, configured
 app = Flask(__name__)
@@ -722,20 +723,119 @@ def hq_pricing():
     record_check("sheets")
     return jsonify(result)
 
+_gmail_tokens = {}
+_gmail_lock = Lock()
+
+
+def _gmail_token():
+    with _gmail_lock:
+        entry = _gmail_tokens.get(session.get("gmail_token_key"))
+        return entry[0] if entry and entry[1] > time.time() else None
+
+
+@app.get("/auth/gmail/connect")
+@required
+def hq_gmail_connect():
+    return google.authorize_redirect(
+        url_for("hq_gmail_callback", _external=True, _scheme="https"),
+        scope="openid email profile " + gmail.SCOPE,
+        login_hint=gmail.MAILBOX, prompt="select_account consent")
+
+
+@app.get("/auth/gmail/callback")
+@required
+def hq_gmail_callback():
+    try:
+        token = google.authorize_access_token()
+        if gmail.SCOPE not in token.get("scope", "").split():
+            return "Gmail read-only access was not granted", 403
+        access_token = token["access_token"]
+        gmail.verify_mailbox(access_token)
+        expiry = time.time() + min(int(token.get("expires_in", 3600)), 3600)
+    except ValueError:
+        return "Select the Tommy Tints business mailbox and retry", 403
+    except Exception:
+        record_check("gmail", "Gmail consent or mailbox verification failed")
+        return "Unable to verify the Gmail connection", 502
+    key = secrets.token_urlsafe(32)
+    with _gmail_lock:
+        for old, entry in list(_gmail_tokens.items()):
+            if entry[1] <= time.time() or old == session.get("gmail_token_key"):
+                del _gmail_tokens[old]
+        _gmail_tokens[key] = (access_token, expiry)
+    session["gmail_token_key"] = key
+    return redirect(url_for("hq_gmail_queue"))
+
+
+@app.route("/hq/gmail-enquiries", methods=["GET", "POST"])
+@required
+def hq_gmail_queue():
+    token = _gmail_token()
+    result = None
+    if request.method == "POST":
+        if not secrets.compare_digest(request.form.get("csrf", ""), session.get("csrf", "not-set")):
+            return "Invalid security token", 403
+        if request.form.get("reviewed"):
+            try:
+                reviewed = gmail.review(request.form["reviewed"])
+            except (OSError, sqlite3.Error):
+                return "Unable to update the enquiry queue", 503
+            return redirect(url_for("hq_gmail_queue"), 303) if reviewed else ("Enquiry not found", 404)
+        if not token:
+            return "Connect Gmail before importing", 401
+        page = request.form.get("page_token", "")
+        if len(page) > 512:
+            return "Invalid page token", 400
+        try:
+            result = gmail.import_page(token, page or None)
+        except Exception:
+            record_check("gmail", "Read-only Gmail import failed")
+            return "Gmail import failed. Check Integration Health.", 502
+        record_check("gmail")
+    try:
+        count, rows = gmail.queue()
+    except (OSError, sqlite3.Error):
+        return "Enquiry storage unavailable", 503
+    return render_template_string("""<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gmail enquiries | Tommy Tints HQ</title><style>
+body{max-width:800px;margin:auto;padding:24px;background:#0b0f16;color:#eef2f8;font:16px system-ui}
+a{color:#ff8088}article{background:#151e2b;padding:16px;margin:12px 0;overflow-wrap:anywhere}
+</style></head><body><main><a href="/hq/integrations">Integration health</a><h1>Gmail enquiry review</h1>
+<p>Label customer enquiries HQ-Enquiries in the business inbox. Keep legal and debt mail outside that label.</p>
+{% if connected %}<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}">
+<button>Import latest page</button>
+{% if result and result.next %}<button name="page_token" value="{{ result.next }}">Import next page</button>{% endif %}
+</form>{% else %}<p><a href="/auth/gmail/connect">Connect Gmail read-only</a></p>{% endif %}
+{% if result %}<p>Imported {{ result.added }} new of {{ result.read }} read.</p>{% endif %}
+<p>Pending review {{ count if count is not none else "Unavailable" }}.</p>
+{% for item in rows %}<article><h2>{{ item.subject }}</h2><p>{{ item.sender }}</p><p>{{ item.snippet }}</p>
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}">
+<button name="reviewed" value="{{ item.id }}">Mark reviewed</button></form></article>{% endfor %}
+</main></body></html>""", connected=bool(token), result=result, count=count,
+        rows=rows, csrf=session.get("csrf")), 200, {"Cache-Control": "no-store"}
+
+
 def _hq_integrations():
     now = time.time()
     with _google_tokens_lock:
         sheets = _google_tokens.get(session.get("sheets_token_key"))
     with _calendar_tokens_lock:
         calendar = _calendar_tokens.get(session.get("calendar_token_key"))
-    return integration_status([
+    health = integration_status([
         ("sheets", "Google Sheets", bool(sheets and sheets[1] > now)),
         ("calendar", "Google Calendar", bool(calendar and calendar[1] > now)),
         ("square", "Square", None),
-        ("gmail", "Gmail", None),
+        ("gmail", "Gmail", bool(_gmail_token())),
         ("monzo", "Monzo", None),
         ("dna", "DNA Payments", None),
     ])
+    try:
+        count, _ = gmail.queue(limit=0)
+    except (OSError, sqlite3.Error):
+        count = None
+    next(item for item in health["integrations"] if item["name"] == "Gmail")["pending_records"] = count
+    return health
 
 @app.get("/api/hq/integrations")
 @required
@@ -755,7 +855,7 @@ section{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,285px
 article{background:#151e2b;border:1px solid #2c394b;border-radius:12px;padding:16px}
 h2{font-size:19px;margin-top:0}dl{margin-bottom:0}dt{color:#aab6c8}dd{margin:0 0 8px}</style>
 </head><body><main><p><a href="/">Back to HQ</a></p><h1>Integration health</h1>
-<p>Last observed reads only. Times are UTC.</p>
+<p>Last observed reads only. Times are UTC.</p><p><a href="/hq/gmail-enquiries">Gmail enquiry review</a></p>
 {% if not health.history_available %}<p role="alert">Integration history is unavailable.</p>{% endif %}
 <section>{% for item in health.integrations %}<article>
 <h2>{{ item.name }}</h2><p><strong>{{ item.status }}</strong></p>
