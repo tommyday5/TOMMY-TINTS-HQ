@@ -80,4 +80,16 @@ class OpenAIChatTests(unittest.TestCase):
                 chat("Hello", post=lambda *args, **kwargs: InvalidJSONResponse())
         self.assertNotIn("Invalid JSON from upstream", str(caught.exception))
 
+    def test_rejects_excessively_long_upstream_text(self):
+        from hq_openai import AssistantUpstreamError
+        class LongResponse:
+            def raise_for_status(self): pass
+            def json(self):
+                return {"status": "completed", "output": [
+                    {"type": "message", "content": [
+                        {"type": "output_text", "text": "x" * 12001}]}]}
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key", "OPENAI_MODEL": "test-model"}):
+            with self.assertRaises(AssistantUpstreamError):
+                chat("Hello", post=lambda *args, **kwargs: LongResponse())
+
 if __name__=="__main__":unittest.main()
