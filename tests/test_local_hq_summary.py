@@ -27,8 +27,8 @@ class LocalSummaryTests(unittest.TestCase):
     def test_local_summary_uses_actual_hq_records_with_unverified_financial_label(self):
         job = create_test_job()
         set_draft_financials(job, 25000, 7600)
-        with patch("hq_assistant_local.storage_ready", return_value=True), \\
-             patch("app.openai_chat") as provider:
+        with (patch("hq_assistant_local.storage_ready", return_value=True),
+              patch("app.openai_chat") as provider):
             with app.test_client() as client:
                 self.assertEqual(client.post("/api/hq/assistant/chat", json={"message": "HQ work summary"}).status_code, 302)
                 with client.session_transaction() as sess:
@@ -53,8 +53,8 @@ class LocalSummaryTests(unittest.TestCase):
             reader.assert_not_called()
 
     def test_unconfigured_persistent_storage_fails_closed(self):
-        with patch("hq_assistant_local.storage_ready", return_value=False), \\
-             patch("hq_assistant_local.work_summary") as reader:
+        with (patch("hq_assistant_local.storage_ready", return_value=False),
+              patch("hq_assistant_local.work_summary") as reader):
             with self.assertRaises(LocalRecordsUnavailable):
                 answer("show my hq work summary")
             reader.assert_not_called()
