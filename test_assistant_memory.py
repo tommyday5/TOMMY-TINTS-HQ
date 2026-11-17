@@ -35,5 +35,8 @@ class AssistantMemoryTests(unittest.TestCase):
                 audit_events(limit)
 
     def test_invalid_chat(self):
-        with self.assertRaises(ValueError):record_chat("","answer")
+        for user_message, assistant_reply in (("", "answer"), ("   ", "answer"), ("question", "\\n  "), ("question", "")):
+            with self.subTest(user_message=user_message, assistant_reply=assistant_reply):
+                with self.assertRaises(ValueError):
+                    record_chat(user_message, assistant_reply)
 if __name__=="__main__":unittest.main()
