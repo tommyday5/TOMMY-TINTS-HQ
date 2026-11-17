@@ -1,9 +1,11 @@
 import os
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from unittest.mock import patch
 from datetime import date, timedelta
-from customer_request_store import create_request,list_requests,update_request_status,storage_ready,create_review_draft,list_review_drafts
+from customer_request_store import connect,create_request,list_requests,update_request_status,storage_ready,create_review_draft,list_review_drafts
 
 class CustomerRequestTests(unittest.TestCase):
     def setUp(self):
@@ -71,6 +73,38 @@ class CustomerRequestTests(unittest.TestCase):
     def test_rate_limit(self):
         for _ in range(3):create_request(self.payload,"test-ip")
         with self.assertRaises(ValueError):create_request(self.payload,"test-ip")
+    def test_simultaneous_public_requests_obey_the_hourly_limit(self):
+        # The real endpoint can be served by separate threads/processes;
+        # a SELECT followed by an INSERT must be one locked transaction.
+        with connect():
+            pass
+        gate = Barrier(8)
+        def submit(_):
+            gate.wait(timeout=10)
+            try:
+                create_request(self.payload, "shared-ip")
+                return "accepted"
+            except ValueError as exc:
+                return str(exc)
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(submit, range(8)))
+        self.assertEqual(results.count("accepted"), 3)
+        self.assertEqual(sum("Too many requests" in result for result in results), 5)
+        self.assertEqual(len(list_requests()), 3)
+        # A separate fingerprint remains independently allowed.
+        self.assertTrue(create_request(self.payload, "other-ip"))
+
+    def test_simultaneous_draft_retries_return_one_record(self):
+        ref = create_request(self.payload, "test-ip")
+        gate = Barrier(8)
+        def submit(_):
+            gate.wait(timeout=10)
+            return create_review_draft(ref, "quote")
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(submit, range(8)))
+        self.assertEqual(len({item["id"] for item in results}), 1)
+        self.assertEqual(len(list_review_drafts()), 1)
+
     def test_privacy_ack_required(self):
         self.payload["privacy_acknowledged"]=False
         with self.assertRaises(ValueError):create_request(self.payload,"test-ip")

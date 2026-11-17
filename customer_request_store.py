@@ -65,6 +65,9 @@ def create_request(payload,fingerprint):
     now=datetime.now(timezone.utc).isoformat()
     identifier=uuid.uuid4().hex
     with connect() as db:
+        # Serialize the limit check and insertion across concurrent web workers.
+        # A read outside this transaction lets simultaneous requests all pass.
+        db.execute("BEGIN IMMEDIATE")
         count=db.execute("SELECT COUNT(*) FROM customer_requests WHERE remote_fingerprint=? AND created_at>?",(fingerprint,(datetime.now(timezone.utc)-timedelta(hours=1)).isoformat())).fetchone()[0]
         if count>=3: raise ValueError("Too many requests. Please contact us directly.")
         db.execute("""INSERT INTO customer_requests VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
@@ -107,6 +110,8 @@ def create_review_draft(request_id,draft_type):
     if not isinstance(draft_type,str) or draft_type not in {"quote","job"}:
         raise ValueError("Invalid draft type")
     with connect() as db:
+        # Make check-then-insert idempotent even under simultaneous owner retries.
+        db.execute("BEGIN IMMEDIATE")
         row=db.execute("SELECT id,kind,status FROM customer_requests WHERE id=?",(request_id,)).fetchone()
         if row is None: raise LookupError("Customer request not found")
         if row["status"] in {"declined","closed"}: raise ValueError("Closed requests cannot be converted")
