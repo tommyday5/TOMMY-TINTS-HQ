@@ -119,3 +119,46 @@ def work_summary():
         "source":"internal_work_records_only",
         "payment_verified":False,
     }
+
+def create_test_job():
+    """Explicit owner-initiated, isolated internal test job. Never sends anything."""
+    with connect() as db:
+        db.execute("PRAGMA foreign_keys=ON")
+        _schema(db)
+        db.execute("BEGIN IMMEDIATE")
+        now=_now()
+        cid=uuid.uuid4().hex
+        vid=uuid.uuid4().hex
+        wid=uuid.uuid4().hex
+        # TEST-prefixed source IDs distinguish synthetic records from customer enquiries.
+        source="TEST-"+uuid.uuid4().hex
+        db.execute("INSERT INTO hq_customers VALUES(?,?,?,?,?,?)",
+                   (cid,source,"TEST CUSTOMER — DO NOT CONTACT","test@example.invalid","00000000000",now))
+        db.execute("INSERT INTO hq_vehicles VALUES(?,?,?,?,?,?,?)",
+                   (vid,cid,"TEST","VEHICLE","","TEST-ONLY",now))
+        db.execute("""INSERT INTO hq_work_records
+            (id,source_request_id,customer_id,vehicle_id,kind,service,notes,
+             preferred_date,preferred_time,status,price_pence,deposit_pence,created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (wid,source,cid,vid,"job","Window Tinting",
+             "TEST DATA ONLY — no real customer, appointment or payment",
+             "","","draft",None,0,now))
+        return wid
+
+def delete_test_job(record_id):
+    """Only delete synthetic test records; preserve every real customer record."""
+    if not isinstance(record_id,str) or len(record_id)!=32:
+        raise ValueError("Invalid record")
+    with connect() as db:
+        _schema(db)
+        db.execute("PRAGMA foreign_keys=ON")
+        db.execute("BEGIN IMMEDIATE")
+        row=db.execute("""SELECT w.source_request_id,w.customer_id,w.vehicle_id
+            FROM hq_work_records w WHERE w.id=?""",(record_id,)).fetchone()
+        if row is None: raise LookupError("Test job not found")
+        if not row["source_request_id"].startswith("TEST-"):
+            raise ValueError("Only synthetic test jobs may be deleted")
+        db.execute("DELETE FROM hq_work_records WHERE id=?",(record_id,))
+        db.execute("DELETE FROM hq_vehicles WHERE id=?",(row["vehicle_id"],))
+        db.execute("DELETE FROM hq_customers WHERE id=?",(row["customer_id"],))
+    return True
