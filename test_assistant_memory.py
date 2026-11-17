@@ -26,6 +26,14 @@ class AssistantMemoryTests(unittest.TestCase):
             self.assertEqual(len(history()),12)
             self.assertEqual(len(audit_events()),50)
 
+    def test_history_and_audit_limits_reject_unbounded_queries(self):
+        for limit in (-1, 0, 201, True, "12", None):
+            with self.subTest(history_limit=limit), self.assertRaises(ValueError):
+                history(limit)
+        for limit in (-1, 0, 101, False, "50", None):
+            with self.subTest(audit_limit=limit), self.assertRaises(ValueError):
+                audit_events(limit)
+
     def test_invalid_chat(self):
         with self.assertRaises(ValueError):record_chat("","answer")
 if __name__=="__main__":unittest.main()

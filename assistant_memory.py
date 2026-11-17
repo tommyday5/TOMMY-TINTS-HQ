@@ -21,6 +21,8 @@ def connect():
     return db
 
 def history(limit=12):
+    if type(limit) is not int or not 1 <= limit <= MAX_CHAT_MESSAGES:
+        raise ValueError("History limit must be between 1 and 200")
     with connect() as db:
         rows=db.execute("SELECT role,content FROM chat_messages ORDER BY id DESC LIMIT ?",(limit,)).fetchall()
     return [dict(row) for row in reversed(rows)]
@@ -53,6 +55,8 @@ def audit(event,details):
                    (event,details,datetime.now(timezone.utc).isoformat()))
 
 def audit_events(limit=50):
+    if type(limit) is not int or not 1 <= limit <= 100:
+        raise ValueError("Audit limit must be between 1 and 100")
     with connect() as db:
         rows=db.execute("SELECT event,details,created_at FROM assistant_audit ORDER BY id DESC LIMIT ?",(limit,)).fetchall()
     return [dict(row) for row in rows]
