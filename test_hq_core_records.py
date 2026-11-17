@@ -61,6 +61,20 @@ class CoreRecordsTests(unittest.TestCase):
         change_work_status(work,"approved")
         self.assertTrue(delete_test_job(work))
         self.assertFalse(list_work_records())
+    def test_summary_includes_records_beyond_list_page_limit(self):
+        # The owner UI intentionally shows only 100 recent rows, but financial
+        # totals and status counts must cover every stored record.
+        for _ in range(105):
+            work = create_test_job()
+            set_draft_financials(work, 1000, 200)
+        self.assertEqual(len(list_work_records()), 100)
+        summary = work_summary()
+        self.assertEqual(summary["record_count"], 105)
+        self.assertEqual(summary["by_status"]["draft"], 105)
+        self.assertEqual(summary["priced_draft_value_pence"], 105000)
+        self.assertEqual(summary["outstanding_recorded_pence"], 84000)
+        self.assertFalse(summary["payment_verified"])
+
     def test_real_job_cannot_be_deleted_as_test(self):
         ref=create_request(self.payload,"ip")
         create_review_draft(ref,"job")
