@@ -35,6 +35,8 @@ button:focus-visible,a:focus-visible{outline:2px solid #ffdb52;outline-offset:3p
 .hero h1{animation:company-copy-reveal .7s ease-out .8s both}
 .hero .actions{animation:company-copy-reveal .65s ease-out 1.25s both}
 }
+.company-arrived .company-logo-art,.company-arrived .company-logo-stage::before,.company-arrived .hero h1,.company-arrived .hero .actions{animation:none;opacity:1;transform:none}
+.company-arrived .company-logo-art::after{animation:none;display:none}
 @media(prefers-reduced-motion:reduce){
 .company-logo-art,.company-logo-stage::before,.hero h1,.hero .actions{animation:none;transform:none;opacity:1}
 .company-logo-art::after{animation:none;display:none}
@@ -65,6 +67,9 @@ const services = [
 const $ = id => document.getElementById(id);
 let step = 1, service = "", requestIntakeEnabled = false, requestKind = "booking";
 const selections = new Set();
+$("home").addEventListener("animationend",event=>{
+ if(event.animationName==="company-chrome-sweep")$("home").classList.add("company-arrived");
+});
 const list = $("services");
 function tile(name, label, image, action) {
  const b = document.createElement("button"); b.type = "button"; b.className = "service-tile";
@@ -88,7 +93,7 @@ for (const [name,label,image] of services) {
  const choice = tile(name,label,image,()=>choose(name)); choice.dataset.service=name;choice.setAttribute("aria-pressed","false");list.append(choice);
  $("showroom").append(tile(name,label,image,()=>{requestKind="booking";choose(name);show(1);}));
 }
-function show(n){step=n;$("home").classList.add("hidden");$("wizard").classList.remove("hidden");for(let i=1;i<=4;i++){$("stage"+i).classList.toggle("hidden",i!==n);const el=$("steps").children[i-1];el.className="step"+(i===n?" current":i<n?" done":"")}const names=["Choose your service","Your vehicle details","Configure your work","Review your request"];$("step-title").textContent=names[n-1];$("next").classList.toggle("hidden",n===4);$("next").textContent=n===3?"Review Request →":"Continue →";if(n===4){const lines=[["Service",service],["Vehicle",[$("year").value,$("make").value,$("model").value].filter(Boolean).join(" ")],["Registration",$("reg").value||"Not provided"],["Work options",[...selections].join(", ")||"Discuss with Tommy Tints"],["Preferred date",$("date").value||"Not specified"],["Preferred time",$("time").value]];const host=$("summary");host.replaceChildren();for(const [k,v] of lines){const row=document.createElement("div");const key=document.createElement("strong");key.textContent=k+": ";row.append(key,document.createTextNode(v));host.appendChild(row)}}$("step-title").tabIndex=-1;$("step-title").focus({preventScroll:true});window.scrollTo(0,0)}
+function show(n){$("home").classList.add("company-arrived");step=n;$("home").classList.add("hidden");$("wizard").classList.remove("hidden");for(let i=1;i<=4;i++){$("stage"+i).classList.toggle("hidden",i!==n);const el=$("steps").children[i-1];el.className="step"+(i===n?" current":i<n?" done":"")}const names=["Choose your service","Your vehicle details","Configure your work","Review your request"];$("step-title").textContent=names[n-1];$("next").classList.toggle("hidden",n===4);$("next").textContent=n===3?"Review Request →":"Continue →";if(n===4){const lines=[["Service",service],["Vehicle",[$("year").value,$("make").value,$("model").value].filter(Boolean).join(" ")],["Registration",$("reg").value||"Not provided"],["Work options",[...selections].join(", ")||"Discuss with Tommy Tints"],["Preferred date",$("date").value||"Not specified"],["Preferred time",$("time").value]];const host=$("summary");host.replaceChildren();for(const [k,v] of lines){const row=document.createElement("div");const key=document.createElement("strong");key.textContent=k+": ";row.append(key,document.createTextNode(v));host.appendChild(row)}}$("step-title").tabIndex=-1;$("step-title").focus({preventScroll:true});window.scrollTo(0,0)}
 $("begin").onclick=()=>{requestKind="booking";$("appointmentHint").textContent="Choose a preferred date and time. We’ll confirm availability after review.";show(1)};$("quote").onclick=()=>{requestKind="quote";$("appointmentHint").textContent="A preferred date and time are optional for a quote.";show(1);$("step-title").textContent="Request a service quote"};$("previous").onclick=()=>step===1?($("wizard").classList.add("hidden"),$("home").classList.remove("hidden")):show(step-1);
 $("next").onclick=()=>{if(step===1&&!service)return alert("Please choose a service.");if(step===2&&(!$("make").value.trim()||!$("model").value.trim()))return alert("Please enter the vehicle make and model.");if(step===3&&requestKind==="booking"&&(!$("date").value||!$("time").value))return alert("Please choose a preferred date and time.");if(step<4)show(step+1)};
 $("restart").onclick=()=>{service="";selections.clear();list.querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed","false"));show(1)};
