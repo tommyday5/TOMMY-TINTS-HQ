@@ -14,3 +14,19 @@ Build each provider adapter and its fixture-based tests in separate modules. Add
 | Mobile interface | Improve navigation and common job actions with existing branding. | Cover job progress, quote approval and integration status at narrow widths, with keyboard and touch input. |
 
 Use an isolated restore for backup drills. Validate additive schema changes against both new and populated SQLite files. Store reviewable outcomes and timestamps in integration health. Provider connection, authorisation and successful synchronisation are distinct observations.
+
+## Read-only provider setup
+
+- Gmail: Enable Gmail API for the Google OAuth project and register
+  `https://tommy-tints-web-production.up.railway.app/auth/gmail/callback`.
+  Sign in to HQ as the owner and grant Gmail read-only access for the business inbox.
+  Apply the `HQ-Enquiries` label only to customer enquiries, then import via Integration Health.
+- Calendar: Use the existing read-only Calendar consent and run a check in Maintenance.
+  Successful results apply to the primary calendar only.
+- Square: Configure `HQ_SQUARE_READ_TOKEN` using the production seller OAuth scopes
+  `APPOINTMENTS_READ` and `APPOINTMENTS_ALL_READ`, and set `HQ_SQUARE_LOCATION_ID`.
+  Refresh under Integration Health. A refresh reads bookings from yesterday through 28 days ahead.
+  The snapshot retains only booking reference, version, location, start and status.
+  Missing results do not imply cancellation, and older versions cannot overwrite newer ones.
+- Keep `HQ_DATA_DIR` on the mounted Railway volume. Queue and snapshot storage use separate
+  additive SQLite files. OAuth consent is session-scoped for Gmail and Calendar.

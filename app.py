@@ -22,6 +22,7 @@ from maintenance_calendar import check_booking_window
 from maintenance_calendar_google import live_conflicts
 from hq_sheets_live import configured as sheets_configured, read_workbook, read_workbook_with_access_token
 import hq_gmail_enquiries as gmail
+import hq_square_bookings as square
 from hq_integration_health import integration_status, record_check
 from hq_auth import auth, oauth, google, required, configured
 app = Flask(__name__)
@@ -816,6 +817,41 @@ a{color:#ff8088}article{background:#151e2b;padding:16px;margin:12px 0;overflow-w
         rows=rows, csrf=session.get("csrf")), 200, {"Cache-Control": "no-store"}
 
 
+@app.route("/hq/square-bookings", methods=["GET", "POST"])
+@required
+def hq_square_snapshot():
+    changed = None
+    if request.method == "POST":
+        if not secrets.compare_digest(request.form.get("csrf", ""), session.get("csrf", "not-set")):
+            return "Invalid security token", 403
+        if not square.configured():
+            return "Square read-only connection is not configured", 503
+        try:
+            changed = square.refresh_bookings()
+        except Exception:
+            record_check("square", "Read-only Square booking retrieval failed")
+            return "Square booking retrieval failed. Check Integration Health.", 502
+        record_check("square")
+    try:
+        rows = square.upcoming_bookings()
+    except (OSError, sqlite3.Error):
+        return "Square snapshot storage is unavailable", 503
+    return render_template_string("""<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Square booking snapshot | Tommy Tints HQ</title><style>
+body{max-width:800px;margin:auto;padding:24px;background:#0b0f16;color:#eef2f8;font:16px system-ui}
+a{color:#ff8088}li{margin:8px 0}</style></head><body><main>
+<a href="/hq/integrations">Integration health</a><h1>Square booking snapshot</h1>
+<p>Last observed booking versions. Times are UTC. Use Square to confirm current availability.</p>
+{% if configured %}<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}">
+<button>Refresh from Square</button></form>{% else %}<p>Square read-only connection requires configuration.</p>{% endif %}
+{% if changed is not none %}<p>{{ changed }} new or updated records.</p>{% endif %}
+<ul>{% for row in rows %}<li>{{ row.start_at }} · {{ row.status }} · {{ row.id }}</li>
+{% else %}<li>No upcoming bookings recorded.</li>{% endfor %}</ul>
+</main></body></html>""", configured=square.configured(), rows=rows, changed=changed,
+        csrf=session.get("csrf")), 200, {"Cache-Control": "no-store"}
+
+
 def _hq_integrations():
     now = time.time()
     with _google_tokens_lock:
@@ -825,7 +861,7 @@ def _hq_integrations():
     health = integration_status([
         ("sheets", "Google Sheets", bool(sheets and sheets[1] > now)),
         ("calendar", "Google Calendar", bool(calendar and calendar[1] > now)),
-        ("square", "Square", None),
+        ("square", "Square", square.configured()),
         ("gmail", "Gmail", bool(_gmail_token())),
         ("monzo", "Monzo", None),
         ("dna", "DNA Payments", None),
@@ -835,6 +871,8 @@ def _hq_integrations():
     except (OSError, sqlite3.Error):
         count = None
     next(item for item in health["integrations"] if item["name"] == "Gmail")["pending_records"] = count
+    if not square.configured():
+        next(item for item in health["integrations"] if item["name"] == "Square")["status"] = "Configuration required"
     return health
 
 @app.get("/api/hq/integrations")
@@ -855,7 +893,7 @@ section{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,285px
 article{background:#151e2b;border:1px solid #2c394b;border-radius:12px;padding:16px}
 h2{font-size:19px;margin-top:0}dl{margin-bottom:0}dt{color:#aab6c8}dd{margin:0 0 8px}</style>
 </head><body><main><p><a href="/">Back to HQ</a></p><h1>Integration health</h1>
-<p>Last observed reads only. Times are UTC.</p><p><a href="/hq/gmail-enquiries">Gmail enquiry review</a></p>
+<p>Last observed reads only. Times are UTC.</p><p><a href="/hq/gmail-enquiries">Gmail enquiry review</a> · <a href="/hq/square-bookings">Square booking snapshot</a></p>
 {% if not health.history_available %}<p role="alert">Integration history is unavailable.</p>{% endif %}
 <section>{% for item in health.integrations %}<article>
 <h2>{{ item.name }}</h2><p><strong>{{ item.status }}</strong></p>
