@@ -53,6 +53,21 @@ class OpenAIChatTests(unittest.TestCase):
             for payload in invalid:
                 with self.subTest(payload=payload), self.assertRaises(AssistantUpstreamError):
                     chat("Hello", post=lambda *args, **kwargs: MalformedResponse(payload))
+    def test_incomplete_or_failed_upstream_response_is_not_presented_as_complete(self):
+        from hq_openai import AssistantUpstreamError
+        class StatusResponse(FakeResponse):
+            def __init__(self, status):
+                self.status = status
+            def json(self):
+                data = super().json()
+                data["status"] = self.status
+                return data
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key", "OPENAI_MODEL": "test-model"}):
+            for status in ("incomplete", "failed", "cancelled"):
+                with self.subTest(status=status), self.assertRaises(AssistantUpstreamError):
+                    chat("Hello", post=lambda *args, **kwargs: StatusResponse(status))
+            self.assertEqual(chat("Hello", post=lambda *args, **kwargs: StatusResponse("completed"))["actions_executed"], 0)
+
     def test_invalid_json_upstream_response_is_controlled(self):
         from hq_openai import AssistantUpstreamError
         class InvalidJSONResponse:
