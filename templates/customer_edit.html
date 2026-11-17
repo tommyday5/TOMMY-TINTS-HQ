@@ -2,7 +2,7 @@
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Edit customer | Tommy Tints HQ</title>
-<link rel="icon" href="/hq-icon-180.png?v=20261117c">
+<link rel="icon" href="/hq-icon-180.png?v=20261117d">
 <link rel="stylesheet" href="/static/route-planner.css">
 <script defer src="/static/customer-address.js"></script>
 <style>
@@ -11,7 +11,7 @@ input{font:inherit;min-height:44px;width:100%;border:1px solid #656875;border-ra
 input:focus-visible{outline:2px solid #ffd252}gmp-place-autocomplete{display:block;width:100%;margin:10px 0}
 </style>
 </head><body><main data-browser-key="{{ browser_key }}" id="customerEditor">
-<header><a href="{{ back }}"><img src="/hq-icon-180.png?v=20261117c" alt="Tommy Tints HQ"><span>{{ "Back to routes" if maintenance else "Back to jobs" }}</span></a><h1>Edit customer</h1></header>
+<header><a href="{{ back }}"><img src="/hq-icon-180.png?v=20261117d" alt="Tommy Tints HQ"><span>{{ "Back to routes" if maintenance else "Back to jobs" }}</span></a><h1>Edit customer</h1></header>
 {% if saved %}<p role="status">Customer details saved.</p>{% endif %}
 {% if error %}<p role="alert">{{ error }}</p>{% endif %}
 {% if maintenance %}<p>Edits are saved in HQ and used in Maintenance Routes. The source Google Sheet is read-only.</p>{% endif %}

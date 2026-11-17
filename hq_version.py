@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parent
 UPDATE_SCRIPT_VERSION = hashlib.sha256((ROOT / "static/hq-updates.js").read_bytes()).hexdigest()[:16]
 LOCAL_VERSION = "local-" + hashlib.sha256((ROOT / "app.py").read_bytes() +
                                           UPDATE_SCRIPT_VERSION.encode()).hexdigest()[:12]
-ICON_VERSION = "20261117c"
+ICON_VERSION = "20261117d"
 
 
 def build_version():

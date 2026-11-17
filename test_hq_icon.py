@@ -8,9 +8,9 @@ from app import app
 class IconTests(unittest.TestCase):
     def assert_icon(self, response, size):
         hashes = {
-            180: "773109236d3e097b8d79cd9ee7ac2ab7b238326c7d1122bf636028b848a94979",
-            512: "7f19cfe8cbec68ab9692e93d77d900c1f9301a882bf764b86b7cebcd67b4133d",
-            1024: "b599aafbb5b5720166b25fec009f1cbdcdf5480a851599c4053870bea08dc4df",
+            180: "b5154fbf7a88a59f4d46b3ce7a36f04b571c3d5c9faad213f0c63d0ed8288810",
+            512: "0ae06b0e9d419be991bec5ff11fd5fb7d00fbe4dc6ca0c4ef58185f966d38e1b",
+            1024: "fa82b870b557cf77fc15a31718889c6345f02105e29e4cb16517c4c2fd8d7dee",
         }
         with response:
             self.assertEqual(response.status_code, 200)
@@ -23,7 +23,7 @@ class IconTests(unittest.TestCase):
 
     def test_manifest_icons_serve_original_pngs(self):
         with app.test_client() as client:
-            with client.get("/static/manifest.webmanifest?v=20261117c") as response:
+            with client.get("/static/manifest.webmanifest?v=20261117d") as response:
                 self.assertEqual(response.status_code, 200)
                 icons = response.get_json(force=True)["icons"]
             self.assertCountEqual(
@@ -33,7 +33,7 @@ class IconTests(unittest.TestCase):
             for icon in icons:
                 with self.subTest(path=icon["src"]):
                     size = int(icon["sizes"].split("x")[0])
-                    self.assertEqual(icon["src"], f"/hq-icon-{size}.png?v=20261117c")
+                    self.assertEqual(icon["src"], f"/hq-icon-{size}.png?v=20261117d")
                     self.assertEqual(icon["type"], "image/png")
                     self.assert_icon(client.get(icon["src"]), size)
 
