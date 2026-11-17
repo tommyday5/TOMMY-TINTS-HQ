@@ -63,7 +63,10 @@ def chat(message, history=None, post=None):
             json=payload, timeout=35,
         )
         response.raise_for_status()
-        data = response.json()
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise AssistantUpstreamError("The AI returned an invalid response. Please try again.") from exc
         if not isinstance(data, dict) or not isinstance(data.get("output"), list):
             raise AssistantUpstreamError("The AI returned an invalid response. Please try again.")
         parts = []
