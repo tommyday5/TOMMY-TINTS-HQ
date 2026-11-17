@@ -7,21 +7,21 @@
   "theme_color": "#d90015",
   "icons": [
     {
-      "src": "/hq-icon-512.png",
+      "src": "/hq-icon-512.png?v=20261117c",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
-      "src": "/hq-icon-180.png",
+      "src": "/hq-icon-180.png?v=20261117c",
       "sizes": "180x180",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/static/tommy-tints-hq-icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "/hq-icon-1024.png?v=20261117c",
+      "sizes": "1024x1024",
+      "type": "image/png",
       "purpose": "any"
     }
   ]
