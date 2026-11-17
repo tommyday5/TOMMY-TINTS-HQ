@@ -20,7 +20,7 @@ class AuthTests(unittest.TestCase):
     def test_login_requires_config(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(self.client.get("/login").status_code, 503)
-    def test_unauthenticated_redirects_to_login(self):
+    def test_unauthenticated_landing_offers_login(self):
         with patch.dict(os.environ, {
             "HQ_SESSION_SECRET": "testing-not-production",
             "GOOGLE_CLIENT_ID": "test-client",
@@ -28,8 +28,10 @@ class AuthTests(unittest.TestCase):
             "HQ_ALLOWED_GOOGLE_EMAIL": "owner@example.com",
         }, clear=True):
             response = self.client.get("/")
-            self.assertEqual(response.status_code, 302)
-            self.assertIn("/login", response.headers["Location"])
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(b"/login", response.data)
+            self.assertIn(b"apple-touch-icon", response.data)
+            self.assertNotIn(b"customerRequestsList", response.data)
     def test_logout_rejects_missing_csrf(self):
         with patch.dict(os.environ, {
             "HQ_SESSION_SECRET": "testing-not-production",

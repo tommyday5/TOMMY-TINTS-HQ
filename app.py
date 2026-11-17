@@ -399,8 +399,29 @@ $("calculate").click();render();
 loadMat();$("loadSheets").click();
 </script></body></html>"""
 @app.get("/")
-@required
 def home():
+    if not configured():
+        return "Authentication configuration required. Private HQ data remains disabled.", 503
+    if session.get("hq_auth") is not True:
+        # Keep the root URL on a branded HTML page so Safari can discover the
+        # Apple touch icon before the owner signs in through Google OAuth.
+        return """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tommy Tints HQ</title>
+<meta name="theme-color" content="#0b0f16">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Tommy Tints HQ">
+<link rel="apple-touch-icon" sizes="180x180" href="/hq-icon-180.png">
+<link rel="icon" type="image/svg+xml" href="/static/tommy-tints-hq-icon.svg">
+<link rel="manifest" href="/static/manifest.webmanifest">
+<style>body{background:#0b0f16;color:#fff;font-family:system-ui,sans-serif;
+display:grid;place-content:center;min-height:90vh;text-align:center}
+img{width:170px;max-width:50vw;margin:auto}
+a{background:#d51a27;color:white;padding:14px 22px;border-radius:12px;
+text-decoration:none;font-weight:700}</style></head><body>
+<img src="/hq-icon-180.png" alt="Tommy Tints HQ logo">
+<h1>Tommy Tints HQ</h1><p>Private business dashboard</p>
+<p><a href="/login">Sign in with Google</a></p></body></html>"""
     return render_template_string(PAGE.replace("__HQ_CSRF_PLACEHOLDER__", session["csrf"]).replace("</main>", '<form action="/logout" method="post"><input type="hidden" name="csrf" value="' + session["csrf"] + '"><button type="submit">Sign out</button></form></main>'))
 @app.post("/api/quote/estimate")
 @required
