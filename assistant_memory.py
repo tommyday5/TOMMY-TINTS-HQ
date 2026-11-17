@@ -48,7 +48,7 @@ def clear_history():
                    ("chat_cleared","Owner cleared stored assistant conversation",now))
 
 def audit(event,details):
-    if not isinstance(event,str) or not 1<=len(event)<=80 or not isinstance(details,str) or len(details)>500:
+    if not isinstance(event,str) or not 1<=len(event)<=80 or not event.strip() or not isinstance(details,str) or len(details)>500:
         raise ValueError("Invalid audit event")
     with connect() as db:
         db.execute("INSERT INTO assistant_audit(event,details,created_at) VALUES(?,?,?)",
