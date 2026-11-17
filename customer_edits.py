@@ -43,6 +43,37 @@ def _record_audit(db, scope, ref, changed_fields):
             (scope, ref, changed_fields, datetime.now(timezone.utc).isoformat()))
 
 
+class StaleCustomerEdit(Exception):
+    """An edit was submitted from a page older than the saved customer data."""
+
+
+def _revision(db, scope, ref):
+    """Use the last PII-free audit ID as a durable optimistic concurrency token."""
+    return db.execute("""SELECT COALESCE(MAX(id), 0) FROM hq_customer_edit_audit
+        WHERE scope=? AND record_id=?""", (scope, ref)).fetchone()[0]
+
+
+def maintenance_edit_snapshot(ref, fallback):
+    """Read the override and version from one consistent SQLite snapshot."""
+    with closing(connect()) as db, db:
+        _tables(db)
+        db.execute("BEGIN")
+        stored = db.execute("SELECT * FROM maintenance_customer_edits WHERE id=?", (ref,)).fetchone()
+        revision = _revision(db, "maintenance", ref)
+        return (dict(stored) if stored is not None else fallback), revision
+
+
+def posted_revision():
+    raw = request.form.get("revision", "")
+    if not re.fullmatch(r"[0-9]{1,18}", raw):
+        raise StaleCustomerEdit()
+    return int(raw)
+
+
+CONFLICT_MESSAGE = ("This customer was changed since you opened the editor. "
+                    "Your changes were not saved. Review the latest details and enter your changes again.")
+
+
 def form_values():
     if request.content_length is None or request.content_length > 8192:
         abort(400)
@@ -57,11 +88,13 @@ def form_values():
     return values
 
 
-def edit_page(customer, back, error=None, maintenance=False):
+def edit_page(customer, back, error=None, maintenance=False, revision=0, status=None):
     return render_template("customer_edit.html", customer=customer, back=back, error=error,
-                           maintenance=maintenance, saved=request.args.get("saved") == "1",
+                           maintenance=maintenance, revision=revision,
+                           saved=request.args.get("saved") == "1" and not error,
                            csrf=session.get("csrf"),
-                           browser_key=os.environ.get("HQ_GOOGLE_MAPS_BROWSER_KEY", "")), (400 if error else 200)
+                           browser_key=os.environ.get("HQ_GOOGLE_MAPS_BROWSER_KEY", "")), (
+                               status if status is not None else (400 if error else 200))
 
 
 def maintenance_edits():
@@ -70,7 +103,7 @@ def maintenance_edits():
         return {row["id"]: dict(row) for row in db.execute("SELECT * FROM maintenance_customer_edits")}
 
 
-def save_maintenance_edit(ref, values):
+def save_maintenance_edit(ref, values, expected_revision):
     with closing(connect()) as db, db:
         _tables(db)
         db.execute("BEGIN IMMEDIATE")
@@ -78,6 +111,8 @@ def save_maintenance_edit(ref, values):
         changed = _changed_fields(previous, values)
         if not changed:
             return
+        if _revision(db, "maintenance", ref) != expected_revision:
+            raise StaleCustomerEdit()
         db.execute("""INSERT INTO maintenance_customer_edits VALUES (?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET name=excluded.name, email=excluded.email,
             phone=excluded.phone, address=excluded.address, postcode=excluded.postcode""",
@@ -94,6 +129,8 @@ def internal_customer(customer_id):
         db.execute("PRAGMA foreign_keys=ON")
         _schema(db)
         _tables(db)
+        if request.method == "GET":
+            db.execute("BEGIN")
         row = db.execute("""SELECT c.name, c.email, c.phone, a.address, a.postcode
             FROM hq_customers c LEFT JOIN hq_customer_addresses a ON a.customer_id=c.id
             WHERE c.id=?""", (customer_id,)).fetchone()
@@ -103,7 +140,13 @@ def internal_customer(customer_id):
             try:
                 values = form_values()
             except ValueError as exc:
-                return edit_page(request.form, "/?page=jobs", str(exc))
+                return edit_page(request.form, "/?page=jobs", str(exc),
+                                 revision=request.form.get("revision", ""))
+            try:
+                expected_revision = posted_revision()
+            except StaleCustomerEdit:
+                return edit_page(row, "/?page=jobs", CONFLICT_MESSAGE,
+                                 revision=_revision(db, "internal", customer_id), status=409)
             db.execute("BEGIN IMMEDIATE")
             # Re-read under the write lock to audit the actual previously saved values.
             row = db.execute("""SELECT c.name, c.email, c.phone, a.address, a.postcode
@@ -113,6 +156,9 @@ def internal_customer(customer_id):
                 abort(404)
             changed = _changed_fields(row, values)
             if changed:
+                if _revision(db, "internal", customer_id) != expected_revision:
+                    return edit_page(row, "/?page=jobs", CONFLICT_MESSAGE,
+                                     revision=_revision(db, "internal", customer_id), status=409)
                 db.execute("UPDATE hq_customers SET name=?,email=?,phone=? WHERE id=?",
                            (values["name"], values["email"], values["phone"], customer_id))
                 db.execute("""INSERT INTO hq_customer_addresses VALUES (?,?,?)
@@ -120,4 +166,4 @@ def internal_customer(customer_id):
                     (customer_id, values["address"], values["postcode"]))
                 _record_audit(db, "internal", customer_id, changed)
             return redirect(url_for(".internal_customer", customer_id=customer_id, saved=1), 303)
-        return edit_page(row, "/?page=jobs")
+        return edit_page(row, "/?page=jobs", revision=_revision(db, "internal", customer_id))

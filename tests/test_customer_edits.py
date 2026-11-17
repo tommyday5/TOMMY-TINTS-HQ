@@ -21,11 +21,17 @@ class CustomerEditTests(unittest.TestCase):
         self.addCleanup(env.stop)
         self.client = app.test_client()
         self.form = {"csrf": "token", "name": "Updated customer", "email": "client@example.invalid",
-                     "phone": "07700 900123", "address": "10 Example Street", "postcode": "rm1 1aa"}
+                     "phone": "07700 900123", "address": "10 Example Street", "postcode": "rm1 1aa",
+                     "revision": "0"}
 
     def sign_in(self):
         with self.client.session_transaction() as session, auth_db() as db:
             session.update(hq_sid=issue_session(db, "test-owner"), csrf="token")
+
+    def revision(self, scope, ref):
+        with connect() as db:
+            return db.execute("""SELECT COALESCE(MAX(id), 0) FROM hq_customer_edit_audit
+                WHERE scope=? AND record_id=?""", (scope, ref)).fetchone()[0]
 
     def test_edit_updates_linked_work_record_and_persists_address(self):
         work = create_test_job()
@@ -57,7 +63,8 @@ class CustomerEditTests(unittest.TestCase):
         self.assertEqual(self.client.post(path, data=self.form).status_code, 303)
         with connect() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_customer_edit_audit").fetchone()[0], 1)
-        self.assertEqual(self.client.post(path, data={**self.form, "phone": "07700 900456"}).status_code, 303)
+        self.assertEqual(self.client.post(path, data={**self.form, "phone": "07700 900456",
+                                           "revision": str(self.revision("internal", customer))}).status_code, 303)
         with connect() as db:
             fields = db.execute("SELECT changed_fields FROM hq_customer_edit_audit ORDER BY id DESC LIMIT 1").fetchone()[0]
         self.assertEqual(fields, "phone")
@@ -82,7 +89,53 @@ class CustomerEditTests(unittest.TestCase):
             self.assertEqual(self.client.post(path, data=self.form).status_code, 303)
             with connect() as db:
                 self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_customer_edit_audit").fetchone()[0], 1)
-            self.assertEqual(self.client.post(path, data={**self.form, "address": "20 Revised Lane"}).status_code, 303)
+            self.assertEqual(self.client.post(path, data={**self.form, "address": "20 Revised Lane",
+                                               "revision": str(self.revision("maintenance", "M-1"))}).status_code, 303)
             with connect() as db:
                 last = db.execute("SELECT changed_fields FROM hq_customer_edit_audit ORDER BY id DESC LIMIT 1").fetchone()[0]
             self.assertEqual(last, "address")
+
+    def test_internal_stale_editor_is_rejected_and_latest_values_shown(self):
+        create_test_job()
+        customer = list_work_records()[0]["customer_id"]
+        path = "/hq/customers/" + customer + "/edit"
+        self.sign_in()
+        self.assertIn(b'name="revision" value="0"', self.client.get(path).data)
+        self.assertEqual(self.client.post(path, data=self.form).status_code, 303)
+        self.assertEqual(self.revision("internal", customer), 1)
+        stale = self.client.post(path, data={**self.form, "name": "Stale change"})
+        self.assertEqual(stale.status_code, 409)
+        self.assertIn(b"This customer was changed", stale.data)
+        self.assertIn(b"Updated customer", stale.data)
+        self.assertIn(b'name="revision" value="1"', stale.data)
+        self.assertEqual(list_work_records()[0]["name"], "Updated customer")
+        self.assertEqual(self.revision("internal", customer), 1)
+        self.assertEqual(self.client.post(path, data={k:v for k,v in self.form.items()
+                                                     if k != "revision"}).status_code, 409)
+        self.assertEqual(self.client.post(path, data={**self.form, "revision": "1",
+                                                      "name": "Fresh change"}).status_code, 303)
+        self.assertEqual(list_work_records()[0]["name"], "Fresh change")
+        self.assertEqual(self.revision("internal", customer), 2)
+
+    def test_maintenance_stale_editor_is_rejected_and_does_not_touch_sheet(self):
+        self.sign_in()
+        source = {"clients": [{"Client ID": "M-1", "Customer": "Sheet name",
+                               "Postcode": "RM1 1AA"}], "visits": []}
+        path = "/hq/maintenance/customer/edit?id=M-1"
+        with patch.dict(app.extensions, hq_sheets_connection=lambda: ("token", 9999999999)), patch(
+                "maintenance_visual.maintenance_data", return_value=source):
+            self.assertIn(b'name="revision" value="0"', self.client.get(path).data)
+            self.assertEqual(self.client.post(path, data=self.form).status_code, 303)
+            self.assertEqual(self.revision("maintenance", "M-1"), 1)
+            stale = self.client.post(path, data={**self.form, "address": "Stale Lane"})
+            self.assertEqual(stale.status_code, 409)
+            self.assertIn(b"10 Example Street", stale.data)
+            self.assertIn(b'name="revision" value="1"', stale.data)
+            self.assertEqual(self.revision("maintenance", "M-1"), 1)
+            self.assertEqual(source["clients"][0]["Customer"], "Sheet name")
+            # A double-submit with unchanged values is idempotent even if its version is old.
+            self.assertEqual(self.client.post(path, data=self.form).status_code, 303)
+            self.assertEqual(self.revision("maintenance", "M-1"), 1)
+            self.assertEqual(self.client.post(path, data={**self.form, "revision": "1",
+                                             "address": "20 New Lane"}).status_code, 303)
+            self.assertEqual(self.revision("maintenance", "M-1"), 2)
