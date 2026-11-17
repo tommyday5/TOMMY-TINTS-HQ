@@ -1,0 +1,15 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HQ Maintenance Packages</title><link rel="stylesheet" href="/static/commerce.css"></head>
+<body><main><a href="/">Back to HQ</a><h1>Maintenance packages</h1><p>Owner ledger. These records track entitlements and do not verify payment or create appointments.</p>
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+<details><summary>Record a package</summary><form method="post"><input type="hidden" name="csrf" value="{{ csrf }}">
+<label>Customer reference<input name="customer_ref" maxlength="100" required></label><label>Package title<input name="title" maxlength="120" required></label>
+<label>Total visits purchased<input type="number" min="1" max="1000" name="visits" required></label><label>Recorded package price in pence<input type="number" min="0" name="price" required></label>
+<label>Agreed service conditions<textarea name="terms" maxlength="2000" required></textarea></label><button>Record entitlement</button></form></details>
+{% for package in packages %}<article><h2>{{ package.title }}</h2><p>Customer {{ package.customer_ref }}</p><p>{{ package.remaining }} visits remaining · {{ package.completed }} visits deducted</p>
+{% if package.remaining<=1 %}<p>Renewal review due</p>{% endif %}<p>Recorded price £{{ '%.2f'|format(package.price/100) }}</p><p>{{ package.terms }}</p>
+<details><summary>Record a visit or correction</summary><form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="package_id" value="{{ package.id }}">
+<label>Stable visit or correction reference<input name="event" maxlength="120" required></label>
+<label>Entry<select name="action"><option value="completed">Completed visit — deduct one</option><option value="complimentary">Complimentary visit — no deduction</option><option value="credit">Correction — credit one</option></select></label>
+<label>Reason<textarea name="reason" maxlength="500" required></textarea></label><button>Record entry</button></form></details></article>{% else %}<p>No packages recorded.</p>{% endfor %}
+<details><summary>Recent ledger entries</summary>{% for row in ledger %}<p>{{ row.created }} · {{ row.package_id }} · {{ row.event }} · {{ row.delta }} · {{ row.reason }}</p>{% endfor %}</details>
+</main></body></html>

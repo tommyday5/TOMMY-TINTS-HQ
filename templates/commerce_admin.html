@@ -1,0 +1,19 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HQ Products</title><link rel="stylesheet" href="/static/commerce.css"></head>
+<body><main><a href="/">Back to HQ</a><h1>Products</h1><p><a href="/book/shop">Preview shop</a> · <a href="/hq/maintenance/packages">Maintenance packages</a></p>
+<p>Each entry is a stock keeping variant. Amounts are in pence. Delivery uses the highest configured product delivery charge in the basket.</p>
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+{% macro editor(product) %}
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ product.id or '' }}">
+<input type="hidden" name="version" value="{{ product.version or 0 }}">
+<label>Name<input name="name" value="{{ product.name or '' }}" maxlength="120" required></label>
+<label>Variant<input name="variant" value="{{ product.variant or '' }}" maxlength="100"></label>
+<label>Description<textarea name="description" maxlength="1500">{{ product.description or '' }}</textarea></label>
+{% for key,label in [('retail','Retail price'),('trade','Approved trade price'),('cost','Unit cost'),('stock','Stock quantity'),('delivery','Delivery charge')] %}
+<label>{{ label }}<input type="number" min="0" step="1" name="{{ key }}" value="{{ product[key] if product[key] is defined and product[key] is not none else '' }}" {{ 'required' if key!='trade' else '' }}></label>{% endfor %}
+<label><input type="checkbox" name="published" value="1" {{ 'checked' if product.published else '' }}> Publish in retail shop</label>
+<button>Save product</button></form>
+{% endmacro %}
+<details><summary>Add product</summary>{{ editor({}) }}</details>
+{% for product in products %}<details><summary>{{ product.name }} · {{ product.variant }} · {{ product.stock }} in stock</summary>{{ editor(product) }}</details>
+{% else %}<p>No products configured.</p>{% endfor %}
+</main></body></html>

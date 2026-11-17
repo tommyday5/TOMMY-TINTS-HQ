@@ -1,0 +1,9 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tommy Tints Shop</title><link rel="stylesheet" href="/static/commerce.css"><script defer src="/static/commerce-shop.js"></script></head>
+<body><main><a class="brand" href="/book"><img src="/static/booking/icon-180.png" alt="Tommy Tints Bookings">Back to bookings</a><h1>Tommy Tints Shop</h1>
+<p>Automotive accessories selected by Tommy Tints.</p><section class="grid">
+{% for product in products %}<article><h2>{{ product.name }}</h2><p>{{ product.variant }}</p><p>{{ product.description }}</p><strong>£{{ '%.2f'|format(product.retail/100) }}</strong><p>{{ product.stock }} available</p>
+<button data-product="{{ product.id }}" data-name="{{ product.name }} {{ product.variant }}" {{ 'disabled' if product.stock<1 else '' }}>Add to basket</button></article>
+{% else %}<article><h2>Products coming soon</h2><p>Our catalogue will appear here when products are ready.</p></article>{% endfor %}
+</section><section><h2>Your basket</h2><div id="basket"></div><label>Fulfilment<select id="fulfilment"><option value="collection">Collection</option><option value="delivery">Delivery</option></select></label>
+<button id="checkBasket">Check basket total</button><p id="basketResult" role="status"></p><p>Checkout is currently unavailable. Adding to the basket does not reserve stock.</p></section>
+</main></body></html>
