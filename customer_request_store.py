@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-SERVICES = {"Window Tinting","Vehicle Wrapping","Bodywork & Paint","Wheel Refurbishment","Valeting & Detailing","Other / Bespoke Work"}
+SERVICES = {"Window Tinting","Vehicle Wrapping","Bodywork & Paint","Wheel Refurbishment","Valeting & Detailing","Other / Bespoke Work","Interior & Leather Restoration"}
 KINDS = {"booking","quote"}
 
 def storage_ready():
