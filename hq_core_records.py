@@ -97,16 +97,22 @@ def change_work_status(record_id, new_status):
         raise ValueError("Invalid work status")
     with connect() as db:
         _schema(db)
-        row=db.execute("SELECT status,price_pence FROM hq_work_records WHERE id=?",(record_id,)).fetchone()
+        db.execute("BEGIN IMMEDIATE")
+        row=db.execute("SELECT status,kind,price_pence FROM hq_work_records WHERE id=?",(record_id,)).fetchone()
         if row is None: raise LookupError("Work record not found")
         old=row["status"]
-        if old==new_status: return new_status
-        if new_status not in WORK_TRANSITIONS[old]:
+        if old != new_status and new_status not in WORK_TRANSITIONS[old]:
             raise ValueError("Invalid status transition")
-        if new_status=="approved" and row["price_pence"] is None:
+        if old != new_status and new_status == "approved" and row["price_pence"] is None:
             raise ValueError("Set and review a draft price before approval")
-        changed=db.execute("UPDATE hq_work_records SET status=? WHERE id=? AND status=?",(new_status,record_id,old))
-        if changed.rowcount!=1: raise ValueError("Record changed; refresh and retry")
+        # Keep the request link, reviewed quote draft and financials on the same
+        # work record. Also promote legacy approved quotes on retry or job start.
+        kind = row["kind"]
+        if kind == "quote" and new_status in ("approved", "in_progress"):
+            kind = "job"
+        if old != new_status or kind != row["kind"]:
+            db.execute("UPDATE hq_work_records SET status=?, kind=? WHERE id=?",
+                       (new_status, kind, record_id))
     return new_status
 
 def work_summary():
