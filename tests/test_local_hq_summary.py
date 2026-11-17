@@ -36,8 +36,8 @@ class LocalSummaryTests(unittest.TestCase):
                 self.assertEqual(client.post("/api/hq/assistant/chat", json={"message": "HQ work summary"}).status_code, 302)
                 with client.session_transaction() as sess:
                     with auth_db() as db:
-                    sess["hq_sid"] = issue_session(db, "test-owner")
-                sess.update(csrf="csrf")
+                        sess["hq_sid"] = issue_session(db, "test-owner")
+                    sess.update(csrf="csrf")
                 self.assertEqual(client.post("/api/hq/assistant/chat", json={"message": "HQ work summary"}).status_code, 403)
                 result = client.post("/api/hq/assistant/chat",
                     headers={"X-HQ-CSRF": "csrf"}, json={"message": "HQ work summary"})
