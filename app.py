@@ -1029,6 +1029,8 @@ def hq_assistant_chat():
         return jsonify(error=str(exc)), 503
     except LocalRecordsUnavailable as exc:
         return jsonify(error=str(exc)), 503
+    except LookupError as exc:
+        return jsonify(error=str(exc)), 404
     except AssistantUpstreamError as exc:
         return jsonify(error=str(exc)), 502
 
