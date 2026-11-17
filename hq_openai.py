@@ -64,13 +64,18 @@ def chat(message, history=None, post=None):
         )
         response.raise_for_status()
         data = response.json()
-        answer = "\n".join(
-            item.get("text", "")
-            for output in data.get("output", [])
-            if output.get("type") == "message"
-            for item in output.get("content", [])
-            if item.get("type") == "output_text"
-        ).strip()
+        if not isinstance(data, dict) or not isinstance(data.get("output"), list):
+            raise AssistantUpstreamError("The AI returned an invalid response. Please try again.")
+        parts = []
+        for output in data["output"]:
+            if not isinstance(output, dict) or output.get("type") != "message":
+                continue
+            if not isinstance(output.get("content"), list):
+                continue
+            for item in output["content"]:
+                if isinstance(item, dict) and item.get("type") == "output_text" and isinstance(item.get("text"), str):
+                    parts.append(item["text"])
+        answer = "\n".join(parts).strip()
         if not answer:
             raise AssistantUpstreamError("The AI returned no readable answer. Please try again.")
         return {"reply": answer, "mode": "openai_read_only", "actions_executed": 0}

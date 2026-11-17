@@ -37,4 +37,20 @@ class OpenAIChatTests(unittest.TestCase):
             for content in ("", "   ", chr(10) + chr(9), "x" * 3001):
                 with self.subTest(content=content[:12]), self.assertRaises(ValueError):
                     chat("Hello", [{"role":"assistant","content":content}], post=unexpected_post)
+    def test_malformed_upstream_response_is_handled(self):
+        from hq_openai import AssistantUpstreamError
+        class MalformedResponse:
+            def __init__(self, payload):
+                self.payload = payload
+            def raise_for_status(self):
+                pass
+            def json(self):
+                return self.payload
+        invalid = (None, [], {}, {"output": None}, {"output": {}},
+                   {"output": [{"type": "message", "content": None}]},
+                   {"output": [{"type": "message", "content": [{"type": "output_text", "text": 123}]}]})
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key", "OPENAI_MODEL": "test-model"}):
+            for payload in invalid:
+                with self.subTest(payload=payload), self.assertRaises(AssistantUpstreamError):
+                    chat("Hello", post=lambda *args, **kwargs: MalformedResponse(payload))
 if __name__=="__main__":unittest.main()
