@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from app import app
+from customer_request_store import connect
 from hq_auth import issue_session
 from hq_auth_store import auth_db
 from hq_core_records import create_test_job, list_work_records
@@ -44,6 +45,22 @@ class CustomerEditTests(unittest.TestCase):
         self.assertIn(b"RM1 1AA", result.data)
         row, = list_work_records()
         self.assertEqual((row["id"], row["name"], row["email"]), (work, "Updated customer", "client@example.invalid"))
+        with connect() as db:
+            audits = db.execute("SELECT * FROM hq_customer_edit_audit ORDER BY id").fetchall()
+        self.assertEqual(len(audits), 1)
+        self.assertEqual((audits[0]["scope"], audits[0]["record_id"]), ("internal", customer))
+        self.assertEqual(audits[0]["changed_fields"], "name,email,phone,address,postcode")
+        self.assertTrue(audits[0]["changed_at"])
+        self.assertNotIn("10 Example Street", audits[0]["changed_fields"])
+
+        # Replaying an identical save must not create a misleading audit event.
+        self.assertEqual(self.client.post(path, data=self.form).status_code, 303)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_customer_edit_audit").fetchone()[0], 1)
+        self.assertEqual(self.client.post(path, data={**self.form, "phone": "07700 900456"}).status_code, 303)
+        with connect() as db:
+            fields = db.execute("SELECT changed_fields FROM hq_customer_edit_audit ORDER BY id DESC LIMIT 1").fetchone()[0]
+        self.assertEqual(fields, "phone")
 
     def test_maintenance_edit_is_used_by_route_planner(self):
         self.sign_in()
@@ -57,3 +74,15 @@ class CustomerEditTests(unittest.TestCase):
             customer, = self.client.get("/api/hq/maintenance/visual-route").json["customers"]
             self.assertEqual((customer["name"], customer["address"]), ("Updated customer", "10 Example Street, RM1 1AA"))
             self.assertEqual(source["clients"][0]["Customer"], "Sheet name")
+            with connect() as db:
+                audits = db.execute("SELECT * FROM hq_customer_edit_audit").fetchall()
+            self.assertEqual(len(audits), 1)
+            self.assertEqual((audits[0]["scope"], audits[0]["record_id"]), ("maintenance", "M-1"))
+            self.assertEqual(audits[0]["changed_fields"], "name,email,phone,address,postcode")
+            self.assertEqual(self.client.post(path, data=self.form).status_code, 303)
+            with connect() as db:
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_customer_edit_audit").fetchone()[0], 1)
+            self.assertEqual(self.client.post(path, data={**self.form, "address": "20 Revised Lane"}).status_code, 303)
+            with connect() as db:
+                last = db.execute("SELECT changed_fields FROM hq_customer_edit_audit ORDER BY id DESC LIMIT 1").fetchone()[0]
+            self.assertEqual(last, "address")
