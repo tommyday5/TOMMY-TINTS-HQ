@@ -60,3 +60,20 @@ def read_workbook_with_access_token(access_token):
             "services":{k:{name:str(v) for name,v in item.items()} for k,item in library_from_values(ranges[1].get("values",[])).items()},
             "jobs":jobs_for_timer(ranges[2].get("values",[])),
             "source":"Google Sheets (user OAuth, read-only)"}
+
+
+def read_finance(access_token=None):
+    """Read effective formula results and formulas together; never write cells."""
+    from hq_finance import RANGES, finance_snapshot
+    if not access_token:
+        credentials = _credentials()
+        if not credentials.valid:
+            credentials.refresh(Request())
+        access_token = credentials.token
+    response = requests.get(
+        'https://sheets.googleapis.com/v4/spreadsheets/' + SPREADSHEET_ID,
+        params=[('ranges', r) for r in RANGES] + [('includeGridData','true'),
+            ('fields','sheets(properties(title),data(startRow,startColumn,rowData(values(effectiveValue,formattedValue,userEnteredValue))))')],
+        headers={'Authorization':'Bearer '+access_token}, timeout=15)
+    response.raise_for_status()
+    return finance_snapshot(response.json())
