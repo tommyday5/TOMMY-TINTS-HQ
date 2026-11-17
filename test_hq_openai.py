@@ -34,7 +34,7 @@ class OpenAIChatTests(unittest.TestCase):
             for prompt in (" " * 3001 + "hello", "hello" + " " * 3001):
                 with self.subTest(prompt=prompt[:12]), self.assertRaises(ValueError):
                     chat(prompt, post=unexpected_post)
-            for content in ("", "   ", "\\n\\t", "x" * 3001):
+            for content in ("", "   ", chr(10) + chr(9), "x" * 3001):
                 with self.subTest(content=content[:12]), self.assertRaises(ValueError):
                     chat("Hello", [{"role":"assistant","content":content}], post=unexpected_post)
 if __name__=="__main__":unittest.main()
