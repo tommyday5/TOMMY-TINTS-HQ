@@ -30,3 +30,21 @@ Use an isolated restore for backup drills. Validate additive schema changes agai
   Missing results do not imply cancellation, and older versions cannot overwrite newer ones.
 - Keep `HQ_DATA_DIR` on the mounted Railway volume. Queue and snapshot storage use separate
   additive SQLite files. OAuth consent is session-scoped for Gmail and Calendar.
+
+## Owner passkeys and persistent Google consent
+
+- Sign in through Google, then open **Settings → Passkeys → Add passkey**
+  within five minutes. Credential management requires a recent verified sign-in.
+  The iPhone chooses Face ID or device verification. HQ stores public keys only.
+- **Lock HQ / Sign out** revokes the server session. Use **Sign in with a passkey**
+  to unlock, or explicitly choose **Sign in with Google** for account recovery.
+  After recovering, enroll a replacement passkey and remove the lost credential.
+- Passkeys are bound to the production HTTPS host. Safari and the installed web
+  app should be checked separately on the target iPhone. Google remains the fallback.
+- Existing sessions are replaced once for this release. Reconnect each Google
+  integration once to receive an offline grant. HQ encrypts grants using key
+  material derived from the stable Railway session secret. Do not rotate that
+  secret without planning to reconnect the integrations.
+- The Railway volume stores the owner security database. Logout does not revoke
+  stored Google grants or change Square configuration. Google can still revoke
+  grants or require renewed consent.

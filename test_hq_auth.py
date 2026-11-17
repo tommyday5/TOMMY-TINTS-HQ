@@ -2,6 +2,8 @@
 import os
 import unittest
 from unittest.mock import patch
+from hq_auth import issue_session
+from hq_auth_store import auth_db
 from app import app
 
 class AuthTests(unittest.TestCase):
@@ -40,7 +42,8 @@ class AuthTests(unittest.TestCase):
             "HQ_ALLOWED_GOOGLE_EMAIL": "owner@example.com",
         }, clear=True):
             with self.client.session_transaction() as session:
-                session["hq_auth"] = True
+                with auth_db() as db:
+                    session["hq_sid"] = issue_session(db, "test-owner")
                 session["csrf"] = "known-token"
             self.assertEqual(self.client.post("/logout").status_code, 400)
 

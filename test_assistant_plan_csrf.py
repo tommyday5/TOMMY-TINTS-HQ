@@ -1,6 +1,8 @@
 """CSRF regression coverage for the authenticated offline assistant planner."""
 import unittest
 from unittest.mock import patch
+from hq_auth import issue_session
+from hq_auth_store import auth_db
 from app import app
 
 class AssistantPlanCsrfTests(unittest.TestCase):
@@ -10,7 +12,8 @@ class AssistantPlanCsrfTests(unittest.TestCase):
         self.auth=patch("hq_auth.configured", return_value=True)
         self.auth.start()
         with self.client.session_transaction() as sess:
-            sess["hq_auth"]=True
+            with auth_db() as db:
+                sess["hq_sid"] = issue_session(db, "test-owner")
             sess["csrf"]="test-csrf-token"
 
     def tearDown(self):

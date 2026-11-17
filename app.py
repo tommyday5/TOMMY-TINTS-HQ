@@ -26,7 +26,9 @@ import hq_gmail_enquiries as gmail
 import hq_square_bookings as square
 from hq_integration_health import integration_status, record_check
 from hq_version import ICON_VERSION, UPDATE_SCRIPT_VERSION, build_version
-from hq_auth import auth, oauth, google, required, configured
+from hq_auth import auth, oauth, google, required, configured, active_session
+from hq_passkeys import passkeys, registered_passkeys
+from hq_google_connections import connection, save_connection
 app = Flask(__name__)
 app.secret_key = os.environ.get('HQ_SESSION_SECRET') or secrets.token_hex(32)
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SECURE=os.environ.get('HQ_DEV_HTTP') != '1', SESSION_COOKIE_SAMESITE='Lax', PERMANENT_SESSION_LIFETIME=3600)
@@ -34,6 +36,7 @@ app.config['GOOGLE_CLIENT_ID'] = os.environ.get('GOOGLE_CLIENT_ID', '')
 app.config['GOOGLE_CLIENT_SECRET'] = os.environ.get('GOOGLE_CLIENT_SECRET', '')
 oauth.init_app(app)
 app.register_blueprint(auth)
+app.register_blueprint(passkeys)
 PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tommy Tints HQ</title><meta name="theme-color" content="#0b0f16"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Tommy Tints HQ"><link rel="icon" type="image/png" sizes="180x180" href="/favicon.ico?v=20261117c"><link rel="apple-touch-icon" sizes="180x180" href="/hq-icon-180.png?v=20261117c"><link rel="manifest" href="/static/manifest.webmanifest?v=20261117c"><style>
 :root{font-family:system-ui,Arial;color:#eef2f8;background:#0b0f16}*{box-sizing:border-box}body{margin:0}.shell{display:flex;min-height:100vh}aside{width:235px;background:#111824;padding:24px;border-right:1px solid #283344}main{padding:30px;flex:1;min-width:0;max-width:1250px}h1{font-size:32px;margin:0 0 8px}h2{font-size:21px}p,small{color:#aab6c8}.brand{font-size:23px;font-weight:900;margin-bottom:28px}.brand b{color:#f0444d}button,.button{background:#263447;color:white;border:1px solid #43536a;padding:11px 14px;border-radius:9px;cursor:pointer;font-weight:650}button:hover{background:#364c67}button.active,.primary{background:#c82737;border-color:#e03a49}.nav{display:block;width:100%;text-align:left;margin:7px 0}.card{background:#151e2b;border:1px solid #2c394b;padding:20px;border-radius:14px;margin:15px 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:13px}.grid .card{margin:0}.muted{color:#9baac0}.value{font-size:27px;font-weight:800}.hidden{display:none}label{display:block;margin:12px 0 5px;color:#c6d0df}input,select{background:#0d1420;color:white;border:1px solid #45536a;padding:11px;border-radius:8px;width:100%;max-width:420px}table{border-collapse:collapse;width:100%;margin-top:12px}td,th{padding:11px;border-bottom:1px solid #344055;text-align:left}a{color:#ff7c84}.notice{border-left:3px solid #eab44c;padding:12px 15px;background:#302718;margin:15px 0;color:#f0d99d}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}#timer{font-size:40px;font-variant-numeric:tabular-nums} @media(max-width:750px){.shell{display:block}aside{width:100%;padding:14px}.brand{margin-bottom:8px}.nav{display:inline-block;width:auto;margin:4px;font-size:12px}main{padding:17px}}
 
@@ -48,6 +51,10 @@ PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name
 <section id="maintenance" class="page hidden"><div class="card"><h2>Maintenance & Route Planner</h2><p>Read-only view of existing Maintenance Clients, Maintenance Visits and Route Rules. Customer data stays within your authenticated HQ session.</p><button id="loadMaintenance" class="primary">Load maintenance customers</button><p id="maintenanceStatus" role="status"></p><div id="maintenanceSummary"></div><div id="maintenanceClusters"></div><hr><h3>Customers due together</h3><p>Suggests customers due within the next 7 days who share a recorded route area. Does not send reminders or create bookings.</p><button id="maintenanceSuggest">Find booking opportunities</button><div id="maintenanceSuggestions" role="status"></div><hr><h3>Live Google Calendar conflict check</h3><p>Checks your primary Google Calendar, read-only. Square bookings and other calendars are not included. Permission expires and may require reconnection.</p><p><a href="/auth/calendar/connect">Connect Google Calendar (read-only)</a></p><label for="liveCalendarDate">Appointment date</label><input id="liveCalendarDate" type="date"><label for="liveCalendarStartTime">Start time</label><input id="liveCalendarStartTime" type="time" value="09:00"><label for="liveCalendarEndTime">End time</label><input id="liveCalendarEndTime" type="time" value="10:00"><p>Times use UK local time (GMT/BST). No technical date format needed.</p><button id="liveCalendarCheck">Check live Google Calendar</button><p id="liveCalendarResult" role="status"></p><hr><h3>Booking conflict preview</h3><p>Paste proposed appointment and existing calendar event times in ISO 8601 format, including UK timezone offset. This checks overlaps only; it does not read your live calendar or create appointments.</p><label>Proposed start</label><input id="calendarStart" placeholder="2026-11-18T10:00:00+00:00"><label>Proposed end</label><input id="calendarEnd" placeholder="2026-11-18T11:00:00+00:00"><label>Existing busy events (one per line: start,end)</label><textarea id="calendarEvents" rows="3" placeholder="2026-11-18T10:30:00+00:00,2026-11-18T12:00:00+00:00"></textarea><button id="calendarCheck">Check overlapping appointments</button><p id="calendarResult" role="status"></p><hr><h3>Driving-time grouping (Google Routes)</h3><p>Optional integration: requires a configured server-side Google Maps Routes API key and verified full addresses. No automatic booking changes.</p><label>Full addresses (one per line, include street, postcode and UK)</label><textarea id="maintenanceAddresses" rows="5" placeholder="Unit 5 &amp; 6 Portland Lodge, RM14 3TJ, UK&#10;Customer full street address, SS11 7LL, UK"></textarea><button id="maintenanceMapCalculate">Compare driving times</button><div id="maintenanceMapResult" role="status"></div><hr><h3>Travel charge calculator</h3><p>Uses the existing 10 free one-way miles and £0.56 per mile setting. Enter verified one-way miles; no postcode-only distance guesses.</p><label>Verified one-way miles from HQ</label><input id="maintenanceMiles" type="number" min="0" step=".1" placeholder="Enter map distance"><button id="maintenanceTravelCalculate">Calculate travel surcharge</button><p id="maintenanceTravelResult" role="status"></p><hr><h3>Route profitability</h3><p>Enter total actual route distance and driving time, including journeys between customers and the return to HQ. Estimate costs across all stops.</p><label>Verified total route miles</label><input id="routeMiles" type="number" min="0" step=".1"><label>Total driving minutes</label><input id="routeMinutes" type="number" min="0" step="1"><label>Actual labour cost per hour (£)</label><input id="routeLabour" type="number" min="0" step=".01"><label>Allocated overhead per hour (£)</label><input id="routeOverhead" type="number" min="0" step=".01"><label>Stops (one per line: price, cleaning minutes, materials cost)</label><textarea id="routeStops" rows="5" placeholder="80,60,5.50&#10;80,60,5.50"></textarea><button id="routeCalculate">Calculate route contribution</button><p id="routeResult" role="status"></p><p>Suggested groups are based on your existing route areas, not verified driving times. No bookings are created or changed.</p><p><a href="https://docs.google.com/spreadsheets/d/1B0XULUDiMlVuW9u0kUOYem8WelBtOH-Xey_wWVYdb2M/edit" target="_blank" rel="noopener noreferrer">Open maintenance source workbook</a></p></div></section><section id="customer-requests" class="page hidden"><div class="card"><h2>Customer Requests</h2><p>Incoming customer booking and quote enquiries. Requests are unconfirmed until you review them. Changing a status does not book appointments, send messages or take payment.</p><button id="customerRequestsRefresh">Refresh requests</button><button id="customerDraftsRefresh">Refresh internal drafts</button><button id="customerWorkRefresh">Refresh work records</button><button id="customerCreateTestJob">Create TEST job</button><p id="customerRequestsStatus" role="status"></p><div id="customerRequestsList" style="display:grid;gap:12px;margin-top:16px"></div><h3>Internal quote and job drafts</h3><p>These are preparation records only, not jobs added to the live job board or quotes sent to customers.</p><div id="customerDraftsList" style="display:grid;gap:12px"></div><h3>Internal work records</h3><div id="customerWorkList" style="display:grid;gap:12px"></div></div></section><section id="assistant" class="page hidden"><div class="card"><h2>✦ Your HQ Assistant</h2><p>Private operations assistant — early access. Describe what needs doing in everyday language. Ask “HQ work summary” for live local internal record totals, even without API credentials. OpenAI chat requires configuration. Chat is read-only: no emails, bookings, payments or records are changed.</p><div id="assistantChatLog" aria-live="polite" style="display:grid;gap:10px;max-height:420px;overflow:auto;margin:12px 0"></div><label for="assistantInput">What would you like me to handle?</label><textarea id="assistantInput" maxlength="2000" rows="5" style="width:100%;max-width:760px;background:#0d1420;color:#fff;border:1px solid #45536a;padding:12px;border-radius:9px" placeholder="e.g. Check overdue invoices, prepare follow-up emails and review tomorrow's bookings"></textarea><div class="row" style="margin-top:12px"><button class="primary" id="assistantChat">Ask HQ assistant</button><button id="assistantPlan">Prepare task plan (offline)</button><button id="assistantClear">Clear saved chat</button><button id="assistantAuditRefresh">View activity log</button></div><p id="assistantStatus" role="status" aria-live="polite"></p><div id="assistantResults" class="grid"></div><div class="card"><h3>Assistant task inbox</h3><p>Save administrative tasks for later review. Approving a task marks it as approved; it does not execute it.</p><label for="assistantTaskTitle">Task title</label><input id="assistantTaskTitle" maxlength="160" placeholder="e.g. Follow up outstanding quote"><label for="assistantTaskDetails">Details</label><textarea id="assistantTaskDetails" maxlength="3000" rows="3" style="width:100%;background:#0d1420;color:white" placeholder="What needs doing?"></textarea><button id="assistantSaveTask">Save draft task</button><button id="assistantRefreshTasks">Refresh tasks</button><p id="assistantTaskStatus" role="status"></p><div id="assistantTaskList"></div><h3>Activity log</h3><div id="assistantAuditLog"></div></div><div class="notice">Actions requiring external access or approval are not executed in this preview. OpenAI chat requires Railway credentials. Local HQ work summary works without OpenAI. No external action tools or background worker are connected yet.</div></div></section><section id="settings" class="page hidden"><div class="card"><h2>App version</h2>
 <p>Current version <code style="overflow-wrap:anywhere">{{ hq_build }}</code></p>
 <p>Latest available version <code id="hq-latest-version" style="overflow-wrap:anywhere">Checking…</code></p>
+<h2>Passkeys</h2><p>Sign in again before adding or removing a passkey. Your iPhone may use Face ID or its device passcode.</p>
+<button type="button" data-passkey="register">Add passkey</button>
+<ul>{% for key in owner_passkeys %}<li>Passkey …{{ key.id[-6:] }} <button type="button" data-passkey="remove" data-credential="{{ key.id }}">Remove</button></li>{% endfor %}</ul>
+<p id="hq-passkey-status" role="status"></p><script defer src="/static/hq-passkeys.js"></script>
 </div></section><section id="integrations" class="page hidden"><div class="card"><h2>Integration readiness</h2><table><tr><th>Integration</th><th>Status</th></tr><tr><td>Google Sheets adapter</td><td>Google Sheets read-only OAuth consent available; server-side token persistence pending</td></tr><tr><td>Square / Calendar</td><td>Not connected to this app</td></tr><tr><td>Monzo / DNA Payments</td><td>Not connected to this app</td></tr><tr><td>Login / roles</td><td>Required before private data sync</td></tr></table></div></section>
 </main></div><script>
 "use strict";
@@ -464,7 +471,8 @@ The icon preview should match the logo above.</p>
 def home():
     if not configured():
         return "Authentication configuration required. Private HQ data remains disabled.", 503
-    if session.get("hq_auth") is not True:
+    active = active_session()
+    if active is None:
         # Keep the root URL on a branded HTML page so Safari can discover the
         # Apple touch icon before the owner signs in through Google OAuth.
         return _with_updates("""<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -483,9 +491,11 @@ a{background:#d51a27;color:white;padding:14px 22px;border-radius:12px;
 text-decoration:none;font-weight:700}</style></head><body>
 <img src="/hq-icon-180.png?v=20261117c" alt="Tommy Tints HQ logo">
 <h1>Tommy Tints HQ</h1><p>Private business dashboard</p>
-<p><a href="/login">Sign in with Google</a></p></body></html>""", build_version(), automatic=True)
+<p><button type="button" data-passkey="login">Sign in with a passkey</button></p>
+<p id="hq-passkey-status" role="status"></p>
+<p><a href="/login">Sign in with Google</a></p><script defer src="/static/hq-passkeys.js"></script></body></html>""", build_version(), automatic=True)
     version = build_version()
-    html = render_template_string(PAGE.replace("__HQ_CSRF_PLACEHOLDER__", session["csrf"]).replace("</main>", '<form action="/logout" method="post"><input type="hidden" name="csrf" value="' + session["csrf"] + '"><button type="submit">Sign out</button></form></main>'), hq_build=version)
+    html = render_template_string(PAGE.replace("__HQ_CSRF_PLACEHOLDER__", session["csrf"]).replace("</main>", '<form action="/logout" method="post"><input type="hidden" name="csrf" value="' + session["csrf"] + '"><button type="submit">Lock HQ / Sign out</button></form></main>'), hq_build=version, owner_passkeys=registered_passkeys(active))
     return _with_updates(html, version)
 @app.post("/api/quote/estimate")
 @required
@@ -498,9 +508,7 @@ def quote_estimate():
     try:
         service = data.get("service")
         if service:
-            key = session.get("sheets_token_key")
-            with _google_tokens_lock:
-                entry = _google_tokens.get(key) if key else None
+            entry = _google_connection("sheets")
             if not entry or entry[1] <= time.time():
                 return jsonify(error="Reconnect Google Sheets to quote from the live Cost Library"), 401
             workbook = read_workbook_with_access_token(entry[0])
@@ -528,12 +536,21 @@ CALENDAR_SCOPE = "openid email profile https://www.googleapis.com/auth/calendar.
 _calendar_tokens = {}
 _calendar_tokens_lock = Lock()
 
+def _google_connection(provider):
+    stored = connection(provider, session.get("google_sub"))
+    if stored:
+        return stored
+    tokens, lock = (_google_tokens, _google_tokens_lock) if provider == "sheets" else (_calendar_tokens, _calendar_tokens_lock)
+    with lock:
+        return tokens.get(session.get(f"{provider}_token_key"))
+
+
 @app.get("/auth/sheets/connect")
 @required
 def sheets_connect():
     return google.authorize_redirect(
         url_for("sheets_callback", _external=True, _scheme="https"),
-        scope=SHEETS_SCOPE, prompt="consent")
+        scope=SHEETS_SCOPE, prompt="consent", access_type="offline")
 
 @app.get("/auth/sheets/callback")
 @required
@@ -547,6 +564,7 @@ def sheets_callback():
     scope = token.get("scope", "")
     if "https://www.googleapis.com/auth/spreadsheets.readonly" not in scope.split():
         return "Google Sheets read-only permission was not granted", 403
+    save_connection("sheets", session.get("google_sub"), token)
     key = secrets.token_urlsafe(32)
     with _google_tokens_lock:
         _google_tokens[key] = (token["access_token"], time.time() + min(int(token.get("expires_in", 3600)), 3600))
@@ -558,7 +576,7 @@ def sheets_callback():
 def calendar_connect():
     return google.authorize_redirect(
         url_for("calendar_callback",_external=True,_scheme="https"),
-        scope=CALENDAR_SCOPE,prompt="consent")
+        scope=CALENDAR_SCOPE,prompt="consent", access_type="offline")
 
 @app.get("/auth/calendar/callback")
 @required
@@ -570,6 +588,7 @@ def calendar_callback():
         return "Google account not authorised",403
     if "https://www.googleapis.com/auth/calendar.events.readonly" not in token.get("scope","").split():
         return "Google Calendar read-only permission was not granted",403
+    save_connection("calendar", session.get("google_sub"), token)
     key=secrets.token_urlsafe(32)
     with _calendar_tokens_lock:
         _calendar_tokens[key]=(token["access_token"],time.time()+min(int(token.get("expires_in",3600)),3600))
@@ -582,9 +601,7 @@ def hq_calendar_live_check():
     if not request.is_json:return jsonify(error="JSON body required"),415
     data=request.get_json(silent=True)
     if not isinstance(data,dict):return jsonify(error="Invalid request"),400
-    key=session.get("calendar_token_key")
-    with _calendar_tokens_lock:
-        entry=_calendar_tokens.get(key) if key else None
+    entry = _google_connection("calendar")
     if not entry or entry[1]<=time.time():
         return jsonify(error="Connect Google Calendar read-only first",connect_url="/auth/calendar/connect"),401
     try:
@@ -691,9 +708,7 @@ def hq_maintenance_check_window():
 @app.get("/api/hq/maintenance/suggestions")
 @required
 def hq_maintenance_suggestions():
-    key=session.get("sheets_token_key")
-    with _google_tokens_lock:
-        entry=_google_tokens.get(key) if key else None
+    entry = _google_connection("sheets")
     if not entry or entry[1]<=time.time():
         return jsonify(error="Google Sheets consent required or expired",connect_url="/auth/sheets/connect"),401
     try:
@@ -732,9 +747,7 @@ def hq_maintenance_economics():
 @app.get("/api/hq/maintenance")
 @required
 def hq_maintenance():
-    key=session.get("sheets_token_key")
-    with _google_tokens_lock:
-        entry=_google_tokens.get(key) if key else None
+    entry = _google_connection("sheets")
     if not entry or entry[1]<=time.time():
         return jsonify(error="Google Sheets consent required or expired",connect_url="/auth/sheets/connect"),401
     try:
@@ -749,9 +762,7 @@ def hq_maintenance():
 @app.get("/api/hq/pricing")
 @required
 def hq_pricing():
-    key = session.get("sheets_token_key")
-    with _google_tokens_lock:
-        entry = _google_tokens.get(key) if key else None
+    entry = _google_connection("sheets")
     if not entry or entry[1] <= time.time():
         return jsonify(error="Google Sheets consent required or expired", connect_url="/auth/sheets/connect", connected=False), 401
     try:
@@ -768,6 +779,9 @@ _gmail_lock = Lock()
 
 
 def _gmail_token():
+    stored = connection("gmail", session.get("google_sub"))
+    if stored:
+        return stored[0]
     with _gmail_lock:
         entry = _gmail_tokens.get(session.get("gmail_token_key"))
         return entry[0] if entry and entry[1] > time.time() else None
@@ -779,7 +793,7 @@ def hq_gmail_connect():
     return google.authorize_redirect(
         url_for("hq_gmail_callback", _external=True, _scheme="https"),
         scope="openid email profile " + gmail.SCOPE,
-        login_hint=gmail.MAILBOX, prompt="select_account consent")
+        login_hint=gmail.MAILBOX, prompt="select_account consent", access_type="offline")
 
 
 @app.get("/auth/gmail/callback")
@@ -791,6 +805,7 @@ def hq_gmail_callback():
             return "Gmail read-only access was not granted", 403
         access_token = token["access_token"]
         gmail.verify_mailbox(access_token)
+        save_connection("gmail", session.get("google_sub"), token)
         expiry = time.time() + min(int(token.get("expires_in", 3600)), 3600)
     except ValueError:
         return "Select the Tommy Tints business mailbox and retry", 403
@@ -893,10 +908,8 @@ a{color:#ff8088}li{margin:8px 0}</style></head><body><main>
 
 def _hq_integrations():
     now = time.time()
-    with _google_tokens_lock:
-        sheets = _google_tokens.get(session.get("sheets_token_key"))
-    with _calendar_tokens_lock:
-        calendar = _calendar_tokens.get(session.get("calendar_token_key"))
+    sheets = _google_connection("sheets")
+    calendar = _google_connection("calendar")
     health = integration_status([
         ("sheets", "Google Sheets", bool(sheets and sheets[1] > now)),
         ("calendar", "Google Calendar", bool(calendar and calendar[1] > now)),

@@ -2,6 +2,8 @@ import os
 import unittest
 from unittest.mock import patch
 
+from hq_auth import issue_session
+from hq_auth_store import auth_db
 from app import app
 from hq_version import LOCAL_VERSION, UPDATE_SCRIPT_VERSION
 
@@ -34,7 +36,9 @@ class HQVersionTests(unittest.TestCase):
             self.assertIn('data-automatic="true"', html)
             self.assertNotIn('id="hq-latest-version"', html)
         with self.client.session_transaction() as session:
-            session.update(hq_auth=True, csrf="test")
+            with auth_db() as db:
+                session["hq_sid"] = issue_session(db, "test-owner")
+            session.update(csrf="test")
         html = self.client.get("/").get_data(as_text=True)
         self.assertIn('data-automatic="false"', html)
         self.assertIn('id="hq-latest-version"', html)
