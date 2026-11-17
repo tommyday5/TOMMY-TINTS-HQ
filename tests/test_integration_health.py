@@ -39,7 +39,7 @@ class IntegrationHealthTests(unittest.TestCase):
         self.sign_in()
         providers = self.providers()
         self.assertEqual(providers["Google Sheets"]["status"], "Consent required in this session")
-        self.assertEqual(providers["Square"]["status"], "Not implemented")
+        self.assertEqual(providers["Square"]["status"], "Configuration required")
         self.assertIsNone(providers["Square"]["pending_records"])
         dashboard = self.client.get("/hq/integrations")
         self.assertEqual(dashboard.status_code, 200)
