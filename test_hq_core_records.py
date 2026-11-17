@@ -4,7 +4,7 @@ import unittest
 from datetime import date,timedelta
 from unittest.mock import patch
 from customer_request_store import connect,create_request,create_review_draft,update_request_status
-from hq_core_records import create_internal_work_record,list_work_records,set_draft_financials,change_work_status,work_summary,create_test_job,delete_test_job
+from hq_core_records import create_internal_work_record,list_work_records,set_draft_financials,change_work_status,work_summary,create_test_job,delete_test_job,read_work_record,recent_work_records
 
 class CoreRecordsTests(unittest.TestCase):
     def setUp(self):
@@ -112,5 +112,27 @@ class CoreRecordsTests(unittest.TestCase):
         create_review_draft(ref,"job")
         work=create_internal_work_record(ref)
         with self.assertRaises(ValueError):set_draft_financials(work,True,0)
+
+    def test_owner_read_only_index_and_single_record_details(self):
+        quote_ref=create_request(self.payload,"ip")
+        create_review_draft(quote_ref,"quote")
+        quote=create_internal_work_record(quote_ref)
+        job=create_test_job()
+        self.assertEqual([r["id"] for r in recent_work_records("quote")],[quote])
+        job_index=recent_work_records("job")
+        self.assertEqual([r["id"] for r in job_index],[job])
+        self.assertNotIn("name",job_index[0])
+        self.assertNotIn("registration",job_index[0])
+        row=read_work_record(quote)
+        self.assertEqual((row["name"],row["registration"]),("Test Customer","AB20 XYZ"))
+        for bad in ("ABC", "z"*32, "f"*33, None):
+            with self.subTest(bad=bad),self.assertRaises(ValueError):
+                read_work_record(bad)
+        with self.assertRaises(LookupError):
+            read_work_record("f"*32)
+        with self.assertRaises(ValueError):
+            recent_work_records("booking")
+        with self.assertRaises(ValueError):
+            recent_work_records("quote",limit=0)
 
 if __name__=="__main__": unittest.main()
