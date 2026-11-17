@@ -110,14 +110,26 @@ def change_work_status(record_id, new_status):
     return new_status
 
 def work_summary():
-    records=list_work_records()
+    """Aggregate all internal records, not only the 100 shown in the UI.
+
+    Prices and deposits are owner-entered draft figures, not verified payments.
+    """
+    with connect() as db:
+        _schema(db)
+        rows = db.execute("""SELECT status, COUNT(*) AS record_count,
+            COALESCE(SUM(CASE WHEN status IN ('draft','ready_for_review')
+                THEN COALESCE(price_pence,0) ELSE 0 END),0) AS draft_value,
+            COALESCE(SUM(CASE WHEN status != 'cancelled' AND price_pence IS NOT NULL
+                THEN price_pence - deposit_pence ELSE 0 END),0) AS outstanding
+            FROM hq_work_records GROUP BY status""").fetchall()
     return {
-        "record_count":len(records),
-        "by_status":{status:sum(r["status"]==status for r in records) for status in WORK_TRANSITIONS},
-        "priced_draft_value_pence":sum(r["price_pence"] or 0 for r in records if r["status"] in {"draft","ready_for_review"}),
-        "outstanding_recorded_pence":sum((r["price_pence"] or 0)-r["deposit_pence"] for r in records if r["price_pence"] is not None and r["status"] not in {"cancelled"}),
-        "source":"internal_work_records_only",
-        "payment_verified":False,
+        "record_count": sum(row["record_count"] for row in rows),
+        "by_status": {status: sum(row["record_count"] for row in rows if row["status"] == status)
+                      for status in WORK_TRANSITIONS},
+        "priced_draft_value_pence": sum(row["draft_value"] for row in rows),
+        "outstanding_recorded_pence": sum(row["outstanding"] for row in rows),
+        "source": "internal_work_records_only",
+        "payment_verified": False,
     }
 
 def create_test_job():
