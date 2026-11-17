@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="hq-csrf" content="{{ csrf }}">
+<title>Maintenance Routes | Tommy Tints HQ</title>
+<link rel="icon" href="/hq-icon-180.png?v=20261117c">
+<link rel="stylesheet" href="/static/route-planner.css">
+<script defer src="/static/route-planner.js"></script>
+</head><body><main id="routePlanner" data-browser-key="{{ browser_key }}" data-routing="{{ 'yes' if routes_enabled else 'no' }}">
+<header><a href="/"><img src="/hq-icon-180.png?v=20261117c" alt="Tommy Tints HQ"><span>Back to HQ</span></a><h1>Maintenance Routes</h1></header>
+<p id="routeMessage" role="status">Loading maintenance customers…</p>
+<div class="layout">
+<section class="panel" aria-labelledby="mapHeading">
+<h2 id="mapHeading">Customer map</h2>
+{% if browser_key %}<button type="button" id="loadMap">Load map and plot customer addresses</button>
+<div id="map" hidden></div>
+<p id="mapMessage" role="status">Loads your recorded stop addresses through Google Maps.</p>
+{% else %}<p>Map unavailable. Configure a Google Maps browser key to plot addresses.</p>{% endif %}
+<div id="markerDetail" aria-live="polite"></div>
+</section>
+<section class="panel" aria-labelledby="stopsHeading">
+<h2 id="stopsHeading">Selected stops</h2>
+<ol id="stopList"></ol>
+<div class="buttons"><button type="button" id="optimise" disabled>Optimise route</button>
+<button type="button" id="calculate" disabled>Calculate in this order</button></div>
+{% if not routes_enabled %}<p>Driving estimates unavailable. Configure Google Routes and the workshop base address.</p>{% endif %}
+<div id="routeTotals" aria-live="polite"></div>
+<details><summary>Cost breakdown</summary><p>Route contribution shown here deducts mileage only. Labour, materials and overhead are excluded.</p>
+<p><a href="/?page=maintenance">Open HQ maintenance tools for full cost estimates</a></p></details>
+</section>
+</div>
+<section class="panel"><h2>Maintenance customers</h2>
+<label for="filter">Visits</label>
+<select id="filter"><option value="">All customers</option><option>overdue</option><option>due soon</option><option>scheduled</option><option>completed</option></select>
+<div id="customerList"></div></section>
+</main></body></html>
