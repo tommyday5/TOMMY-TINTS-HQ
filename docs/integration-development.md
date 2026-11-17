@@ -48,3 +48,22 @@ Use an isolated restore for backup drills. Validate additive schema changes agai
 - The Railway volume stores the owner security database. Logout does not revoke
   stored Google grants or change Square configuration. Google can still revoke
   grants or require renewed consent.
+
+## Visual maintenance routes
+
+- **Maintenance Routes → Open visual route planner** loads the current maintenance
+  sheet through the existing owner connection. Full street addresses and postcodes
+  must already be recorded. No postcode-centroid pins or estimated coordinates are used.
+- To enable the map after approving Google Maps usage, configure
+  `HQ_GOOGLE_MAPS_BROWSER_KEY` with Maps JavaScript API and Geocoding API enabled
+  in a billed project. Restrict the browser key to the HQ website referrer
+  and these APIs. The key is visible to the browser and must be separate from the server key.
+- To enable round-trip routes, configure `HQ_GOOGLE_MAPS_API_KEY` with Routes API
+  access, and set `HQ_ROUTE_BASE_ADDRESS` to the verified workshop address and postcode.
+  Restrict the server key to Routes API and apply the deployment's supported credential
+  restrictions and usage limits. Route calculations only run on owner request.
+- Set `HQ_ROUTE_MILEAGE_RATE` if the default planning estimate of £0.56/mile
+  is unsuitable. The visual planner reports revenue after mileage. Use the advanced
+  route-cost calculator for labour, materials and overhead.
+- Job cards are based on internal HQ work records. The existing Google Sheets job list
+  remains separate and read-only. Requested dates and recorded deposits are shown as such.
