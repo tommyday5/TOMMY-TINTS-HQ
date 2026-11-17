@@ -53,10 +53,14 @@ def _revision(db, scope, ref):
         WHERE scope=? AND record_id=?""", (scope, ref)).fetchone()[0]
 
 
-def customer_revision(scope, ref):
+def maintenance_edit_snapshot(ref, fallback):
+    """Read the override and version from one consistent SQLite snapshot."""
     with closing(connect()) as db, db:
         _tables(db)
-        return _revision(db, scope, ref)
+        db.execute("BEGIN")
+        stored = db.execute("SELECT * FROM maintenance_customer_edits WHERE id=?", (ref,)).fetchone()
+        revision = _revision(db, "maintenance", ref)
+        return (dict(stored) if stored is not None else fallback), revision
 
 
 def posted_revision():
@@ -125,6 +129,8 @@ def internal_customer(customer_id):
         db.execute("PRAGMA foreign_keys=ON")
         _schema(db)
         _tables(db)
+        if request.method == "GET":
+            db.execute("BEGIN")
         row = db.execute("""SELECT c.name, c.email, c.phone, a.address, a.postcode
             FROM hq_customers c LEFT JOIN hq_customer_addresses a ON a.customer_id=c.id
             WHERE c.id=?""", (customer_id,)).fetchone()
