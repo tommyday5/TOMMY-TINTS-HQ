@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from hq_auth import issue_session
+from hq_auth_store import auth_db
 from app import app
 
 
@@ -25,7 +27,9 @@ class IntegrationHealthTests(unittest.TestCase):
 
     def sign_in(self):
         with self.client.session_transaction() as session:
-            session.update(hq_auth=True, sheets_token_key="sheet", calendar_token_key="calendar")
+            with auth_db() as db:
+                session["hq_sid"] = issue_session(db, "test-owner")
+            session.update(sheets_token_key="sheet", calendar_token_key="calendar")
 
     def providers(self):
         response = self.client.get("/api/hq/integrations")
@@ -44,7 +48,7 @@ class IntegrationHealthTests(unittest.TestCase):
         dashboard = self.client.get("/hq/integrations")
         self.assertEqual(dashboard.status_code, 200)
         self.assertIn(b"Unavailable", dashboard.data)
-        self.assertFalse(list(self.data_dir.iterdir()))
+        self.assertEqual({p.name for p in self.data_dir.iterdir()}, {"owner_security.sqlite3"})
 
     def test_sheets_read_observations_preserve_history_and_do_not_touch_existing_database(self):
         self.sign_in()

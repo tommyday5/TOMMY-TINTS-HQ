@@ -2,6 +2,8 @@
 import os
 import unittest
 from unittest.mock import patch
+from hq_auth import issue_session
+from hq_auth_store import auth_db
 from app import app, _google_tokens, _google_tokens_lock
 
 ENV={"HQ_SESSION_SECRET":"testing-only","GOOGLE_CLIENT_ID":"test-id",
@@ -22,7 +24,8 @@ class SheetsOAuthTests(unittest.TestCase):
     def test_owner_without_consent_cannot_read(self):
         with patch.dict(os.environ,ENV,clear=True):
             with self.client.session_transaction() as s:
-                s["hq_auth"]=True
+                with auth_db() as db:
+                    s["hq_sid"] = issue_session(db, "test-owner")
             result=self.client.get("/api/hq/pricing")
             self.assertEqual(result.status_code,401)
             self.assertIn("connect_url",result.json)
@@ -30,7 +33,8 @@ class SheetsOAuthTests(unittest.TestCase):
     def test_expired_token_rejected(self):
         with patch.dict(os.environ,ENV,clear=True):
             with self.client.session_transaction() as s:
-                s["hq_auth"]=True
+                with auth_db() as db:
+                    s["hq_sid"] = issue_session(db, "test-owner")
                 s["sheets_token_key"]="expired"
             with _google_tokens_lock:
                 _google_tokens["expired"]=("never-use",0)

@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
+from hq_auth import issue_session
+from hq_auth_store import auth_db
 from app import app
 import hq_square_bookings as square
 
@@ -61,7 +63,9 @@ class SquareSnapshotTests(unittest.TestCase):
         with app.test_client() as client:
             self.assertEqual(client.get(path).status_code, 302)
             with client.session_transaction() as session:
-                session.update(hq_auth=True, csrf="csrf")
+                with auth_db() as db:
+                    session["hq_sid"] = issue_session(db, "test-owner")
+                session.update(csrf="csrf")
             self.assertEqual(client.post(path).status_code, 403)
             with patch.object(square.requests, "get", return_value=self.response(1, "ACCEPTED")):
                 result = client.post(path, data={"csrf": "csrf"})

@@ -4,6 +4,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from hq_auth import issue_session
+from hq_auth_store import auth_db
 from app import app
 from hq_assistant_local import answer, LocalRecordsUnavailable
 from hq_core_records import create_test_job, set_draft_financials
@@ -32,7 +34,9 @@ class LocalSummaryTests(unittest.TestCase):
             with app.test_client() as client:
                 self.assertEqual(client.post("/api/hq/assistant/chat", json={"message": "HQ work summary"}).status_code, 302)
                 with client.session_transaction() as sess:
-                    sess.update(hq_auth=True, csrf="csrf")
+                    with auth_db() as db:
+                        sess["hq_sid"] = issue_session(db, "test-owner")
+                    sess.update(csrf="csrf")
                 self.assertEqual(client.post("/api/hq/assistant/chat", json={"message": "HQ work summary"}).status_code, 403)
                 result = client.post("/api/hq/assistant/chat",
                     headers={"X-HQ-CSRF": "csrf"}, json={"message": "HQ work summary"})

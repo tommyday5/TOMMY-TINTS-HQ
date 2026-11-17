@@ -5,6 +5,8 @@ import time
 import unittest
 from unittest.mock import Mock, patch
 
+from hq_auth import issue_session
+from hq_auth_store import auth_db
 from app import app
 import hq_gmail_enquiries as gmail
 from maintenance_calendar_google import live_conflicts
@@ -46,7 +48,9 @@ class GmailTests(unittest.TestCase):
         with app.test_client() as client:
             self.assertEqual(client.get(url).status_code, 302)
             with client.session_transaction() as session:
-                session.update(hq_auth=True, csrf="csrf", gmail_token_key="key")
+                with auth_db() as db:
+                    session["hq_sid"] = issue_session(db, "test-owner")
+                session.update(csrf="csrf", gmail_token_key="key")
             self.assertEqual(client.post(url).status_code, 403)
             self.assertEqual(client.post(url, data={"csrf": "csrf"}).status_code, 401)
             with patch("app._gmail_tokens", {"key": ("token", time.time() + 60)}):
