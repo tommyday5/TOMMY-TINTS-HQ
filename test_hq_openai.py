@@ -63,7 +63,7 @@ class OpenAIChatTests(unittest.TestCase):
                 data["status"] = self.status
                 return data
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key", "OPENAI_MODEL": "test-model"}):
-            for status in ("incomplete", "failed", "cancelled"):
+            for status in ("incomplete", "failed", "cancelled", "queued", "in_progress", "mystery", 42, {}, []):
                 with self.subTest(status=status), self.assertRaises(AssistantUpstreamError):
                     chat("Hello", post=lambda *args, **kwargs: StatusResponse(status))
             self.assertEqual(chat("Hello", post=lambda *args, **kwargs: StatusResponse("completed"))["actions_executed"], 0)
