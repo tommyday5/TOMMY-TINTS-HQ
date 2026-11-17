@@ -4,6 +4,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from hq_auth import issue_session
+from hq_auth_store import auth_db
 from app import app
 from hq_assistant_local import answer, LocalRecordsUnavailable
 from hq_core_records import create_test_job, set_draft_financials, create_internal_work_record
@@ -33,7 +35,9 @@ class LocalSummaryTests(unittest.TestCase):
             with app.test_client() as client:
                 self.assertEqual(client.post("/api/hq/assistant/chat", json={"message": "HQ work summary"}).status_code, 302)
                 with client.session_transaction() as sess:
-                    sess.update(hq_auth=True, csrf="csrf")
+                    with auth_db() as db:
+                        sess["hq_sid"] = issue_session(db, "test-owner")
+                    sess.update(csrf="csrf")
                 self.assertEqual(client.post("/api/hq/assistant/chat", json={"message": "HQ work summary"}).status_code, 403)
                 result = client.post("/api/hq/assistant/chat",
                     headers={"X-HQ-CSRF": "csrf"}, json={"message": "HQ work summary"})
@@ -81,7 +85,9 @@ class LocalSummaryTests(unittest.TestCase):
             # Owner sign-in and CSRF remain mandatory for each local lookup.
             self.assertEqual(client.post(path, json={"message": "HQ recent quotes"}).status_code, 302)
             with client.session_transaction() as sess:
-                sess.update(hq_auth=True, csrf="csrf")
+                with auth_db() as db:
+                        sess["hq_sid"] = issue_session(db, "test-owner")
+                    sess.update(csrf="csrf")
             self.assertEqual(client.post(path, json={"message": "HQ recent quotes"}).status_code, 403)
             def ask(msg):
                 return client.post(path, headers={"X-HQ-CSRF": "csrf"}, json={"message": msg})
@@ -119,7 +125,9 @@ class LocalSummaryTests(unittest.TestCase):
     def test_missing_and_invalid_local_records_never_call_provider(self):
         with app.test_client() as client, patch("app.openai_chat") as provider:
             with client.session_transaction() as sess:
-                sess.update(hq_auth=True, csrf="csrf")
+                with auth_db() as db:
+                        sess["hq_sid"] = issue_session(db, "test-owner")
+                    sess.update(csrf="csrf")
             response = client.post("/api/hq/assistant/chat",
                 headers={"X-HQ-CSRF": "csrf"}, json={"message": "HQ record " + "a" * 32})
             self.assertEqual(response.status_code, 404)
