@@ -48,4 +48,37 @@ class AssistantMemoryTests(unittest.TestCase):
             with self.subTest(user_message=user_message, assistant_reply=assistant_reply):
                 with self.assertRaises(ValueError):
                     record_chat(user_message, assistant_reply)
+    def test_local_record_turns_are_visible_to_owner_but_excluded_from_provider_context(self):
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {"HQ_DATA_DIR": d}):
+            record_chat("HQ record abc", "Private customer details", provider_visible=False)
+            record_chat("Good morning", "Hello")
+            self.assertEqual(len(history()), 4)
+            self.assertEqual(history(provider_visible_only=True), [
+                {"role": "user", "content": "Good morning"},
+                {"role": "assistant", "content": "Hello"},
+            ])
+            with connect() as db:
+                self.assertEqual([row["provider_visible"] for row in
+                                  db.execute("SELECT provider_visible FROM chat_messages ORDER BY id")],
+                                 [0, 0, 1, 1])
+            with self.assertRaises(ValueError):
+                record_chat("hi", "hello", provider_visible=1)
+            with self.assertRaises(ValueError):
+                history(provider_visible_only=1)
+
+    def test_legacy_chat_schema_migrates_without_losing_messages(self):
+        import sqlite3
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {"HQ_DATA_DIR": d}):
+            with sqlite3.connect(str(Path(d) / "assistant_memory.sqlite3")) as db:
+                db.execute("""CREATE TABLE chat_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT NOT NULL,
+                    content TEXT NOT NULL, created_at TEXT NOT NULL)""")
+                db.execute("INSERT INTO chat_messages(role,content,created_at) VALUES(?,?,?)",
+                           ("assistant", "Legacy history", "2026-01-01"))
+            self.assertEqual(history(provider_visible_only=True),
+                             [{"role": "assistant", "content": "Legacy history"}])
+            record_chat("local", "not for provider", provider_visible=False)
+            self.assertEqual(len(history(provider_visible_only=True)), 1)
+
 if __name__=="__main__":unittest.main()

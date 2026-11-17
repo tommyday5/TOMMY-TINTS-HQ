@@ -15,30 +15,43 @@ def connect():
     db.execute("""CREATE TABLE IF NOT EXISTS chat_messages(
         id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT NOT NULL,
         content TEXT NOT NULL, created_at TEXT NOT NULL)""")
+    # Safe additive migration: pre-existing conversations remain readable.
+    columns = {row[1] for row in db.execute("PRAGMA table_info(chat_messages)")}
+    if "provider_visible" not in columns:
+        db.execute("ALTER TABLE chat_messages ADD COLUMN provider_visible INTEGER NOT NULL DEFAULT 1")
     db.execute("""CREATE TABLE IF NOT EXISTS assistant_audit(
         id INTEGER PRIMARY KEY AUTOINCREMENT, event TEXT NOT NULL,
         details TEXT NOT NULL, created_at TEXT NOT NULL)""")
     return db
 
-def history(limit=12):
+def history(limit=12, *, provider_visible_only=False):
     if type(limit) is not int or not 1 <= limit <= MAX_CHAT_MESSAGES:
         raise ValueError("History limit must be between 1 and 200")
+    if type(provider_visible_only) is not bool:
+        raise ValueError("Invalid history visibility")
     with connect() as db:
-        rows=db.execute("SELECT role,content FROM chat_messages ORDER BY id DESC LIMIT ?",(limit,)).fetchall()
+        if provider_visible_only:
+            rows=db.execute("SELECT role,content FROM chat_messages WHERE provider_visible=1 ORDER BY id DESC LIMIT ?",(limit,)).fetchall()
+        else:
+            rows=db.execute("SELECT role,content FROM chat_messages ORDER BY id DESC LIMIT ?",(limit,)).fetchall()
     return [dict(row) for row in reversed(rows)]
 
-def record_chat(user_message,assistant_reply):
+def record_chat(user_message,assistant_reply, *, provider_visible=True):
     if not all(isinstance(s,str) and bool(s.strip()) and len(s)<=12000 for s in (user_message,assistant_reply)):
         raise ValueError("Invalid conversation content")
+    if type(provider_visible) is not bool:
+        raise ValueError("Invalid provider history visibility")
     now=datetime.now(timezone.utc).isoformat()
     with connect() as db:
-        db.executemany("INSERT INTO chat_messages(role,content,created_at) VALUES(?,?,?)",
-                       [("user",user_message,now),("assistant",assistant_reply,now)])
+        db.executemany("INSERT INTO chat_messages(role,content,created_at,provider_visible) VALUES(?,?,?,?)",
+                       [("user",user_message,now,int(provider_visible)),
+                        ("assistant",assistant_reply,now,int(provider_visible))])
         db.execute("""DELETE FROM chat_messages WHERE id NOT IN
                       (SELECT id FROM chat_messages ORDER BY id DESC LIMIT ?)""",
                    (MAX_CHAT_MESSAGES,))
         db.execute("INSERT INTO assistant_audit(event,details,created_at) VALUES(?,?,?)",
-                   ("chat_reply","Read-only AI response stored; no external action",now))
+                   ("chat_reply","Local HQ reply stored privately; not sent to AI provider" if not provider_visible
+                    else "Read-only AI response stored; no external action",now))
 
 def clear_history():
     now=datetime.now(timezone.utc).isoformat()
