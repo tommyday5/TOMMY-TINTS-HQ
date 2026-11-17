@@ -28,7 +28,7 @@ def history(limit=12):
     return [dict(row) for row in reversed(rows)]
 
 def record_chat(user_message,assistant_reply):
-    if not all(isinstance(s,str) and 0<len(s)<=12000 for s in (user_message,assistant_reply)):
+    if not all(isinstance(s,str) and bool(s.strip()) and len(s)<=12000 for s in (user_message,assistant_reply)):
         raise ValueError("Invalid conversation content")
     now=datetime.now(timezone.utc).isoformat()
     with connect() as db:
