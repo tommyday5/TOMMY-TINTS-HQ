@@ -222,7 +222,7 @@ placeholder="Paste an export header or a bounded CSV; contents are never redispl
 spellcheck="false" placeholder='{"transaction_id":"EXACT SOURCE COLUMN","amount_pence":"EXACT SOURCE COLUMN","currency":"EXACT SOURCE COLUMN","booked_at":"EXACT SOURCE COLUMN"}'></textarea>
 <label for="classifications">Monzo only: optional manual classification proposals (JSON transaction ID to review category). Never mark a proposal as verified cash.</label>
 <textarea id="classifications" name="classifications" rows="4" maxlength="50000" autocomplete="off"
-spellcheck="false" placeholder='{"tx001":"transfer","tx002":"customer_receipt_candidate"}'></textarea>
+spellcheck="false" placeholder='{"example-A":"transfer","example-B":"customer_receipt_candidate"}'></textarea>
 <p>Allowed review categories: {{ categories|join(", ") }}. No categories are inferred. Exact source transaction IDs are used only in memory.</p>
 <button type="submit">Inspect without importing</button></form></section>
 {% if error %}<section role="alert">{{ error }}</section>{% endif %}
