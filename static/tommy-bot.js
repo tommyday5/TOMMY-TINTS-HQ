@@ -13,5 +13,5 @@ launch.addEventListener('click',()=>panel.hidden?open():close());root.querySelec
 root.querySelector('.tt-dismiss').addEventListener('click',()=>{welcome.hidden=true;try{localStorage.setItem('tt-bot-welcome-v1','dismissed')}catch{}});
 root.addEventListener('keydown',e=>{if(e.key==='Escape'&&!panel.hidden)close()});
 root.querySelectorAll('[data-action]').forEach(b=>b.addEventListener('click',()=>{const target=document.getElementById(b.dataset.action);if(target){close();target.click();target.focus()}else location.href='/book'}));
-if(home){const intro=document.createElement('div');intro.className='tt-bot';intro.append(welcome);home.append(intro)}
+if(home){const intro=document.createElement('div');intro.className='tt-bot';intro.append(welcome);(home.querySelector('.hero')||home.lastElementChild).after(intro)}
 })();
