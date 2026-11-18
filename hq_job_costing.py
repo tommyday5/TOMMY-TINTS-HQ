@@ -41,7 +41,13 @@ def costing_snapshot(owner, record_id):
         "saved_sale_matches_record": None,
         "total_recorded_cost": None,
         "materials": None,
+        "material_line_count": None,
+        "labour_hours": None,
+        "actual_labour_rate": None,
         "actual_labour_cost": None,
+        "allocated_overhead": None,
+        "other_costs": None,
+        "missing_cost_fields": [],
         "estimated_contribution": None,
         "margin_percent": None,
         "note": "Internal estimates only. Payment is unverified; tax and omitted costs may alter profit.",
@@ -60,28 +66,45 @@ def costing_snapshot(owner, record_id):
         except (InvalidOperation, ValueError, TypeError):
             pass
 
-    # A missing price must not become an invented £0 sale.
-    # An incomplete cost log must never display an apparently reliable margin.
-    complete = (
-        isinstance(payload.get("lines"), list)
-        and all(_filled(payload.get(field)) for field in COST_FIELDS if field != "lines")
-    )
+    # A complete cost log is independent of whether the job has an approved
+    # selling price. Keep missing components absent, never silently £0.
+    missing = []
+    if not isinstance(payload.get("lines"), list):
+        missing.append("lines")
+    missing.extend(field for field in COST_FIELDS[1:] if not _filled(payload.get(field)))
+    complete = not missing
+    snapshot["missing_cost_fields"] = missing
     snapshot["complete_costs"] = complete
-    if price_pence is None:
-        return snapshot
     try:
+        # Zero is a calculation placeholder ONLY when the authoritative HQ
+        # price is absent; such records never expose contribution or margin.
         report = profitability({
-            **payload, "sale": str(Decimal(price_pence) / 100)
+            **payload,
+            "sale": str(Decimal(price_pence) / 100) if price_pence is not None else "0",
         })
-    except (ValueError, TypeError, KeyError):
-        # A legacy malformed log must not produce an invented cost or a 500.
+    except (ValueError, TypeError, KeyError, InvalidOperation):
+        # A malformed legacy log must not manufacture cost figures or a 500.
         snapshot["complete_costs"] = False
         snapshot["note"] = "Saved costing is invalid; review and correct the log before relying on figures."
         return snapshot
+
+    snapshot["material_line_count"] = len(payload["lines"])
     snapshot["materials"] = report["materials"]
-    snapshot["actual_labour_cost"] = report["labour_cost"]
-    snapshot["total_recorded_cost"] = report["total_recorded_cost"]
-    if complete and approved and report["complete_costs"]:
-        snapshot["estimated_contribution"] = report["estimated_contribution"]
-        snapshot["margin_percent"] = report["margin_percent"]
+    if "labour" not in missing:
+        snapshot["labour_hours"] = str(Decimal(str(payload["labour"])))
+    if "actual_labour_rate" not in missing:
+        snapshot["actual_labour_rate"] = str(Decimal(str(payload["actual_labour_rate"])))
+    if "labour" not in missing and "actual_labour_rate" not in missing:
+        snapshot["actual_labour_cost"] = report["labour_cost"]
+    if "overhead" not in missing:
+        snapshot["allocated_overhead"] = report["overhead"]
+    if "other_costs" not in missing:
+        snapshot["other_costs"] = report["other_costs"]
+    # Do not present a total that quietly treats missing labour / overhead
+    # as zero. Individual validated components remain visible for review.
+    if complete and report["complete_costs"]:
+        snapshot["total_recorded_cost"] = report["total_recorded_cost"]
+        if approved and price_pence is not None:
+            snapshot["estimated_contribution"] = report["estimated_contribution"]
+            snapshot["margin_percent"] = report["margin_percent"]
     return snapshot
