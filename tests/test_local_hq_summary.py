@@ -60,7 +60,7 @@ class LocalSummaryTests(unittest.TestCase):
 
 
     def test_approved_pipeline_excludes_synthetic_jobs_and_does_not_claim_cash(self):
-        payload = dict(kind="job", name="Private Customer", email="example@example.invalid",
+        payload = dict(kind="quote", name="Private Customer", email="example@example.invalid",
                        phone="07123456789", service="Window Tinting", make="Ford", model="Focus",
                        year="2021", registration="AB21 XYZ", date="", time="", notes="",
                        privacy_acknowledged=True)
