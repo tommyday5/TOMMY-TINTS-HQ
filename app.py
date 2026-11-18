@@ -38,7 +38,7 @@ from customer_edits import customer_edits
 from maintenance_visual import visual_routes
 from hq_auth import auth, oauth, google, required, configured, active_session
 from hq_passkeys import passkeys, registered_passkeys
-from hq_google_connections import connection, save_connection
+from hq_google_connections import connection, save_connection, stored_grant_present
 app = Flask(__name__)
 app.secret_key = os.environ.get('HQ_SESSION_SECRET') or secrets.token_hex(32)
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SECURE=os.environ.get('HQ_DEV_HTTP') != '1', SESSION_COOKIE_SAMESITE='Lax', PERMANENT_SESSION_LIFETIME=3600)
@@ -1203,17 +1203,33 @@ a{color:#ff8088}li{margin:8px 0}</style></head><body><main>
         csrf=session.get("csrf")), 200, {"Cache-Control": "no-store"}
 
 
+def _local_google_consent(provider):
+    """Report locally stored consent without an OAuth refresh or provider call."""
+    if stored_grant_present(provider, session.get("google_sub")):
+        return True
+    # Pre-persistent session-scoped grants remain visible until expiry.
+    caches = {"sheets": (_google_tokens, _google_tokens_lock),
+              "calendar": (_calendar_tokens, _calendar_tokens_lock),
+              "gmail": (_gmail_tokens, _gmail_lock)}
+    tokens, lock = caches[provider]
+    with lock:
+        entry = tokens.get(session.get(provider + "_token_key"))
+    return bool(entry and entry[1] > time.time())
+
+
 def _hq_integrations():
-    now = time.time()
-    sheets = _google_connection("sheets")
-    calendar = _google_connection("calendar")
+    # GET status must be strictly local: _google_connection/_gmail_token may
+    # otherwise refresh expired OAuth grants over the network.
+    sheets = _local_google_consent("sheets")
+    calendar = _local_google_consent("calendar")
+    gmail_consent = _local_google_consent("gmail")
     health = integration_status([
-        ("sheets", "Google Sheets", bool(sheets and sheets[1] > now)),
-        ("finance", "Sheets finance", bool(sheets and sheets[1] > now)),
-        ("calendar", "Google Calendar", bool(calendar and calendar[1] > now)),
+        ("sheets", "Google Sheets", sheets),
+        ("finance", "Sheets finance", sheets),
+        ("calendar", "Google Calendar", calendar),
         ("square", "Square", square.configured()),
         ("square_payments", "Square payments", square_payments.configured()),
-        ("gmail", "Gmail", bool(_gmail_token())),
+        ("gmail", "Gmail", gmail_consent),
         ("monzo", "Monzo", None),
         ("dna", "DNA Payments", None),
     ])
@@ -1231,12 +1247,11 @@ def _hq_integrations():
         or sheets_configured())
     google_oauth_configured = bool(
         os.environ.get("GOOGLE_CLIENT_ID") and os.environ.get("GOOGLE_CLIENT_SECRET"))
-    sheets_authorised = bool(sheets and sheets[1] > now)
     health["readiness"] = build_readiness(health, {
-        "sheets": {"configured": google_configured, "consent": sheets_authorised if google_oauth_configured else None},
-        "finance": {"configured": google_configured, "consent": sheets_authorised if google_oauth_configured else None},
-        "calendar": {"configured": google_oauth_configured, "consent": bool(calendar and calendar[1] > now)},
-        "gmail": {"configured": google_oauth_configured, "consent": bool(_gmail_token())},
+        "sheets": {"configured": google_configured, "consent": sheets if google_oauth_configured else None},
+        "finance": {"configured": google_configured, "consent": sheets if google_oauth_configured else None},
+        "calendar": {"configured": google_oauth_configured, "consent": calendar},
+        "gmail": {"configured": google_oauth_configured, "consent": gmail_consent},
         "square": {"configured": square.configured(), "consent": None},
         "square_payments": {"configured": square_payments.configured(), "consent": None},
         "monzo": {"configured": False, "consent": None},

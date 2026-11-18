@@ -1,6 +1,7 @@
 """Conservative readiness checks: no invented consent, receipts or live data."""
 import os
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -168,7 +169,7 @@ class ReadinessHttpTests(unittest.TestCase):
         from app import app
         from hq_auth import issue_session
         from hq_auth_store import auth_db
-        tmp = tempfile.TemporaryDirectory()
+        tmp = tempfile.TemporaryDirectory(dir=os.getcwd())
         self.addCleanup(tmp.cleanup)
         env = patch.dict(os.environ, {
             "HQ_DATA_DIR": tmp.name, "HQ_SESSION_SECRET": "unit-test-secret",
@@ -199,12 +200,64 @@ class ReadinessHttpTests(unittest.TestCase):
         self.assertIn(b"Connection &amp; reconciliation readiness", page.data)
         self.assertIn(b"Google Sheets finance", page.data)
 
+    def test_dashboard_uses_local_encrypted_grants_without_refresh_or_remote_calls(self):
+        from hq_google_connections import save_connection
+        with self.client.session_transaction() as session:
+            session["google_sub"] = "test-owner"
+        for provider in ("sheets", "calendar", "gmail"):
+            self.assertTrue(save_connection(provider, "test-owner", {
+                "access_token": "expired-private-token",
+                "refresh_token": "owner-private-refresh",
+                "expires_in": 0,
+            }))
+        with patch("hq_google_connections.requests.post",
+                   side_effect=AssertionError("Status page tried to refresh OAuth")) as remote, \
+             patch("app._google_connection",
+                   side_effect=AssertionError("Status page tried provider token lookup")), \
+             patch("app._gmail_token",
+                   side_effect=AssertionError("Status page tried Gmail token lookup")):
+            for path in ("/api/hq/integrations", "/hq/integrations"):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 200)
+            rows = {r["key"]: r for r in self.client.get(
+                "/api/hq/integrations").json["readiness"]}
+            remote.assert_not_called()
+        for provider in ("sheets", "finance", "calendar", "gmail"):
+            row = rows[provider]
+            self.assertTrue(row["authorised"])  # saved grant only; not live permission
+            self.assertFalse(row["read_tested"])
+            self.assertFalse(row["reconciled"])
+
+    def test_stored_consent_is_owner_scoped_and_corruption_fails_closed(self):
+        from hq_google_connections import save_connection, stored_grant_present
+        from hq_auth_store import auth_db
+        self.assertFalse(stored_grant_present("gmail", "test-owner"))
+        self.assertTrue(save_connection("gmail", "test-owner", {
+            "access_token": "test", "refresh_token": "private-refresh", "expires_in": 0,
+        }))
+        self.assertFalse(stored_grant_present("gmail", "another-owner"))
+        self.assertTrue(stored_grant_present("gmail", "test-owner"))
+        with auth_db() as db:
+            db.execute("UPDATE google_connections SET token=? WHERE provider='gmail'",
+                       (b"corrupted-ciphertext",))
+        self.assertFalse(stored_grant_present("gmail", "test-owner"))
+        with self.client.session_transaction() as session:
+            session["google_sub"] = "test-owner"
+        row = next(r for r in self.client.get("/api/hq/integrations").json["readiness"]
+                   if r["key"] == "gmail")
+        self.assertFalse(row["authorised"])
+        self.assertFalse(row["read_tested"])
+
     def test_gmail_storage_failure_is_recorded_as_sync_not_provider_read(self):
         with self.client.session_transaction() as session:
             session["csrf"] = "fixture-csrf"
         record_check("gmail")
         record_check("gmail_sync")
-        with patch("app._gmail_token", return_value="fixture-token"), patch(
+        with self.client.session_transaction() as session:
+            session["gmail_token_key"] = "fixture-gmail-key"
+        with patch("app._gmail_tokens", {
+                "fixture-gmail-key": ("fixture-token", time.time() + 60)}), patch(
+                "app._gmail_token", return_value="fixture-token"), patch(
                 "hq_gmail_enquiries.import_page",
                 side_effect=PersistedSyncError("Fixture storage failed")):
             response = self.client.post("/hq/gmail-enquiries",
