@@ -70,8 +70,18 @@ def integration_status(connections):
         })
     # A successful read is not evidence of a committed import/snapshot. Only
     # explicit post-commit markers from the owner-initiated flows qualify.
+    sync_keys = ("gmail", "square", "square_payments")
     sync_successes = ({key: history.get(key + "_sync", {}).get("last_success")
-                       for key in ("gmail", "square", "square_payments")}
-                      if history_available else {})
+                       for key in sync_keys} if history_available else {})
+    # A historical post-commit success does not erase a later failed sync.
+    # Report failures separately from upstream read failures, without losing
+    # the old success timestamp. These observations remain owner-only.
+    sync_failures = ({
+        key: {
+            "needs_attention": bool(history.get(key + "_sync", {}).get("needs_attention")),
+            "last_error": history.get(key + "_sync", {}).get("last_error"),
+            "last_error_at": history.get(key + "_sync", {}).get("last_error_at"),
+        } for key in sync_keys
+    } if history_available else {})
     return {"history_available": history_available, "integrations": entries,
-            "sync_successes": sync_successes}
+            "sync_successes": sync_successes, "sync_failures": sync_failures}
