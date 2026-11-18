@@ -1,5 +1,6 @@
 """Tommy Tints HQ interactive preview. No customer data is served until auth is configured."""
 import os, secrets, time, hmac, hashlib, sqlite3
+import requests
 from threading import Lock
 from flask import Flask, jsonify, render_template, render_template_string, make_response, session, request, redirect, url_for
 from quote_engine import calculate_quote
@@ -1084,9 +1085,20 @@ def hq_gmail_callback():
         expiry = time.time() + min(int(token.get("expires_in", 3600)), 3600)
     except ValueError:
         return "Select the Tommy Tints business mailbox and retry", 403
+    except requests.exceptions.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else None
+        # Never log or expose access tokens, OAuth codes, response bodies or account data.
+        if status == 403:
+            message = "Gmail API access denied. Check that Gmail API is enabled and the authorised account has access."
+        elif status == 401:
+            message = "Gmail authorisation was rejected. Reconnect the business mailbox."
+        else:
+            message = "Gmail API verification failed. Check the API configuration and retry."
+        record_check("gmail", "Gmail profile verification HTTP " + str(status or "unknown"))
+        return message, 502
     except Exception:
-        record_check("gmail", "Gmail consent or mailbox verification failed")
-        return "Unable to verify the Gmail connection", 502
+        record_check("gmail", "Gmail OAuth token exchange or secure credential storage failed")
+        return "Gmail authorisation could not be completed. Check HQ server diagnostics.", 502
     key = secrets.token_urlsafe(32)
     with _gmail_lock:
         for old, entry in list(_gmail_tokens.items()):
