@@ -9,11 +9,12 @@ from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
+import re
 from pathlib import Path
 import sqlite3
 
 from hq_reconciliation_contracts import ContractError, _ref, _timestamp
-from hq_transaction_classification import preview_manual_classifications
+from hq_transaction_classification import CATEGORIES, preview_manual_classifications
 
 
 _REASONS = frozenset({"initial_review", "operator_correction", "new_evidence"})
@@ -83,6 +84,66 @@ class OfflineClassificationLedger:
             "reconciled": False,
         }
 
+    def _verify(self, db):
+        """Verify existing synthetic review rows before trusting their history.
+
+        Detects changed signed fields, revision gaps, malformed timestamps and
+        SQLite damage. It cannot prove source authenticity or detect deletion
+        of a final revision without an external independently stored anchor.
+        The legacy request key and timestamp are not covered by payload HMAC.
+        """
+        try:
+            check = db.execute("PRAGMA quick_check").fetchone()
+            if check is None or check[0] != "ok":
+                raise ContractError("SQLite integrity check failed")
+            rows = db.execute("""SELECT request_key, payload_key, scope_key,
+                evidence_key, source_key, revision, category, reason,
+                actor_key, recorded_at FROM offline_review_events
+                ORDER BY evidence_key, revision""").fetchall()
+            last = {}
+            for (request_key, payload_key, scope_key, evidence_key, source_key,
+                 revision, category, reason, actor_key, recorded_at) in rows:
+                keys = (request_key, payload_key, scope_key, evidence_key,
+                        source_key, actor_key)
+                if any(not isinstance(key, str) or not re.fullmatch(
+                        r"[0-9a-f]{64}", key) for key in keys):
+                    raise ContractError("Malformed keyed review evidence")
+                if (type(revision) is not int or not 1 <= revision <= 100000
+                        or category not in CATEGORIES
+                        or (reason != "initial_review" if revision == 1
+                            else reason not in ("operator_correction", "new_evidence"))
+                        or not isinstance(recorded_at, str)
+                        or _timestamp(recorded_at) != recorded_at):
+                    raise ContractError("Malformed review revision or timestamp")
+                previous = last.get(evidence_key)
+                if (previous is None and revision != 1
+                        or previous is not None
+                        and (revision != previous[0] + 1
+                             or scope_key != previous[1]
+                             or source_key != previous[2])):
+                    raise ContractError("Review revision sequence has changed")
+                expected = self._digest("payload", scope_key, evidence_key,
+                                        source_key, category, actor_key,
+                                        revision - 1, reason)
+                if not hmac.compare_digest(payload_key, expected):
+                    raise ContractError("Signed review fields have changed")
+                last[evidence_key] = (revision, scope_key, source_key)
+        except (sqlite3.Error, ValueError, TypeError):
+            raise ContractError(
+                "Offline review audit integrity could not be verified") from None
+        return {"events_checked": len(rows), "evidence_chains_checked": len(last),
+                "audit_structure_valid": True, "offline_fixture_only": True,
+                **self._flags()}
+
+    def verify_integrity(self):
+        """Read-only fixture audit. No live-provider or finance access."""
+        try:
+            with sqlite3.connect(self._path, timeout=5) as db:
+                return self._verify(db)
+        except sqlite3.Error:
+            raise ContractError(
+                "Offline review audit integrity could not be verified") from None
+
     def record(self, bank_preview, *, transaction_id, category, actor_ref,
                request_id, expected_revision, reason):
         """Record one explicitly proposed classification, atomically.
@@ -108,6 +169,7 @@ class OfflineClassificationLedger:
                                    category, actor_key, expected_revision, reason)
         with sqlite3.connect(self._path, timeout=5) as db:
             db.execute("BEGIN IMMEDIATE")
+            self._verify(db)
             existing = db.execute(
                 "SELECT payload_key, revision FROM offline_review_events WHERE request_key=?",
                 (request_key,)).fetchone()
@@ -139,6 +201,7 @@ class OfflineClassificationLedger:
         _, evidence_key, source_key = self._source(
             bank_preview, transaction_id, "unresolved")
         with sqlite3.connect(self._path, timeout=5) as db:
+            self._verify(db)
             rows = db.execute("""SELECT revision, category, reason, recorded_at, source_key
                 FROM offline_review_events WHERE evidence_key=?
                 ORDER BY revision ASC""", (evidence_key,)).fetchall()
