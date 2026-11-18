@@ -59,18 +59,49 @@ class ReadinessUnitTests(unittest.TestCase):
         self.assertFalse(rows["finance"]["read_tested"])
         self.assertFalse(rows["sheets"]["sync_tested"])
         self.assertTrue(rows["square_payments"]["read_tested"])
-        self.assertTrue(rows["square_payments"]["sync_tested"])
+        self.assertFalse(rows["square_payments"]["sync_tested"])
+        self.assertIsNone(rows["square_payments"]["sync_last_success"])
         self.assertIsNone(rows["square_payments"]["authorised"])
         self.assertFalse(rows["square_payments"]["reconciled"])
 
     def test_last_read_failure_preserves_historical_success_not_current_health(self):
         record_check("square_payments")
+        record_check("square_payments_sync")
         record_check("square_payments", "Square payment read failed")
         row = self.build({"square_payments": {"configured": True, "consent": None}})["square_payments"]
         self.assertTrue(row["read_tested"])
         self.assertTrue(row["sync_tested"])
         self.assertEqual(row["blocker"], "Square payment read failed")
         self.assertFalse(row["reconciled"])
+
+    def test_explicit_post_commit_evidence_is_required_for_each_sync(self):
+        # A sync marker without a successful upstream read is insufficient.
+        record_check("gmail_sync")
+        self.assertFalse(self.build()["gmail"]["sync_tested"])
+        for provider in ("gmail", "square", "square_payments"):
+            record_check(provider)
+            row = self.build({provider: {"configured": True, "consent": None}})[provider]
+            if provider != "gmail":
+                self.assertFalse(row["sync_tested"])
+                self.assertIsNone(row["sync_last_success"])
+            else:
+                self.assertTrue(row["sync_tested"])
+                self.assertTrue(row["sync_last_success"])
+            record_check(provider + "_sync")
+            row = self.build({provider: {"configured": True, "consent": None}})[provider]
+            self.assertTrue(row["read_tested"])
+            self.assertTrue(row["sync_tested"])
+            self.assertTrue(row["sync_last_success"])
+            self.assertFalse(row["reconciled"])
+
+    def test_source_reads_not_committed_syncs(self):
+        for provider in ("sheets", "finance", "calendar", "square_payments"):
+            record_check(provider)
+        rows = self.build({key: {"configured": True, "consent": True}
+                           for key in ("sheets", "finance", "calendar")})
+        for key in ("sheets", "finance", "calendar", "square_payments"):
+            self.assertTrue(rows[key]["read_tested"])
+            self.assertFalse(rows[key]["sync_tested"])
 
     def test_failed_history_read_is_not_misrepresented_as_no_events(self):
         with patch("hq_integration_health._db_path", side_effect=OSError("unavailable")):
