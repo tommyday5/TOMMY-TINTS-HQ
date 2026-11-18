@@ -29,4 +29,4 @@ jobs:
             python -m unittest discover -s tests -v
           fi
       - name: Test app update detection
-        run: node --test tests/hq-updates.test.cjs
+        run: node --test tests/hq-updates.test.cjs tests/hq-reactor.test.cjs
