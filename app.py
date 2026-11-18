@@ -167,10 +167,22 @@ async function loadJobCards(){
      if(snapshot.price_pence===null)line(costDetail,"p","No HQ selling price recorded; margin cannot be calculated.");
      else line(costDetail,"p",(snapshot.price_approved?"Approved ":"Unapproved ")+"HQ price: "+currency(snapshot.price_pence));
      if(snapshot.saved_sale_matches_record===false)line(costDetail,"p","Warning: saved costing uses a different selling price. The HQ work-record price takes precedence.");
-     if(snapshot.total_recorded_cost!==null)line(costDetail,"p","Recorded costs (may be incomplete): £"+snapshot.total_recorded_cost);
+     if(snapshot.materials!==null)line(costDetail,"p","Materials: £"+snapshot.materials+" across "+snapshot.material_line_count+" saved line(s)");
+     if(snapshot.labour_hours!==null)
+      line(costDetail,"p","Recorded labour: "+snapshot.labour_hours+" hours"+(snapshot.actual_labour_rate!==null?" at £"+snapshot.actual_labour_rate+"/hour":" (cost rate missing)"));
+     if(snapshot.actual_labour_cost!==null)line(costDetail,"p","Actual labour cost: £"+snapshot.actual_labour_cost);
+     if(snapshot.allocated_overhead!==null)line(costDetail,"p","Allocated overhead: £"+snapshot.allocated_overhead);
+     if(snapshot.other_costs!==null)line(costDetail,"p","Other recorded costs: £"+snapshot.other_costs);
+     if(snapshot.missing_cost_fields&&snapshot.missing_cost_fields.length){
+      const fieldLabels={lines:"materials list",labour:"labour hours",actual_labour_rate:"actual labour rate",overhead:"allocated overhead",other_costs:"other costs"};
+      line(costDetail,"p","Incomplete cost inputs: "+snapshot.missing_cost_fields.map(field=>fieldLabels[field]||field).join(", "));
+     }
+     if(snapshot.total_recorded_cost!==null)line(costDetail,"p","Total recorded costs: £"+snapshot.total_recorded_cost);
      if(snapshot.estimated_contribution!==null)
       line(costDetail,"p","Estimated contribution: £"+snapshot.estimated_contribution+" · margin "+snapshot.margin_percent+"%");
      else line(costDetail,"p","Contribution withheld until price is approved and all costing inputs are complete.");
+     if(!snapshot.complete_costs&&(!snapshot.missing_cost_fields||!snapshot.missing_cost_fields.length))
+      line(costDetail,"p",snapshot.note);
      line(costDetail,"small","Payments unverified. Estimated contribution is not accounting profit.");
     }catch(error){costDetail.textContent="Costing unavailable: "+error.message;}
     finally{costReview.disabled=false;}
