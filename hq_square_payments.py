@@ -16,7 +16,7 @@ from flask import Blueprint, abort, jsonify, render_template_string, request, se
 
 from customer_request_store import storage_ready
 from hq_auth import required
-from hq_integration_health import record_check
+from hq_integration_health import PersistedSyncError, record_check
 
 payment_evidence = Blueprint("payment_evidence", __name__)
 _API = "https://connect.squareup.com/v2/payments"
@@ -79,8 +79,10 @@ def refresh_payments():
     Fail closed on provider errors, invalid money, duplicate IDs, or truncated
     pagination. No half-refreshed snapshots and no automatic job matching.
     """
-    if not configured() or not storage_ready():
-        raise RuntimeError("Square payment read access or persistent storage unavailable")
+    if not configured():
+        raise RuntimeError("Square payment read access unavailable")
+    if not storage_ready():
+        raise PersistedSyncError("Square payment snapshot storage unavailable")
     location = os.environ["HQ_SQUARE_LOCATION_ID"]
     now = datetime.now(timezone.utc)
     start = (now - timedelta(days=30)).isoformat(timespec="seconds")
@@ -112,26 +114,29 @@ def refresh_payments():
     else:
         raise ValueError("Square payment window exceeds the safe page limit")
 
-    path = _path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with closing(sqlite3.connect(path, timeout=10)) as db, db:
-        db.execute("BEGIN IMMEDIATE")
-        db.execute("""CREATE TABLE IF NOT EXISTS payments (
-            id TEXT PRIMARY KEY, status TEXT NOT NULL, total_minor INTEGER NOT NULL,
-            refunded_minor INTEGER, currency TEXT NOT NULL, created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL)""")
-        db.execute("""CREATE TABLE IF NOT EXISTS snapshot (
-            id INTEGER PRIMARY KEY CHECK(id=1), location TEXT NOT NULL,
-            refreshed_at TEXT NOT NULL, window_start TEXT NOT NULL,
-            window_end TEXT NOT NULL, item_count INTEGER NOT NULL)""")
-        db.execute("DELETE FROM payments")
-        db.executemany("INSERT INTO payments VALUES(?,?,?,?,?,?,?)", rows)
-        db.execute("""INSERT INTO snapshot VALUES(1,?,?,?,?,?)
-            ON CONFLICT(id) DO UPDATE SET location=excluded.location,
-            refreshed_at=excluded.refreshed_at, window_start=excluded.window_start,
-            window_end=excluded.window_end, item_count=excluded.item_count""",
-            (location, datetime.now(timezone.utc).isoformat(), start, end, len(rows)))
-    return len(rows)
+    try:
+        path = _path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(path, timeout=10)) as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("""CREATE TABLE IF NOT EXISTS payments (
+                id TEXT PRIMARY KEY, status TEXT NOT NULL, total_minor INTEGER NOT NULL,
+                refunded_minor INTEGER, currency TEXT NOT NULL, created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS snapshot (
+                id INTEGER PRIMARY KEY CHECK(id=1), location TEXT NOT NULL,
+                refreshed_at TEXT NOT NULL, window_start TEXT NOT NULL,
+                window_end TEXT NOT NULL, item_count INTEGER NOT NULL)""")
+            db.execute("DELETE FROM payments")
+            db.executemany("INSERT INTO payments VALUES(?,?,?,?,?,?,?)", rows)
+            db.execute("""INSERT INTO snapshot VALUES(1,?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET location=excluded.location,
+                refreshed_at=excluded.refreshed_at, window_start=excluded.window_start,
+                window_end=excluded.window_end, item_count=excluded.item_count""",
+                (location, datetime.now(timezone.utc).isoformat(), start, end, len(rows)))
+        return len(rows)
+    except (OSError, sqlite3.Error) as exc:
+        raise PersistedSyncError("Square payment snapshot commit failed") from exc
 
 
 def read_snapshot():
