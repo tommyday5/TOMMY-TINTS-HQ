@@ -119,7 +119,7 @@ class QuoteJobHistoryTests(unittest.TestCase):
         self.assertIn("Review quote & job history", html)
         self.assertIn('"/api/hq/work-records/"+encodeURIComponent(job.id)+"/history"', html)
         self.assertIn("original_draft_kind", html)
-        self.assertIn("Entr" + "ed financial amounts are not payment verification.", html)
+        self.assertIn("Entered financial amounts are not payment verification.", html)
 
 
 if __name__ == "__main__":
