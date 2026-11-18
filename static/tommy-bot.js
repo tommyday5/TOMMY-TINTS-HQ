@@ -1,0 +1,17 @@
+(()=>{'use strict';
+if(document.querySelector('.tt-bot'))return;
+const greeting='Hi! I’m Tommy, your Tommy Tints AI assistant! Is there anything I can help you with today? If you’re unsure what service you need, just tell me what’s happening with your vehicle and I’ll help you from there.';
+const root=document.createElement('div');root.className='tt-bot';
+root.innerHTML=`<section class="tt-welcome" aria-label="Meet Tommy Tints Bot"><img src="/static/bot/tommy-full.webp" width="150" height="170" alt="Tommy Tints Bot in branded cap and hoodie giving a thumbs-up"><div><h2>Meet Tommy Tints Bot</h2><p class="tt-greeting"></p><p>AI conversation is not connected yet. I can guide you to the existing enquiry and service options.</p><button type="button" class="tt-start">How can I help?</button> <button type="button" class="tt-dismiss">Dismiss welcome</button></div></section><button class="tt-launch" type="button" aria-label="Open Tommy Tints Bot" aria-expanded="false" aria-controls="tt-conversation"><img src="/static/bot/tommy-avatar-192.webp" width="72" height="72" alt=""></button><section class="tt-panel" id="tt-conversation" role="dialog" aria-modal="false" aria-labelledby="tt-title" hidden><header><img src="/static/bot/tommy-chat.webp" width="60" height="60" alt="Tommy Tints Bot"><h2 id="tt-title">Tommy Tints Bot</h2><button type="button" class="tt-close" aria-label="Close assistant">×</button></header><p class="tt-status" role="status">AI chat not connected · navigation assistance only</p><div class="tt-message" aria-live="polite">Choose an option below. Quotes and appointments need the team’s approval.</div><div class="tt-actions"><button type="button" data-action="quote">Request a quote / human help</button><button type="button" data-action="begin">Book a service</button><a href="/book/shop">Browse products</a></div><p>Photo assessment, live availability, Quick Quote handover, trade blending acknowledgements and maintenance scheduling are not connected to this assistant yet. Use the existing enquiry form to ask the team.</p></section>`;
+const home=document.querySelector('#home');document.body.append(root);
+const welcome=root.querySelector('.tt-welcome'),panel=root.querySelector('.tt-panel'),launch=root.querySelector('.tt-launch');root.querySelector('.tt-greeting').textContent=greeting;
+let dismissed=false;try{dismissed=localStorage.getItem('tt-bot-welcome-v1')==='dismissed'}catch{}
+welcome.hidden=!home||dismissed;
+function open(){panel.hidden=false;launch.setAttribute('aria-expanded','true');root.querySelector('.tt-close').focus()}
+function close(){panel.hidden=true;launch.setAttribute('aria-expanded','false');launch.focus()}
+launch.addEventListener('click',()=>panel.hidden?open():close());root.querySelector('.tt-start').addEventListener('click',open);root.querySelector('.tt-close').addEventListener('click',close);
+root.querySelector('.tt-dismiss').addEventListener('click',()=>{welcome.hidden=true;try{localStorage.setItem('tt-bot-welcome-v1','dismissed')}catch{}});
+root.addEventListener('keydown',e=>{if(e.key==='Escape'&&!panel.hidden)close()});
+root.querySelectorAll('[data-action]').forEach(b=>b.addEventListener('click',()=>{const target=document.getElementById(b.dataset.action);if(target){close();target.click();target.focus()}else location.href='/book'}));
+if(home){const intro=document.createElement('div');intro.className='tt-bot';intro.append(welcome);(home.querySelector('.hero')||home.lastElementChild).after(intro)}
+})();
