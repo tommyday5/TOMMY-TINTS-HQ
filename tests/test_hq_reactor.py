@@ -7,4 +7,4 @@ class ReactorTests(unittest.TestCase):
   for control in ('hqMicConsent','onstart','onend','onerror','onboundary','visibilitychange','pagehide'):self.assertIn(control,js)
   self.assertIn('infinite paused',css);self.assertIn('prefers-reduced-motion',css)
   self.assertNotIn('hq-reactor',(root/'static/customer-booking-preview.html').read_text())
-  self.assertNotIn('fetch(',js)
+  self.assertIn("fetch('/api/hq/assistant/speech'",js);self.assertIn('X-HQ-CSRF',js);self.assertIn('a.controls=true',js);self.assertIn('AbortController',js)
