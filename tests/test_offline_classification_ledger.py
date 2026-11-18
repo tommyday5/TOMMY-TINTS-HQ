@@ -187,6 +187,80 @@ class OfflineClassificationLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "integrity"):
             self.ledger.verify_integrity()
 
+    def test_new_events_seal_request_identity_timestamp_and_signature_version(self):
+        for field, tampered in (
+            ("request_key", "a" * 64),
+            ("recorded_at", "2026-11-18T22:30:00+00:00"),
+            ("signature_version", 1),
+            ("event_key", None),
+        ):
+            with self.subTest(field=field):
+                source = Path(self.temp.name) / ("sealed-" + field + ".sqlite3")
+                ledger = OfflineClassificationLedger(source, hmac_key=self.key)
+                ledger.record(bank(), transaction_id="fixture-txn",
+                              category="customer_receipt_candidate",
+                              actor_ref="fixture-owner", request_id="new-" + field,
+                              expected_revision=0, reason="initial_review")
+                with sqlite3.connect(source) as db:
+                    db.execute("UPDATE offline_review_events SET " + field + "=?",
+                               (tampered,))
+                with self.assertRaises(ContractError):
+                    ledger.verify_integrity()
+                with self.assertRaises(ContractError):
+                    ledger.history(bank(), transaction_id="fixture-txn")
+
+    def test_legacy_fixture_schema_reopens_without_rewriting_old_hmac(self):
+        legacy_path = Path(self.temp.name) / "legacy-review.sqlite3"
+        scope, evidence, source = self.ledger._source(
+            bank(), "fixture-txn", "customer_receipt_candidate")
+        actor = self.ledger._digest("actor", "fixture-owner")
+        request = self.ledger._digest("request", "legacy-op")
+        payload = self.ledger._digest(
+            "payload", scope, evidence, source, "customer_receipt_candidate",
+            actor, 0, "initial_review")
+        with sqlite3.connect(legacy_path) as db:
+            db.execute("""CREATE TABLE offline_review_events (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_key TEXT NOT NULL UNIQUE,
+                payload_key TEXT NOT NULL,
+                scope_key TEXT NOT NULL,
+                evidence_key TEXT NOT NULL,
+                source_key TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                category TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                actor_key TEXT NOT NULL,
+                recorded_at TEXT NOT NULL,
+                UNIQUE(evidence_key, revision))""")
+            db.execute("""INSERT INTO offline_review_events
+                (request_key, payload_key, scope_key, evidence_key, source_key,
+                 revision, category, reason, actor_key, recorded_at)
+                VALUES (?, ?, ?, ?, ?, 1, 'customer_receipt_candidate',
+                        'initial_review', ?, ?)""",
+                (request, payload, scope, evidence, source, actor,
+                 "2026-11-18T12:05:00+00:00"))
+        reopened = OfflineClassificationLedger(legacy_path, hmac_key=self.key)
+        self.assertEqual(reopened.verify_integrity()["events_checked"], 1)
+        with sqlite3.connect(legacy_path) as db:
+            self.assertEqual(db.execute(
+                "SELECT signature_version, event_key FROM offline_review_events"
+            ).fetchone(), (1, None))
+        replay = reopened.record(
+            bank(), transaction_id="fixture-txn",
+            category="customer_receipt_candidate", actor_ref="fixture-owner",
+            request_id="legacy-op", expected_revision=0, reason="initial_review")
+        self.assertTrue(replay["idempotent_replay"])
+        correction = reopened.record(
+            bank(), transaction_id="fixture-txn", category="transfer",
+            actor_ref="fixture-owner", request_id="new-op",
+            expected_revision=1, reason="operator_correction")
+        self.assertEqual(correction["revision"], 2)
+        self.assertEqual(reopened.verify_integrity()["events_checked"], 2)
+        with sqlite3.connect(legacy_path) as db:
+            self.assertEqual(db.execute(
+                "SELECT signature_version FROM offline_review_events ORDER BY revision"
+            ).fetchall(), [(1,), (2,)])
+
     def test_explicit_key_and_file_are_required(self):
         with self.assertRaises(ContractError):
             OfflineClassificationLedger(self.db_path, hmac_key=b"short")
