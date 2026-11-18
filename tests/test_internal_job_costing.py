@@ -194,7 +194,7 @@ class InternalJobCostingTests(unittest.TestCase):
         self.assertCountEqual(empty.json["customer_summary_missing"],
                               ["approved_price", "saved_work_stages"])
 
-        log = {**self.log("1.00"), "stages": "Prepare bonnet\\nSpray basecoat and clearcoat",
+        log = {**self.log("1.00"), "stages": "Prepare bonnet\nSpray basecoat and clearcoat",
                "description": "Hyundai bonnet work"}
         write_log("cost-owner", work, log, expected_revision=0)
         self.assertFalse(self.client.get(url).json["customer_summary_ready"])
@@ -223,7 +223,7 @@ class InternalJobCostingTests(unittest.TestCase):
         self.assertIsNone(summary["estimated_contribution"])
         self.assertEqual(self.client.get(printable).status_code, 200)
 
-        write_log("cost-owner", work, {**partial, "stages": " \\n "}, expected_revision=2)
+        write_log("cost-owner", work, {**partial, "stages": " \n "}, expected_revision=2)
         no_stages = self.client.get(url).json
         self.assertFalse(no_stages["customer_summary_ready"])
         self.assertEqual(no_stages["customer_summary_missing"], ["saved_work_stages"])
