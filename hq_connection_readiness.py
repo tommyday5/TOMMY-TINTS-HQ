@@ -92,7 +92,13 @@ def build_readiness(health, signals):
         success = previous.get("last_success") if history_available else None
         last_error = previous.get("last_error") if history_available else None
         read_tested = bool(success) if history_available else None
-        sync_tested = (bool(success) and profile["persisted_read"]) if history_available else None
+        # Historical upstream reads cannot establish that storage committed.
+        # New explicit markers are recorded only after each import/snapshot
+        # operation returns successfully; legacy records remain unverified.
+        sync_success = (health.get("sync_successes", {}).get(key)
+                        if history_available else None)
+        sync_tested = (bool(success) and bool(sync_success)
+                       and profile["persisted_read"]) if history_available else None
         # No provider in this register has an owner-reviewed, bank-reconciled
         # allocation chain; never manufacture this stage from amount matches.
         reconciled = False
@@ -125,6 +131,7 @@ def build_readiness(health, signals):
             "configured": configured, "authorised": authorised,
             "read_tested": read_tested, "sync_tested": sync_tested,
             "reconciled": reconciled, "last_success": success,
+            "sync_last_success": sync_success if sync_tested else None,
             "last_error": last_error, "blocker": blocker,
             "next_safe_action": next_action, "owner_only": True,
             "stages": {stage: _stage(value) for stage, value in (
