@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from hq_connection_readiness import build_readiness, PROFILES
-from hq_integration_health import integration_status, record_check
+from hq_integration_health import PersistedSyncError, integration_status, record_check
 
 
 class ReadinessUnitTests(unittest.TestCase):
@@ -198,6 +198,45 @@ class ReadinessHttpTests(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn(b"Connection &amp; reconciliation readiness", page.data)
         self.assertIn(b"Google Sheets finance", page.data)
+
+    def test_gmail_storage_failure_is_recorded_as_sync_not_provider_read(self):
+        with self.client.session_transaction() as session:
+            session["csrf"] = "fixture-csrf"
+        record_check("gmail")
+        record_check("gmail_sync")
+        with patch("app._gmail_token", return_value="fixture-token"), patch(
+                "hq_gmail_enquiries.import_page",
+                side_effect=PersistedSyncError("Fixture storage failed")):
+            response = self.client.post("/hq/gmail-enquiries",
+                                        data={"csrf": "fixture-csrf"})
+            row = next(x for x in self.client.get("/api/hq/integrations")
+                       .json["readiness"] if x["key"] == "gmail")
+        self.assertEqual(response.status_code, 503)
+        self.assertTrue(row["read_tested"])
+        self.assertTrue(row["sync_tested"])
+        self.assertTrue(row["sync_needs_attention"])
+        self.assertEqual(row["blocker"], "Gmail enquiry storage commit failed")
+        self.assertFalse(row["reconciled"])
+
+    def test_square_booking_storage_failure_is_recorded_as_sync(self):
+        with self.client.session_transaction() as session:
+            session["csrf"] = "fixture-csrf"
+        record_check("square")
+        record_check("square_sync")
+        with patch.dict(os.environ, {
+                "HQ_SQUARE_READ_TOKEN": "fixture-read-only",
+                "HQ_SQUARE_LOCATION_ID": "fixture-location"}), patch(
+                    "hq_square_bookings.refresh_bookings",
+                    side_effect=PersistedSyncError("Fixture disk full")):
+            response = self.client.post("/hq/square-bookings",
+                                        data={"csrf": "fixture-csrf"})
+            row = next(x for x in self.client.get("/api/hq/integrations")
+                       .json["readiness"] if x["key"] == "square")
+        self.assertEqual(response.status_code, 503)
+        self.assertTrue(row["sync_needs_attention"])
+        self.assertTrue(row["sync_tested"])
+        self.assertEqual(row["blocker"], "Square booking snapshot commit failed")
+        self.assertFalse(row["reconciled"])
 
     def test_finance_read_is_independently_recorded_from_pricing(self):
         with patch.dict(os.environ, {"HQ_GOOGLE_SERVICE_ACCOUNT_JSON": "{}"}):
