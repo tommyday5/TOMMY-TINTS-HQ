@@ -45,10 +45,15 @@ def preview_export(source, csv_text, *, mapping=None, scope_ref=None):
     A syntactically valid preview cannot verify a source mapping, account
     ownership, payment allocation or bank settlement.
     """
-    if source not in _REQUIRED:
+    if not isinstance(source, str) or source not in _REQUIRED:
         raise PreviewError("Choose Monzo or DNA Payments")
-    if (not isinstance(csv_text, str) or not csv_text
-            or len(csv_text.encode("utf-8")) > MAX_TEXT or "\x00" in csv_text
+    if not isinstance(csv_text, str) or not csv_text:
+        raise PreviewError("CSV must be nonempty UTF-8 text under 120 KB")
+    try:
+        byte_count = len(csv_text.encode("utf-8"))
+    except UnicodeEncodeError:
+        raise PreviewError("CSV must be valid UTF-8 text") from None
+    if (byte_count > MAX_TEXT or "\x00" in csv_text
             or "\ufffd" in csv_text):
         raise PreviewError("CSV must be nonempty UTF-8 text under 120 KB")
     if csv_text.startswith("\ufeff"):
