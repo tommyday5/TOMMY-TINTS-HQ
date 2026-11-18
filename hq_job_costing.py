@@ -75,6 +75,16 @@ def costing_snapshot(owner, record_id):
     complete = not missing
     snapshot["missing_cost_fields"] = missing
     snapshot["complete_costs"] = complete
+    # The profitability helper supports independent manual calculations and
+    # defaults absent materials to []. An imported/legacy HQ log with NO
+    # materials list is different from a reviewed, explicitly empty list:
+    # never infer £0 materials or silently produce a contribution from it.
+    if "lines" in missing:
+        snapshot["note"] = (
+            "Saved costing is missing a valid materials list. Review the "
+            "log before relying on cost totals or contribution."
+        )
+        return snapshot
     try:
         # Zero is a calculation placeholder ONLY when the authoritative HQ
         # price is absent; such records never expose contribution or margin.
