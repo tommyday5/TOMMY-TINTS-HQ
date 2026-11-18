@@ -48,8 +48,19 @@ class OfflineClassificationLedger:
                 reason TEXT NOT NULL,
                 actor_key TEXT NOT NULL,
                 recorded_at TEXT NOT NULL,
+                signature_version INTEGER NOT NULL DEFAULT 1,
+                event_key TEXT,
                 UNIQUE(evidence_key, revision)
             )""")
+            # Legacy fixture databases remain readable; only new events use v2
+            # HMAC seals. Never silently re-sign old evidence as newly trusted.
+            columns = {row[1] for row in db.execute(
+                "PRAGMA table_info(offline_review_events)")}
+            if "signature_version" not in columns:
+                db.execute("""ALTER TABLE offline_review_events ADD COLUMN
+                    signature_version INTEGER NOT NULL DEFAULT 1""")
+            if "event_key" not in columns:
+                db.execute("ALTER TABLE offline_review_events ADD COLUMN event_key TEXT")
             db.execute("""CREATE INDEX IF NOT EXISTS offline_review_by_evidence
                 ON offline_review_events(evidence_key, revision)""")
 
@@ -90,7 +101,9 @@ class OfflineClassificationLedger:
         Detects changed signed fields, revision gaps, malformed timestamps and
         SQLite damage. It cannot prove source authenticity or detect deletion
         of a final revision without an external independently stored anchor.
-        The legacy request key and timestamp are not covered by payload HMAC.
+        Legacy v1 events do not authenticate request key/timestamp. New v2
+        events separately HMAC-seal both; no in-database seal detects a
+        complete rollback or deletion of the most recent event.
         """
         try:
             check = db.execute("PRAGMA quick_check").fetchone()
@@ -98,11 +111,12 @@ class OfflineClassificationLedger:
                 raise ContractError("SQLite integrity check failed")
             rows = db.execute("""SELECT request_key, payload_key, scope_key,
                 evidence_key, source_key, revision, category, reason,
-                actor_key, recorded_at FROM offline_review_events
-                ORDER BY evidence_key, revision""").fetchall()
+                actor_key, recorded_at, signature_version, event_key
+                FROM offline_review_events ORDER BY evidence_key, revision""").fetchall()
             last = {}
             for (request_key, payload_key, scope_key, evidence_key, source_key,
-                 revision, category, reason, actor_key, recorded_at) in rows:
+                 revision, category, reason, actor_key, recorded_at,
+                 signature_version, event_key) in rows:
                 keys = (request_key, payload_key, scope_key, evidence_key,
                         source_key, actor_key)
                 if any(not isinstance(key, str) or not re.fullmatch(
@@ -115,6 +129,8 @@ class OfflineClassificationLedger:
                         or not isinstance(recorded_at, str)
                         or _timestamp(recorded_at) != recorded_at):
                     raise ContractError("Malformed review revision or timestamp")
+                if type(signature_version) is not int or signature_version not in (1, 2):
+                    raise ContractError("Unsupported review signature version")
                 previous = last.get(evidence_key)
                 if (previous is None and revision != 1
                         or previous is not None
@@ -122,11 +138,25 @@ class OfflineClassificationLedger:
                              or scope_key != previous[1]
                              or source_key != previous[2])):
                     raise ContractError("Review revision sequence has changed")
-                expected = self._digest("payload", scope_key, evidence_key,
-                                        source_key, category, actor_key,
-                                        revision - 1, reason)
+                intent = (scope_key, evidence_key, source_key, category,
+                          actor_key, revision - 1, reason)
+                expected = self._digest(
+                    "payload-v2" if signature_version == 2 else "payload", *intent)
                 if not hmac.compare_digest(payload_key, expected):
                     raise ContractError("Signed review fields have changed")
+                if signature_version == 1:
+                    if event_key is not None:
+                        raise ContractError("Unexpected legacy review seal")
+                else:
+                    if not isinstance(event_key, str) or not re.fullmatch(
+                            r"[0-9a-f]{64}", event_key):
+                        raise ContractError("Missing review metadata seal")
+                    expected_event = self._digest(
+                        "event-v2", request_key, payload_key, scope_key,
+                        evidence_key, source_key, revision, category, reason,
+                        actor_key, recorded_at)
+                    if not hmac.compare_digest(event_key, expected_event):
+                        raise ContractError("Review metadata integrity check failed")
                 last[evidence_key] = (revision, scope_key, source_key)
         except (sqlite3.Error, ValueError, TypeError):
             raise ContractError(
@@ -165,16 +195,19 @@ class OfflineClassificationLedger:
             bank_preview, transaction_id, category)
         actor_key = self._digest("actor", actor_ref)
         request_key = self._digest("request", request_id)
-        payload_key = self._digest("payload", scope_key, evidence_key, source_key,
-                                   category, actor_key, expected_revision, reason)
+        intent = (scope_key, evidence_key, source_key, category,
+                  actor_key, expected_revision, reason)
+        payload_key = self._digest("payload-v2", *intent)
         with sqlite3.connect(self._path, timeout=5) as db:
             db.execute("BEGIN IMMEDIATE")
             self._verify(db)
             existing = db.execute(
-                "SELECT payload_key, revision FROM offline_review_events WHERE request_key=?",
+                "SELECT payload_key, revision, signature_version FROM offline_review_events WHERE request_key=?",
                 (request_key,)).fetchone()
             if existing is not None:
-                if existing[0] != payload_key:
+                expected_key = (payload_key if existing[2] == 2 else
+                                self._digest("payload", *intent))
+                if existing[0] != expected_key:
                     raise ContractError("Idempotency reference was reused for different input")
                 return {"revision": existing[1], "idempotent_replay": True, **self._flags()}
             head = db.execute("""SELECT revision, source_key FROM offline_review_events
@@ -186,13 +219,17 @@ class OfflineClassificationLedger:
             if current != expected_revision:
                 raise ContractError("Review revision is stale; reload before correcting")
             revision = current + 1
+            recorded_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            event_key = self._digest(
+                "event-v2", request_key, payload_key, scope_key, evidence_key,
+                source_key, revision, category, reason, actor_key, recorded_at)
             db.execute("""INSERT INTO offline_review_events
                 (request_key, payload_key, scope_key, evidence_key, source_key,
-                 revision, category, reason, actor_key, recorded_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 revision, category, reason, actor_key, recorded_at,
+                 signature_version, event_key)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (request_key, payload_key, scope_key, evidence_key, source_key,
-                 revision, category, reason, actor_key,
-                 datetime.now(timezone.utc).isoformat(timespec="seconds")))
+                 revision, category, reason, actor_key, recorded_at, 2, event_key))
         return {"revision": revision, "idempotent_replay": False, **self._flags()}
 
     def history(self, bank_preview, *, transaction_id):
