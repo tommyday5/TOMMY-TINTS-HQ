@@ -30,7 +30,7 @@ def _safe_values(raw, action):
                 cleaned[name] = value
     elif action == "status":
         value = values.get("status")
-        if value in WORK_TRANSITIONS and isinstance(value, str):
+        if isinstance(value, str) and value in WORK_TRANSITIONS:
             cleaned["status"] = value
         kind = values.get("kind")
         if kind in ("quote", "job"):
