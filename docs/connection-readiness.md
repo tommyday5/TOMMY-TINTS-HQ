@@ -35,3 +35,9 @@ All readiness data is only returned through existing owner-authenticated HQ endp
 Production may have a working login or token without an authorised provider read. Provider permission changes and failed recent reads must remain visible. Never replace unknown receipts with £0 or count transfers, refunds, planned deposits or invoices as bank cash.
 
 **Next safe engineering sequence:** validate real Monzo and DNA export schemas against the offline canonical contracts without importing customer records; build a bounded, owner-only preview and persistent review log only after source mapping is verified; then develop reviewed, idempotent payment allocations with rollback/audit and independent bank reconciliation. This contract does **not** establish live ingestion, provider authorization, or verified bank cash. Never merge if CI fails; verify deployed commit and persistent volume after each merge.
+
+## Offline CSV schema inspection — independent engineering progress
+
+The owner-only [transaction export schema preview](/hq/transaction-import-preview) can inspect headings and validate explicitly mapped canonical Monzo/DNA rows against the offline contracts. It does not contain a verified source-specific export parser and it does not mark Monzo or DNA as **Implemented**, **Configured**, **Authorised**, **Read-tested**, **Sync-tested** or **Reconciled** in the live provider register. Missing provider consent, actual account/merchant scope, exact export headers and documented original monetary units remain the owner-controlled blockers.
+
+The preview has no persistence path, no provider calls and no customer-financial data writeback. It reports counts and validation issues without returning source values, bank totals or sensitive references. See \`docs/integration-development.md\` for safe use and explicit mapping requirements. It cannot turn a consistent arithmetic result into proof of a bank settlement or an HQ job receipt.
