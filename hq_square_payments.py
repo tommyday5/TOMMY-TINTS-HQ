@@ -235,6 +235,9 @@ def payment_page():
             return "Square payment read access is not configured", 503
         try:
             refresh_payments()
+        except PersistedSyncError:
+            record_check("square_payments_sync", "Square payment snapshot commit failed")
+            error = "Unable to store the Square payment snapshot. Check persistent storage."
         except Exception:
             # No response bodies, customer data, URLs containing tokens or secrets logged.
             record_check("square_payments", "Square payment read failed")
