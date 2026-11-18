@@ -27,3 +27,7 @@ Model defaults to gpt-4o-mini-tts, overridable via OPENAI_TTS_MODEL. Model acces
 ## Layered 3D reactor presentation
 
 Decorative chrome bezel, depth-separated segmented rings, two inclined orbital rings, luminous energy lens and raised hub use CSS perspective/translateZ. No WebGL, canvas render loop, video or new external assets. Standby remains static. Existing request, actual microphone and actual speech playback states activate ring rotation and lens pulses. Startup is a short owner-activated reveal. Reduced-motion flattens depth and disables animation; state labels remain available. Carbon/red/gold styling is scoped to private HQ and customer mascot is unchanged. No fabricated connection counts or telemetry.
+
+## Approved photoreal gyroscopic eye
+
+Owner approved the realistic Gyroscopic Eye preview on 18 November 2026. Separate transparent chrome bearing-ring and amber optical-eye artwork were prepared from that reference, then optimised as WebP. Three ring planes precess and counter-rotate independently around a fixed optical eye, with stationary outer hardware. Fine green code rain remains decorative and subordinate to red/gold/chrome branding. Only real thinking/listening/speaking states activate continuous motion. Hidden-page and hidden-assistant motion is explicitly paused; reduced motion keeps a static composed view. This uses 2D artwork planes transformed in CSS 3D, not a volumetric 3D model; design/materials follow the approved reference without claiming pixel-identical geometry.

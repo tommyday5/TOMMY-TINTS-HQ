@@ -18,3 +18,12 @@ class ReactorTests(unittest.TestCase):
   self.assertIn('infinite paused',css)
   self.assertIn('perspective:650px',css)
   self.assertNotIn('requestAnimationFrame',js)
+
+ def test_realistic_gyro_assets_and_activity_guards(self):
+  root=Path(__file__).resolve().parents[1]
+  js=(root/'static/hq-reactor.js').read_text();css=(root/'static/hq-reactor.css').read_text()
+  for name in ('gyro-ring.webp','gyro-eye.webp'):
+   data=(root/'static/ai'/name).read_bytes();self.assertEqual(data[:4],b'RIFF');self.assertEqual(data[8:12],b'WEBP')
+  self.assertIn('hq-motion-paused',js)
+  self.assertIn('hq-gimbal-gold',css);self.assertIn('hq-gimbal-red',css);self.assertIn('hq-gimbal-inner',css)
+  self.assertIn('hq-optical-eye',js);self.assertIn('hq-code-rain',js)
