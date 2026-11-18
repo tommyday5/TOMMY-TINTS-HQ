@@ -12,3 +12,5 @@
 @keyframes hq-code-fall{to{transform:translateY(45%)}}@keyframes hq-eye-start{from{opacity:.2;transform:scale(.94)}to{opacity:1;transform:scale(1)}}
 @media(max-width:950px){.hq-core-console{grid-template-columns:minmax(0,1fr)}.hq-reactor-stage{max-width:440px;min-height:300px;margin:auto}.hq-voice-controls{justify-content:center}}@media(max-width:450px){.hq-core-console{padding:14px}.hq-reactor-stage{min-height:250px;padding:15px 0}.hq-reactor-stage .hq-gyroscope{width:min(290px,94%)}}
 @media(prefers-reduced-motion:reduce){#assistant .hq-gyroscope,#assistant .hq-gyroscope span,#assistant .hq-code-rain span{animation:none!important;transition:none!important}#assistant .hq-gyroscope .hq-gyro-gold{transform:rotateX(30deg) rotateY(-15deg)}#assistant .hq-gyroscope .hq-gyro-red{transform:rotateX(-25deg) rotateY(25deg)}#assistant .hq-gyroscope .hq-gyro-inner{transform:rotateX(15deg)}#assistant .hq-optical-eye{transform:none}.hq-code-rain{opacity:.12}}
+/* Preserve depth sorting inside the gyroscope rather than flattening its planes. */
+.hq-reactor-stage .hq-gyroscope{isolation:auto}
