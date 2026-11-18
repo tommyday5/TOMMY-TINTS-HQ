@@ -8,9 +8,9 @@ This is an **owner-only live observation register**, not a catalogue of assumed 
 - **Configured**: required environment variable *names have values* or the applicable Google OAuth project is configured; not proof of validity or access.
 - **Authorised**: a usable owner OAuth consent was found for Google; API key/token-only providers remain **Unverified**, never authorised merely because a token exists.
 - **Read-tested**: a successful upstream read was actually recorded in the persistent integration health history. This is **historical**, not proof that permissions still work today. Successful pricing, finance, Calendar, Gmail, Square bookings and Square payments reads have separate provider keys.
-- **Sync-tested**: an owner-initiated Gmail import or Square snapshot committed to persistent storage following a successful upstream read. It does not prove completeness, job attribution or bank settlement. Other reads are not sync tests.
+- **Sync-tested**: an owner-initiated Gmail enquiry import or Square booking/payment snapshot finished its persistent write **and** a separate post-commit sync success marker was recorded alongside upstream read success. A provider read alone never implies a sync, including historical read observations from before this change. Older import successes without a distinct marker remain **Not yet / Unverified**, not retroactively promoted. Sync does not prove completeness, job attribution or bank settlement. Sheets/finance/Calendar reads are never sync tests.
 - **Reconciled**: requires separately validated, auditable approved-job allocation and independent bank-settlement evidence. No provider is marked reconciled. Identical amounts do not qualify.
-- **Last success** is the UTC timestamp of the recorded successful provider operation; not the freshness of the underlying bank transaction or invoice. When history is unavailable, stage values are **Unverified**.
+- **Last success** is the UTC timestamp of the recorded successful provider read; **sync last success** is reported separately from its post-commit marker. Neither is the freshness of the underlying bank transaction or invoice. When history is unavailable, stage values are **Unverified**.
 
 ## Provider / workflow readiness plan
 
