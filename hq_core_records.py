@@ -276,18 +276,44 @@ def work_summary():
     """
     with connect() as db:
         _schema(db)
+        db.execute("BEGIN")
         rows = db.execute("""SELECT status, COUNT(*) AS record_count,
             COALESCE(SUM(CASE WHEN status IN ('draft','ready_for_review')
                 THEN COALESCE(price_pence,0) ELSE 0 END),0) AS draft_value,
             COALESCE(SUM(CASE WHEN status != 'cancelled' AND price_pence IS NOT NULL
                 THEN price_pence - deposit_pence ELSE 0 END),0) AS outstanding
             FROM hq_work_records GROUP BY status""").fetchall()
+        # A planned deposit is a quote field, NOT a receipt. Only use approved,
+        # priced, internally consistent records when presenting pipeline values.
+        # Neither invoices nor bank/payment integrations are reconciled here.
+        approved = db.execute("""SELECT COUNT(*) AS valid_count,
+            COALESCE(SUM(price_pence),0) AS price_total,
+            COALESCE(SUM(deposit_pence),0) AS planned_deposit_total,
+            COALESCE(SUM(price_pence-deposit_pence),0) AS conditional_remainder
+            FROM hq_work_records
+            WHERE status IN ('approved','in_progress','completed')
+              AND price_pence BETWEEN 0 AND 100000000
+              AND deposit_pence BETWEEN 0 AND price_pence""").fetchone()
+        approved_count = db.execute("""SELECT COUNT(*) FROM hq_work_records
+            WHERE status IN ('approved','in_progress','completed')""").fetchone()[0]
     return {
         "record_count": sum(row["record_count"] for row in rows),
         "by_status": {status: sum(row["record_count"] for row in rows if row["status"] == status)
                       for status in WORK_TRANSITIONS},
         "priced_draft_value_pence": sum(row["draft_value"] for row in rows),
+        # Historical compatibility only: includes unapproved drafts and assumes
+        # planned deposits were received. NEVER label this as money owed or cash.
         "outstanding_recorded_pence": sum(row["outstanding"] for row in rows),
+        "outstanding_recorded_basis": "legacy_unverified_price_less_planned_deposit_including_drafts",
+        "approved_priced_record_count": approved["valid_count"],
+        "approved_amounts_incomplete_count": approved_count - approved["valid_count"],
+        "approved_price_total_pence": approved["price_total"],
+        "planned_deposit_total_pence": approved["planned_deposit_total"],
+        "conditional_remainder_pence": approved["conditional_remainder"],
+        # Null means UNKNOWN; zero would falsely imply verified non-payment.
+        "verified_cash_received_pence": None,
+        "verified_cash_outstanding_pence": None,
+        "payment_reconciliation_status": "not_connected",
         "source": "internal_work_records_only",
         "payment_verified": False,
     }
