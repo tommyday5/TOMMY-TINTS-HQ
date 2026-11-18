@@ -120,7 +120,7 @@ def normalise_dna_rows(rows, *, merchant_ref):
         event = _ref(row.get("event_id"), "processor event ID")
         payment = _ref(row.get("payment_id"), "payment ID")
         kind = row.get("kind")
-        if kind not in _PROCESSOR_KINDS:
+        if not isinstance(kind, str) or kind not in _PROCESSOR_KINDS:
             raise ContractError("Unrecognised processor event type")
         gross = _pence(row.get("gross_pence"), "gross")
         fee = _pence(row.get("fee_pence"), "fee", signed=False)
