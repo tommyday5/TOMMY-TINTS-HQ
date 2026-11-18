@@ -1154,7 +1154,8 @@ a{color:#ff8088}article{background:#151e2b;padding:16px;margin:12px 0;overflow-w
 <button>Import latest page</button>
 {% if result and result.next %}<button name="page_token" value="{{ result.next }}">Import next page</button>{% endif %}
 </form>{% else %}<p><a href="/auth/gmail/connect">Connect Gmail read-only</a></p>{% endif %}
-{% if result %}<p>Imported {{ result.added }} new of {{ result.read }} read. {{ result.skipped_sensitive }} recognised legal/debt messages excluded from the sales queue (retained in Gmail).</p>{% endif %>
+{% if result %}<p>Imported {{ result.added }} new of {{ result.read }} read.</p>{% endif %}
+{% if result and result.skipped_sensitive %}<p>{{ result.skipped_sensitive }} recognisable sensitive messages left in Gmail, not added to sales enquiries.</p>{% endif %}
 <p>Pending review {{ count if count is not none else "Unavailable" }}.</p>
 {% for item in rows %}<article><h2>{{ item.subject }}</h2><p>{{ item.sender }}</p><p>{{ item.snippet }}</p>
 <form method="post"><input type="hidden" name="csrf" value="{{ csrf }}">
