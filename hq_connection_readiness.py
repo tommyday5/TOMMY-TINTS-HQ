@@ -99,12 +99,17 @@ def build_readiness(health, signals):
                         if history_available else None)
         sync_tested = (bool(success) and bool(sync_success)
                        and profile["persisted_read"]) if history_available else None
+        sync_observation = (health.get("sync_failures", {}).get(key, {})
+                            if history_available and profile["persisted_read"] else {})
+        sync_needs_attention = sync_observation.get("needs_attention") is True
+        sync_error = (sync_observation.get("last_error")
+                      if sync_needs_attention else None)
         # No provider in this register has an owner-reviewed, bank-reconciled
         # allocation chain; never manufacture this stage from amount matches.
         reconciled = False
         if not implemented or not configured:
             blocker = profile["setup"]
-            next_action = profile["read"] if implemented else profile["read"]
+            next_action = profile["setup"]
         elif authorised is False:
             blocker = "Owner OAuth consent is not available in this session or the saved grant could not be used."
             next_action = profile["read"]
@@ -114,14 +119,21 @@ def build_readiness(health, signals):
         elif previous.get("needs_attention") is True:
             blocker = last_error or "Most recent upstream read failed; earlier success may be stale."
             next_action = profile["read"]
+        elif sync_needs_attention:
+            # Preserve historical sync-tested evidence, but never hide a more
+            # recent failed persistence attempt behind that old success.
+            blocker = sync_error or "Most recent persisted sync failed; historical success may be stale."
+            next_action = profile["read"]
         elif not read_tested:
             blocker = "No successful upstream read has been recorded for this specific workstream."
             next_action = profile["read"]
-        elif not sync_tested:
-            blocker = "Read evidence exists but no successful persisted sync for this workstream has been established."
-            next_action = profile["reconcile"]
+        elif profile["persisted_read"] and not sync_tested:
+            blocker = "Upstream read succeeded, but no completed persistent import/snapshot is evidenced."
+            next_action = profile["read"]
         else:
-            blocker = "Provider evidence is not linked to approved HQ records and independently verified bank settlement."
+            # Sheets, finance, Calendar and Maps are read-only checks: they
+            # must not be instructed to perform a non-existent persisted sync.
+            blocker = profile["reconcile"]
             next_action = profile["reconcile"]
 
         # For a configured API key, unknown authorisation is expected until a
@@ -130,13 +142,22 @@ def build_readiness(health, signals):
             "key": key, "name": profile["name"], "implemented": implemented,
             "configured": configured, "authorised": authorised,
             "read_tested": read_tested, "sync_tested": sync_tested,
+            "sync_applicable": profile["persisted_read"],
+            "sync_needs_attention": sync_needs_attention,
+            "sync_last_error": sync_error,
+            "sync_last_error_at": (sync_observation.get("last_error_at")
+                                   if sync_needs_attention else None),
             "reconciled": reconciled, "last_success": success,
             "sync_last_success": sync_success if sync_tested else None,
-            "last_error": last_error, "blocker": blocker,
-            "next_safe_action": next_action, "owner_only": True,
-            "stages": {stage: _stage(value) for stage, value in (
-                ("implemented", implemented), ("configured", configured),
-                ("authorised", authorised), ("read_tested", read_tested),
-                ("sync_tested", sync_tested), ("reconciled", reconciled))},
+            "last_error": last_error, "last_error_at": previous.get("last_error_at"),
+            "blocker": blocker, "next_safe_action": next_action, "owner_only": True,
+            "stages": {
+                **{stage: _stage(value) for stage, value in (
+                    ("implemented", implemented), ("configured", configured),
+                    ("authorised", authorised), ("read_tested", read_tested),
+                    ("reconciled", reconciled))},
+                "sync_tested": (_stage(sync_tested) if profile["persisted_read"]
+                                else "Not applicable (read-only)"),
+            },
         })
     return result
