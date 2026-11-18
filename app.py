@@ -12,7 +12,7 @@ from customer_request_store import create_request as save_customer_request, list
 from hq_openai import chat as openai_chat, configured as openai_configured, AssistantConfigurationError, AssistantUpstreamError
 from hq_assistant_local import answer as local_hq_answer, LocalRecordsUnavailable
 from materials_costing import calculate_materials
-from job_material_store import read_log, write_log
+from job_material_store import read_log, write_log, StaleMaterialLogError
 from job_profitability import profitability
 from job_negotiation import evaluate as evaluate_negotiation
 from maintenance_planner import maintenance_data
@@ -362,6 +362,7 @@ $("reset").addEventListener("click",()=>{if(!confirm("Reset this timer?"))return
 $("copyTime").addEventListener("click",async()=>{const text=($("jobRef").value||"Job")+" — "+format(elapsed())+" ("+(elapsed()/3600).toFixed(2)+" hours)";try{await navigator.clipboard.writeText(text);$("timerMessage").textContent="Time copied";}catch(e){$("timerMessage").textContent="Copy unavailable: "+text;}});
 let materialLines=[];
 let currentMaterialJob="";
+let currentMaterialRevision=0, materialLoadRequestId=0;
 function matKey(){return "hq-materials-job:"+currentMaterialJob;}
 function saveMat(){try{localStorage.setItem(matKey(),JSON.stringify({lines:materialLines,sale:$("matSale").value,labour:$("matLabour").value,actual_labour_rate:$("matActualRate").value,overhead:$("matOverhead").value,other_costs:$("matOther").value,minimum_margin_percent:$("matMinMargin").value,description:$("matDescription").value,stages:$("matStages").value}));}catch(e){}}
 function loadMat(){try{const d=JSON.parse(localStorage.getItem(matKey())||"{}");materialLines=Array.isArray(d.lines)?d.lines:[];$("matSale").value=d.sale||"";$("matLabour").value=d.labour||"";$("matActualRate").value=d.actual_labour_rate||"";$("matOverhead").value=d.overhead||"";$("matOther").value=d.other_costs||"";$("matMinMargin").value=d.minimum_margin_percent||"";$("matDescription").value=d.description||"";$("matStages").value=d.stages||"";}catch(e){materialLines=[];}showMaterials();}
@@ -369,24 +370,36 @@ $("matUseManual").addEventListener("click",async()=>{
  const key=$("matManualJob").value.trim().toUpperCase();
  if(!/^[A-Z0-9][A-Z0-9 _-]{0,79}$/.test(key)){$("syncStatus").textContent="Enter a valid job reference (letters, numbers, spaces, hyphens or underscores).";return;}
  if(!Array.from($("matJob").options).some(o=>o.value===key))$("matJob").add(new Option(key+" (manual — not verified against Sheets)",key));
- $("matJob").value=key;currentMaterialJob=key;loadMat();await loadServerMat();
+ $("matJob").value=key;currentMaterialJob=key;currentMaterialRevision=0;loadMat();await loadServerMat();
 });
-$("matJob").addEventListener("change",async()=>{currentMaterialJob=$("matJob").value;loadMat();await loadServerMat();});
+$("matJob").addEventListener("change",async()=>{currentMaterialJob=$("matJob").value;currentMaterialRevision=0;loadMat();await loadServerMat();});
 async function loadServerMat(){
- if(!currentMaterialJob)return;
- try{const res=await fetch("/api/job-materials/"+encodeURIComponent(currentMaterialJob));
- const d=await res.json();if(!res.ok)throw Error(d.error||"Unable to load saved job");
- if(d.data){materialLines=d.data.lines||[];$("matSale").value=d.data.sale||"";$("matLabour").value=d.data.labour||"";$("matActualRate").value=d.data.actual_labour_rate||"";$("matOverhead").value=d.data.overhead||"";$("matOther").value=d.data.other_costs||"";$("matMinMargin").value=d.data.minimum_margin_percent||"";$("matDescription").value=d.data.description||"";$("matStages").value=d.data.stages||"";showMaterials();$("syncStatus").textContent="Loaded saved HQ job record ("+d.updated_at+").";}
- else $("syncStatus").textContent="No saved HQ record for this job. Local values are shown.";
- }catch(e){$("syncStatus").textContent=e.message+"; local values retained.";}
+ const key=currentMaterialJob,requestId=++materialLoadRequestId;
+ if(!key)return;
+ const saveButton=$("syncMaterials");saveButton.disabled=true;
+ let loaded=false;
+ try{
+  const res=await fetch("/api/job-materials/"+encodeURIComponent(key));
+  const d=await res.json();if(!res.ok)throw Error(d.error||"Unable to load saved job");
+  if(key!==currentMaterialJob||requestId!==materialLoadRequestId)return;
+  currentMaterialRevision=d.revision;loaded=true;
+  if(d.data){materialLines=d.data.lines||[];$("matSale").value=d.data.sale||"";$("matLabour").value=d.data.labour||"";$("matActualRate").value=d.data.actual_labour_rate||"";$("matOverhead").value=d.data.overhead||"";$("matOther").value=d.data.other_costs||"";$("matMinMargin").value=d.data.minimum_margin_percent||"";$("matDescription").value=d.data.description||"";$("matStages").value=d.data.stages||"";showMaterials();$("syncStatus").textContent="Loaded saved HQ job record ("+d.updated_at+", revision "+d.revision+").";}
+  else $("syncStatus").textContent="No saved HQ record for this job. Local values are shown; saving will create version 1.";
+ }catch(e){if(key===currentMaterialJob&&requestId===materialLoadRequestId)$("syncStatus").textContent=e.message+"; local values retained. Saving is disabled until the record can be checked.";}
+ finally{if(key===currentMaterialJob&&requestId===materialLoadRequestId)saveButton.disabled=!loaded;}
 }
 $("syncMaterials").addEventListener("click",async()=>{
- if(!currentMaterialJob){$("syncStatus").textContent="Select an existing job before saving to HQ.";return;}
- try{const csrf=document.querySelector('input[name="csrf"]').value;
- const res=await fetch("/api/job-materials/"+encodeURIComponent(currentMaterialJob),{method:"PUT",headers:{"Content-Type":"application/json","X-HQ-CSRF":csrf},body:JSON.stringify({lines:materialLines,sale:$("matSale").value,labour:$("matLabour").value,actual_labour_rate:$("matActualRate").value,overhead:$("matOverhead").value,other_costs:$("matOther").value})});
- const d=await res.json();if(!res.ok)throw Error(d.error||"Save failed");
- $("syncStatus").textContent="Saved securely to HQ at "+d.updated_at;
- }catch(e){$("syncStatus").textContent="Not saved: "+e.message;}
+ const key=currentMaterialJob;
+ if(!key){$("syncStatus").textContent="Select an existing job before saving to HQ.";return;}
+ const saveButton=$("syncMaterials");saveButton.disabled=true;
+ try{
+  const csrf=document.querySelector('input[name="csrf"]').value;
+  const payload={lines:materialLines,sale:$("matSale").value,labour:$("matLabour").value,actual_labour_rate:$("matActualRate").value,overhead:$("matOverhead").value,other_costs:$("matOther").value,minimum_margin_percent:$("matMinMargin").value,description:$("matDescription").value,stages:$("matStages").value,expected_revision:currentMaterialRevision};
+  const res=await fetch("/api/job-materials/"+encodeURIComponent(key),{method:"PUT",headers:{"Content-Type":"application/json","X-HQ-CSRF":csrf},body:JSON.stringify(payload)});
+  const d=await res.json();if(!res.ok)throw Error(d.error||"Save failed");
+  if(key===currentMaterialJob){currentMaterialRevision=d.revision;$("syncStatus").textContent="Saved securely to HQ at "+d.updated_at+" (revision "+d.revision+"). Customer breakdown fields saved.";}
+ }catch(e){if(key===currentMaterialJob)$("syncStatus").textContent="Not saved: "+e.message;}
+ finally{if(key===currentMaterialJob)saveButton.disabled=false;}
 });
 ["matSale","matLabour","matActualRate","matOverhead","matOther","matMinMargin","matDescription","matStages"].forEach(id=>$(id).addEventListener("change",showMaterials));
 try{const saved=JSON.parse(localStorage.getItem("hq-material-lines-v1")||"[]");if(Array.isArray(saved)&&saved.length<=100)materialLines=saved.filter(x=>x&&typeof x.name==="string"&&Number.isFinite(Number(x.cost)));}catch(e){}
@@ -738,6 +751,11 @@ def job_materials(job_key):
         data=request.get_json(silent=True) if request.is_json else None
         if not isinstance(data,dict) or not isinstance(data.get("lines"),list) or len(data["lines"])>100:
             return jsonify(error="Invalid material log"),400
+        if type(data.get("expected_revision")) is not int or not 0 <= data["expected_revision"] < 2**63 - 1:
+            return jsonify(error="Expected material log revision is required"),400
+        for field, maximum in (("description",200),("stages",4000),("minimum_margin_percent",20)):
+            if not isinstance(data.get(field),str) or len(data[field])>maximum:
+                return jsonify(error="Invalid "+field),400
         for line in data["lines"]:
             if not isinstance(line,dict) or not isinstance(line.get("name"),str) or len(line["name"])>100:
                 return jsonify(error="Invalid material line"),400
@@ -746,10 +764,14 @@ def job_materials(job_key):
                 if not (0<=value<1000000): raise ValueError()
             except (ValueError,TypeError,KeyError):
                 return jsonify(error="Invalid material cost"),400
-        return jsonify(write_log(owner,job_key,data))
+        # Revision is transport metadata, never part of the printable record.
+        expected=data.pop("expected_revision")
+        return jsonify(write_log(owner,job_key,data,expected_revision=expected))
     except (RuntimeError,OSError):
         app.logger.exception("Persistent materials storage unavailable")
         return jsonify(error="Persistent storage unavailable"),503
+    except StaleMaterialLogError as exc:
+        return jsonify(error=str(exc)),409
     except (ValueError,TypeError) as exc:
         return jsonify(error=str(exc)),400
 
