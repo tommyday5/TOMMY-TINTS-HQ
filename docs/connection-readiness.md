@@ -49,3 +49,8 @@ The schema preview now offers an **optional Monzo-only manual classification pro
 ### Monzo proposal integrity guard (18 November 2026)
 
 Owner-only offline classification review now enforces single-account canonical evidence and prevents a debit or zero bank entry being labelled a customer receipt candidate or director funding. Director drawings must be debits. No category is inferred, and legitimate two-direction transfer/refund/loan scenarios remain reviewable. These are **proposal validation rules**, not additional Monzo connection, live-read, sync, settlement, bank balance or approved-job evidence. The Monzo register remains unimplemented as a real provider ingestion adapter until actual source mappings are verified.
+
+
+### Audited classification rehearsal (18 November 2026; offline only)
+
+A synthetic-only SQLite review-audit prototype now exists in `hq_offline_classification_ledger.py` with isolated tests. It supports explicit reviewed proposals, replay-safe operation IDs, corrections via append-only revisions, optimistic concurrency checks, account isolation and HMAC-scoped pseudonymous source IDs. It is **not connected to the owner HQ UI, not a Monzo ingestion adapter, not on the production volume and not a production immutable audit log**. No provider status has advanced: actual export ownership/mapping, provider authorisation, successfully persisted *live* ingestion, independently reconciled settlement and approved job attribution remain unverified. The next safe step is to verify genuine Monzo/DNA export schemas, secure the production review and backup design, then integrate a separately approved owner-only staging flow with rollback and restore tests.
