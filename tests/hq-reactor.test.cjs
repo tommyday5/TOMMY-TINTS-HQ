@@ -1,0 +1,3 @@
+const {test}=require('node:test');const assert=require('node:assert/strict');const {greeting,britishVoice}=require('../static/hq-reactor.js');
+test('greeting follows UK local time and daylight saving',()=>{assert.equal(greeting(new Date('2026-11-18T09:00:00Z')),'Good morning');assert.equal(greeting(new Date('2026-11-18T13:00:00Z')),'Good afternoon');assert.equal(greeting(new Date('2026-11-18T19:00:00Z')),'Good evening');assert.equal(greeting(new Date('2026-07-18T17:30:00Z')),'Good evening')});
+test('voice must be local British English, never silent fallback to remote',()=>{assert.equal(britishVoice([{lang:'en-GB',localService:false},{lang:'en-US',localService:true}]),null);const voice={lang:'en-GB',localService:true};assert.equal(britishVoice([voice]),voice)});
