@@ -2,14 +2,15 @@
 import os
 import tempfile
 import unittest
+import uuid
 from unittest.mock import patch
 
 from app import app
-from customer_request_store import connect
+from customer_request_store import connect, create_request, create_review_draft
 from hq_auth import issue_session
 from hq_auth_store import auth_db
 from hq_core_records import (
-    change_work_status, create_test_job, read_work_record,
+    change_work_status, create_internal_work_record, create_test_job, read_work_record,
     set_draft_financials, work_summary,
 )
 
@@ -32,8 +33,20 @@ class PlannedDepositReportingTests(unittest.TestCase):
         with self.client.session_transaction() as sess, auth_db() as db:
             sess.update(hq_sid=issue_session(db, "test-owner"), csrf="csrf")
 
-    def priced_job(self, price, deposit, status):
-        record = create_test_job()
+    def new_real_job(self):
+        payload = {
+            "kind": "quote", "name": "Private Test Customer",
+            "email": "test@example.invalid", "phone": "07123456789",
+            "service": "Window Tinting", "make": "Ford", "model": "Focus",
+            "year": "2020", "registration": "AB20 XYZ", "date": "", "time": "",
+            "notes": "", "privacy_acknowledged": True,
+        }
+        request_id = create_request(payload, "test-" + uuid.uuid4().hex)
+        create_review_draft(request_id, "job")
+        return create_internal_work_record(request_id)
+
+    def priced_job(self, price, deposit, status, synthetic=False):
+        record = create_test_job() if synthetic else self.new_real_job()
         set_draft_financials(record, price, deposit, expected_revision=0)
         if status != "draft":
             change_work_status(record, "ready_for_review", expected_revision=1)
@@ -52,8 +65,10 @@ class PlannedDepositReportingTests(unittest.TestCase):
         self.priced_job(10000, 1000, "in_progress")
         self.priced_job(50000, 10000, "completed")
         self.priced_job(12000, 3000, "cancelled")
-        missing_price = create_test_job()
+        missing_price = self.new_real_job()
         invalid_deposit = self.priced_job(9000, 2000, "approved")
+        self.priced_job(99900, 7600, "approved", synthetic=True)
+        self.priced_job(11100, 5000, "in_progress", synthetic=True)
         # Old or externally corrupted data must not silently become revenue.
         with connect() as db:
             db.execute("UPDATE hq_work_records SET status='approved' WHERE id=?",
@@ -62,10 +77,11 @@ class PlannedDepositReportingTests(unittest.TestCase):
                        (invalid_deposit,))
 
         summary = work_summary()
-        self.assertEqual(summary["record_count"], 7)
+        self.assertEqual(summary["record_count"], 9)
         self.assertEqual(summary["priced_draft_value_pence"], 20000)
         self.assertEqual(summary["approved_priced_record_count"], 3)
         self.assertEqual(summary["approved_amounts_incomplete_count"], 2)
+        self.assertEqual(summary["excluded_synthetic_approved_record_count"], 2)
         self.assertEqual(summary["approved_price_total_pence"], 95000)
         self.assertEqual(summary["planned_deposit_total_pence"], 18600)
         self.assertEqual(summary["conditional_remainder_pence"], 76400)
@@ -85,6 +101,7 @@ class PlannedDepositReportingTests(unittest.TestCase):
         self.assertEqual(summary["approved_price_total_pence"], 0)
         self.assertEqual(summary["planned_deposit_total_pence"], 0)
         self.assertEqual(summary["approved_priced_record_count"], 0)
+        self.assertEqual(summary["excluded_synthetic_approved_record_count"], 0)
         self.assertIsNone(summary["verified_cash_received_pence"])
         self.assertIsNone(summary["verified_cash_outstanding_pence"])
 
@@ -104,6 +121,7 @@ class PlannedDepositReportingTests(unittest.TestCase):
         self.assertIn('id="jobCardPaymentSummary"', html)
         self.assertIn('await assistantTaskApi("/api/hq/work-summary")', html)
         self.assertIn("Approved job prices (not collected)", html)
+        self.assertIn("synthetic TEST job(s) excluded from financial planning totals", html)
         self.assertIn("Planned deposits (not confirmed received)", html)
         self.assertIn("Verified receipts and actual outstanding amounts: unavailable", html)
         self.assertIn('deposit.placeholder="Planned deposit £ (NOT received)"', html)
