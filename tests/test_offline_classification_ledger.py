@@ -129,6 +129,64 @@ class OfflineClassificationLedgerTests(unittest.TestCase):
             self.assertEqual(db.execute(
                 "SELECT COUNT(*) FROM offline_review_events").fetchone()[0], 1)
 
+    def test_audit_integrity_and_isolated_sqlite_backup_restore(self):
+        self.submit()
+        self.submit(category="director_funding", request_id="fixture-operation-two",
+                    expected_revision=1, reason="operator_correction")
+        baseline = self.ledger.verify_integrity()
+        self.assertEqual(baseline["events_checked"], 2)
+        self.assertEqual(baseline["evidence_chains_checked"], 1)
+        self.assertTrue(baseline["audit_structure_valid"])
+        self.assertTrue(baseline["offline_fixture_only"])
+        self.assertFalse(baseline["bank_receipt_verified"])
+
+        backup = Path(self.temp.name) / "fixture-backup.sqlite3"
+        restore = Path(self.temp.name) / "fixture-restored.sqlite3"
+        with sqlite3.connect(self.db_path) as original, sqlite3.connect(backup) as copy:
+            original.backup(copy)
+        with sqlite3.connect(backup) as copy, sqlite3.connect(restore) as restored:
+            copy.backup(restored)
+        recovered = OfflineClassificationLedger(restore, hmac_key=self.key)
+        self.assertEqual(recovered.verify_integrity(), baseline)
+        self.assertEqual(recovered.history(bank(), transaction_id="fixture-txn"),
+                         self.ledger.history(bank(), transaction_id="fixture-txn"))
+        replay = recovered.record(bank(), transaction_id="fixture-txn",
+                                  category="director_funding", actor_ref="fixture-owner",
+                                  request_id="fixture-operation-two", expected_revision=1,
+                                  reason="operator_correction")
+        self.assertTrue(replay["idempotent_replay"])
+        self.assertEqual(recovered.verify_integrity()["events_checked"], 2)
+
+    def test_payload_tampering_blocks_history_and_further_reviews(self):
+        self.submit()
+        with sqlite3.connect(self.db_path) as db:
+            db.execute("UPDATE offline_review_events SET category='tax' WHERE revision=1")
+        with self.assertRaisesRegex(ContractError, "integrity"):
+            self.ledger.verify_integrity()
+        with self.assertRaisesRegex(ContractError, "integrity"):
+            self.ledger.history(bank(), transaction_id="fixture-txn")
+        with self.assertRaisesRegex(ContractError, "integrity"):
+            self.submit(category="transfer", request_id="fixture-operation-two",
+                        expected_revision=1, reason="operator_correction")
+        with sqlite3.connect(self.db_path) as db:
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM offline_review_events").fetchone()[0], 1)
+
+    def test_missing_middle_revision_and_wrong_key_fail_closed(self):
+        self.submit()
+        self.submit(category="director_funding", request_id="fixture-operation-two",
+                    expected_revision=1, reason="operator_correction")
+        self.submit(category="transfer", request_id="fixture-operation-three",
+                    expected_revision=2, reason="new_evidence")
+        wrong_key = OfflineClassificationLedger(
+            self.db_path, hmac_key=b"another-synthetic-audit-hmac-key-12345678")
+        with self.assertRaisesRegex(ContractError, "integrity"):
+            wrong_key.verify_integrity()
+        with sqlite3.connect(self.db_path) as db:
+            db.execute("DELETE FROM offline_review_events WHERE revision=2")
+        with self.assertRaisesRegex(ContractError, "integrity"):
+            self.ledger.verify_integrity()
+
     def test_explicit_key_and_file_are_required(self):
         with self.assertRaises(ContractError):
             OfflineClassificationLedger(self.db_path, hmac_key=b"short")
