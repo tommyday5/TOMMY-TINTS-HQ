@@ -23,3 +23,7 @@ No audio files or spoken text are saved by HQ. Response no-store; audio uses a s
 Limits: 2000 input characters, 3 MB output, 5 requests/minute and 60 requests/day per owner, including failed generation attempts. Durable usage table stores only owner subject and timestamps. No financial transaction or booking tools are added.
 
 Model defaults to gpt-4o-mini-tts, overridable via OPENAI_TTS_MODEL. Model access and funded API billing must be verified in the owner's runtime. No production credentials or owner session are available to local tests; provider calls are mocked.
+
+## Layered 3D reactor presentation
+
+Decorative chrome bezel, depth-separated segmented rings, two inclined orbital rings, luminous energy lens and raised hub use CSS perspective/translateZ. No WebGL, canvas render loop, video or new external assets. Standby remains static. Existing request, actual microphone and actual speech playback states activate ring rotation and lens pulses. Startup is a short owner-activated reveal. Reduced-motion flattens depth and disables animation; state labels remain available. Carbon/red/gold styling is scoped to private HQ and customer mascot is unchanged. No fabricated connection counts or telemetry.
