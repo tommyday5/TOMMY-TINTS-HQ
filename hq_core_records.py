@@ -89,9 +89,10 @@ def list_work_records(limit=100):
         _schema(db)
         rows=db.execute("""SELECT w.id,w.source_request_id,w.kind,w.service,w.notes,
             w.preferred_date,w.preferred_time,w.status,w.price_pence,w.deposit_pence,w.revision,w.created_at,
-            w.customer_id,c.name,c.email,c.phone,v.make,v.model,v.model_year,v.registration
+            w.customer_id,d.draft_type AS original_draft_kind,c.name,c.email,c.phone,v.make,v.model,v.model_year,v.registration
             FROM hq_work_records w JOIN hq_customers c ON c.id=w.customer_id
             JOIN hq_vehicles v ON v.id=w.vehicle_id
+            LEFT JOIN customer_request_drafts d ON d.request_id=w.source_request_id
             ORDER BY w.created_at DESC LIMIT ?""",(min(100,max(1,int(limit))),)).fetchall()
         return [dict(row) for row in rows]
 
@@ -133,7 +134,8 @@ def search_work_records(query="", kind="", status="", limit=25, offset=0):
     predicate = " WHERE " + " AND ".join(where) if where else ""
     joins = """ FROM hq_work_records w
         JOIN hq_customers c ON c.id=w.customer_id
-        JOIN hq_vehicles v ON v.id=w.vehicle_id"""
+        JOIN hq_vehicles v ON v.id=w.vehicle_id
+            LEFT JOIN customer_request_drafts d ON d.request_id=w.source_request_id"""
     with connect() as db:
         _schema(db)
         # Both queries use the same read transaction for a consistent count/page.
@@ -142,7 +144,7 @@ def search_work_records(query="", kind="", status="", limit=25, offset=0):
         rows = db.execute("""SELECT w.id,w.source_request_id,w.kind,w.service,
             w.notes,w.preferred_date,w.preferred_time,w.status,
             w.price_pence,w.deposit_pence,w.revision,w.created_at,w.customer_id,
-            c.name,c.email,c.phone,v.make,v.model,v.model_year,v.registration"""
+            d.draft_type AS original_draft_kind,c.name,c.email,c.phone,v.make,v.model,v.model_year,v.registration"""
             + joins + predicate + " ORDER BY w.created_at DESC,w.id DESC LIMIT ? OFFSET ?",
             [*args, limit, offset]).fetchall()
     records = [dict(row) for row in rows]
@@ -160,9 +162,10 @@ def read_work_record(record_id):
         _schema(db)
         row = db.execute("""SELECT w.id,w.source_request_id,w.kind,w.service,w.notes,
             w.preferred_date,w.preferred_time,w.status,w.price_pence,w.deposit_pence,w.revision,w.created_at,
-            c.name,c.email,c.phone,v.make,v.model,v.model_year,v.registration
+            d.draft_type AS original_draft_kind,c.name,c.email,c.phone,v.make,v.model,v.model_year,v.registration
             FROM hq_work_records w JOIN hq_customers c ON c.id=w.customer_id
-            JOIN hq_vehicles v ON v.id=w.vehicle_id WHERE w.id=?""", (record_id,)).fetchone()
+            JOIN hq_vehicles v ON v.id=w.vehicle_id
+            LEFT JOIN customer_request_drafts d ON d.request_id=w.source_request_id WHERE w.id=?""", (record_id,)).fetchone()
     if row is None:
         raise LookupError("HQ record not found")
     return dict(row)

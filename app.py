@@ -15,6 +15,7 @@ from materials_costing import calculate_materials
 from job_material_store import read_log, write_log, StaleMaterialLogError
 from job_profitability import profitability
 from hq_job_costing import costing_snapshot
+from hq_work_history import work_record_history
 from job_negotiation import evaluate as evaluate_negotiation
 from maintenance_planner import maintenance_data
 from maintenance_economics import travel_charge, route_economics
@@ -85,7 +86,7 @@ async function refreshCustomerDrafts(){const host=document.getElementById("custo
 document.getElementById("customerRequestsRefresh").addEventListener("click",refreshCustomerRequests);
 document.getElementById("customerDraftsRefresh").addEventListener("click",refreshCustomerDrafts);
 let workPageOffset=0;const workPageLimit=25;
-async function refreshCustomerWorkRecords(){const host=document.getElementById("customerWorkList");host.replaceChildren();try{const filters=new URLSearchParams({q:$("workSearch").value.trim(),kind:$("workKind").value,status:$("workStatus").value,limit:String(workPageLimit),offset:String(workPageOffset)});const result=await assistantTaskApi("/api/hq/work-records/search?"+filters);$("workPageStatus").textContent=result.total+" matching internal records · showing "+(result.records.length?workPageOffset+1:0)+"–"+(workPageOffset+result.records.length);$("workPrev").disabled=workPageOffset===0;$("workNext").disabled=!result.has_more;if(!result.records.length){host.textContent="No matching internal records. Adjust filters or go to the previous page.";return}for(const item of result.records){const card=document.createElement("div");card.className="card";const title=document.createElement("strong");title.textContent=item.name+" · "+item.make+" "+item.model+" · "+item.service;const meta=document.createElement("p");meta.textContent=item.kind+" · "+item.status+" · "+item.registration;const price=document.createElement("input");price.type="number";price.min="0";price.step="0.01";price.placeholder="Total price £";if(item.price_pence!==null)price.value=(item.price_pence/100).toFixed(2);const deposit=document.createElement("input");deposit.type="number";deposit.min="0";deposit.step="0.01";deposit.placeholder="Deposit received £";deposit.value=(item.deposit_pence/100).toFixed(2);const save=document.createElement("button");save.textContent="Save draft amounts";save.addEventListener("click",async()=>{const toPence=v=>{if(!/^\d{1,7}(?:\.\d{1,2})?$/.test(v))throw Error("Enter an amount in pounds with up to two decimals");const [whole,part=""]=v.split(".");return Number(whole)*100+Number(part.padEnd(2,"0"))};try{const result=await assistantTaskApi("/api/hq/work-records/"+encodeURIComponent(item.id)+"/financials","POST",{price_pence:toPence(price.value),deposit_pence:toPence(deposit.value),expected_revision:item.revision});item.revision=result.revision;item.price_pence=result.price_pence;item.deposit_pence=result.deposit_pence;document.getElementById("customerRequestsStatus").textContent="Draft saved. Outstanding £"+(result.balance_pence/100).toFixed(2)+". No payment verified."}catch(e){document.getElementById("customerRequestsStatus").textContent=e.message}});const state=document.createElement("select");for(const optionValue of ["draft","ready_for_review","approved","in_progress","completed","cancelled"]){const option=document.createElement("option");option.value=optionValue;option.textContent=optionValue.replaceAll("_"," ");state.append(option)}state.value=item.status;const apply=document.createElement("button");const labelStatusAction=()=>{apply.textContent=item.kind==="quote"&&state.value==="approved"?"Approve quote and create job":"Update internal status"};state.addEventListener("change",labelStatusAction);labelStatusAction();apply.addEventListener("click",async()=>{try{await assistantTaskApi("/api/hq/work-records/"+encodeURIComponent(item.id)+"/status","POST",{status:state.value,expected_revision:item.revision});document.getElementById("customerRequestsStatus").textContent="Internal status updated. No customer contacted or booking created.";await refreshCustomerWorkRecords()}catch(e){document.getElementById("customerRequestsStatus").textContent=e.message}});const edit=document.createElement("a");edit.textContent="Edit customer";edit.href="/hq/customers/"+encodeURIComponent(item.customer_id)+"/edit";card.append(title,meta,price,deposit,save,state,apply,edit);if(item.source_request_id.startsWith("TEST-")){const remove=document.createElement("button");remove.textContent="Delete TEST job";remove.addEventListener("click",async()=>{try{await assistantTaskApi("/api/hq/test-work-records/"+encodeURIComponent(item.id),"DELETE");await refreshCustomerWorkRecords();document.getElementById("customerRequestsStatus").textContent="Synthetic test job deleted."}catch(e){document.getElementById("customerRequestsStatus").textContent=e.message}});card.append(remove)}host.append(card)}}catch(e){host.textContent=e.message}}
+async function refreshCustomerWorkRecords(){const host=document.getElementById("customerWorkList");host.replaceChildren();try{const filters=new URLSearchParams({q:$("workSearch").value.trim(),kind:$("workKind").value,status:$("workStatus").value,limit:String(workPageLimit),offset:String(workPageOffset)});const result=await assistantTaskApi("/api/hq/work-records/search?"+filters);$("workPageStatus").textContent=result.total+" matching internal records · showing "+(result.records.length?workPageOffset+1:0)+"–"+(workPageOffset+result.records.length);$("workPrev").disabled=workPageOffset===0;$("workNext").disabled=!result.has_more;if(!result.records.length){host.textContent="No matching internal records. Adjust filters or go to the previous page.";return}for(const item of result.records){const card=document.createElement("div");card.className="card";const title=document.createElement("strong");title.textContent=item.name+" · "+item.make+" "+item.model+" · "+item.service;const meta=document.createElement("p");meta.textContent=item.kind+" · "+item.status+" · "+item.registration;if(item.original_draft_kind==="quote")meta.textContent+=" · original reviewed quotation";const price=document.createElement("input");price.type="number";price.min="0";price.step="0.01";price.placeholder="Total price £";if(item.price_pence!==null)price.value=(item.price_pence/100).toFixed(2);const deposit=document.createElement("input");deposit.type="number";deposit.min="0";deposit.step="0.01";deposit.placeholder="Deposit received £";deposit.value=(item.deposit_pence/100).toFixed(2);const save=document.createElement("button");save.textContent="Save draft amounts";save.addEventListener("click",async()=>{const toPence=v=>{if(!/^\d{1,7}(?:\.\d{1,2})?$/.test(v))throw Error("Enter an amount in pounds with up to two decimals");const [whole,part=""]=v.split(".");return Number(whole)*100+Number(part.padEnd(2,"0"))};try{const result=await assistantTaskApi("/api/hq/work-records/"+encodeURIComponent(item.id)+"/financials","POST",{price_pence:toPence(price.value),deposit_pence:toPence(deposit.value),expected_revision:item.revision});item.revision=result.revision;item.price_pence=result.price_pence;item.deposit_pence=result.deposit_pence;document.getElementById("customerRequestsStatus").textContent="Draft saved. Outstanding £"+(result.balance_pence/100).toFixed(2)+". No payment verified."}catch(e){document.getElementById("customerRequestsStatus").textContent=e.message}});const state=document.createElement("select");for(const optionValue of ["draft","ready_for_review","approved","in_progress","completed","cancelled"]){const option=document.createElement("option");option.value=optionValue;option.textContent=optionValue.replaceAll("_"," ");state.append(option)}state.value=item.status;const apply=document.createElement("button");const labelStatusAction=()=>{apply.textContent=item.kind==="quote"&&state.value==="approved"?"Approve quote and create job":"Update internal status"};state.addEventListener("change",labelStatusAction);labelStatusAction();apply.addEventListener("click",async()=>{try{await assistantTaskApi("/api/hq/work-records/"+encodeURIComponent(item.id)+"/status","POST",{status:state.value,expected_revision:item.revision});document.getElementById("customerRequestsStatus").textContent="Internal status updated. No customer contacted or booking created.";await refreshCustomerWorkRecords()}catch(e){document.getElementById("customerRequestsStatus").textContent=e.message}});const edit=document.createElement("a");edit.textContent="Edit customer";edit.href="/hq/customers/"+encodeURIComponent(item.customer_id)+"/edit";card.append(title,meta,price,deposit,save,state,apply,edit);if(item.source_request_id.startsWith("TEST-")){const remove=document.createElement("button");remove.textContent="Delete TEST job";remove.addEventListener("click",async()=>{try{await assistantTaskApi("/api/hq/test-work-records/"+encodeURIComponent(item.id),"DELETE");await refreshCustomerWorkRecords();document.getElementById("customerRequestsStatus").textContent="Synthetic test job deleted."}catch(e){document.getElementById("customerRequestsStatus").textContent=e.message}});card.append(remove)}host.append(card)}}catch(e){host.textContent=e.message}}
 document.getElementById("customerWorkRefresh").addEventListener("click",refreshCustomerWorkRecords);
 document.getElementById("workSearchApply").addEventListener("click",()=>{workPageOffset=0;refreshCustomerWorkRecords()});
 document.getElementById("workSearch").addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();workPageOffset=0;refreshCustomerWorkRecords()}});
@@ -135,6 +136,7 @@ async function loadJobCards(){
    line(box,"h3",[job.make,job.model,job.registration].filter(Boolean).join(" ")||"Vehicle not recorded");
    line(box,"p",job.name+" · "+job.service);
    line(box,"p",job.status.replaceAll("_"," "));
+    if(job.original_draft_kind==="quote")line(box,"p","Origin: reviewed quotation · original HQ record "+job.id.slice(0,8));
    const progress={draft:0,ready_for_review:1,approved:2,in_progress:3,completed:4}[job.status];
    if(progress!==undefined){
     const bar=document.createElement("progress");bar.max=4;bar.value=progress;
@@ -156,7 +158,35 @@ async function loadJobCards(){
     });
     box.append(action);
    }
-   const costDetail=document.createElement("div");costDetail.setAttribute("role","status");
+   const historyDetail=document.createElement("div");historyDetail.setAttribute("role","status");
+    const historyButton=document.createElement("button");historyButton.type="button";historyButton.textContent="Review quote & job history";
+    historyButton.addEventListener("click",async()=>{
+     historyButton.disabled=true;historyDetail.textContent="Loading internal work history…";
+     try{
+      const history=await assistantTaskApi("/api/hq/work-records/"+encodeURIComponent(job.id)+"/history");
+      historyDetail.replaceChildren();
+      line(historyDetail,"p","Source enquiry "+history.source_request_id.slice(0,12)+" · "+(history.original_draft_kind==="quote"?"Originally a quotation":history.original_draft_kind==="job"?"Originally a job draft":"Original draft type unverified"));
+      if(history.approved_from_quote)line(historyDetail,"p","Reviewed quote approved into the same job record; no duplicate record created.");
+      if(!history.events.length)line(historyDetail,"p","No recorded internal changes for this job.");
+      for(const event of history.events){
+       let detail="";
+       if(event.action==="financials"){
+        const amount=value=>Number.isInteger(value)?currency(value):"not recorded";
+        detail="Draft price "+amount(event.before.price_pence)+" → "+amount(event.after.price_pence)+
+         "; recorded deposit "+amount(event.before.deposit_pence)+" → "+amount(event.after.deposit_pence);
+       }else{
+        detail="Status "+(event.before.status||"unknown")+" → "+(event.after.status||"unknown");
+        if(event.before.kind!==event.after.kind)detail+=" · type "+(event.before.kind||"unknown")+" → "+(event.after.kind||"unknown");
+       }
+       line(historyDetail,"p",event.created_at+" · "+detail);
+      }
+      if(history.has_earlier_events)line(historyDetail,"small","Only the most recent 100 changes shown.");
+      line(historyDetail,"small","Entered financial amounts are not payment verification.");
+     }catch(error){historyDetail.textContent="History unavailable: "+error.message;}
+     finally{historyButton.disabled=false;}
+    });
+    box.append(historyButton,historyDetail);
+    const costDetail=document.createElement("div");costDetail.setAttribute("role","status");
    const costReview=document.createElement("button");costReview.type="button";costReview.textContent="Review costs & contribution";
    costReview.addEventListener("click",async()=>{
     costReview.disabled=true;costDetail.textContent="Checking saved internal job costs…";
@@ -1331,6 +1361,23 @@ def hq_customer_request_draft(request_id):
 @required
 def hq_work_records():
     return jsonify(records=list_work_records())
+
+
+@app.get("/api/hq/work-records/<record_id>/history")
+@required
+def hq_work_record_history(record_id):
+    """Owner-only, PII-minimised read-only quote-to-job and pricing audit."""
+    try:
+        response = jsonify(work_record_history(record_id))
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    except LookupError as exc:
+        return jsonify(error=str(exc)), 404
+    except (RuntimeError, OSError, sqlite3.Error):
+        app.logger.exception("Work record history unavailable")
+        return jsonify(error="Persistent storage unavailable"), 503
 
 
 @app.get("/api/hq/work-records/<record_id>/costing")
