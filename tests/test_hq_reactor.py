@@ -8,3 +8,13 @@ class ReactorTests(unittest.TestCase):
   self.assertIn('infinite paused',css);self.assertIn('prefers-reduced-motion',css)
   self.assertNotIn('hq-reactor',(root/'static/customer-booking-preview.html').read_text())
   self.assertIn("fetch('/api/hq/assistant/speech'",js);self.assertIn('X-HQ-CSRF',js);self.assertIn('a.controls=true',js);self.assertIn('AbortController',js)
+
+ def test_depth_layers_remain_decorative_and_activity_driven(self):
+  root=Path(__file__).resolve().parents[1]
+  js=(root/'static/hq-reactor.js').read_text();css=(root/'static/hq-reactor.css').read_text()
+  self.assertIn('class="hq-reactor-stage" aria-hidden="true"',js)
+  self.assertIn('PRIVATE HQ · ACTIVITY LINKED',js)
+  self.assertIn('.hq-core-console:not([data-state=standby]) .hq-orbital',css)
+  self.assertIn('infinite paused',css)
+  self.assertIn('perspective:650px',css)
+  self.assertNotIn('requestAnimationFrame',js)
