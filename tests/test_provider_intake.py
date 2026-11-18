@@ -27,7 +27,8 @@ class GmailTests(unittest.TestCase):
     def test_idempotent_retry_and_persistent_review(self):
         with patch.object(gmail, "_get", side_effect=self.responses * 3) as api:
             self.assertEqual(gmail.import_page("token")["added"], 1)
-            self.assertEqual(api.call_args_list[1].kwargs["q"], "in:inbox label:HQ-Enquiries")
+            self.assertEqual(api.call_args_list[1].kwargs["q"],
+                             "in:inbox label:HQ-Enquiries -label:HQ-Legal -label:HQ-Debt")
             self.assertEqual(gmail.import_page("token", "cursor")["added"], 0)
             self.assertEqual(api.call_args_list[4].kwargs["pageToken"], "cursor")
             self.assertEqual(gmail.queue()[0], 1)

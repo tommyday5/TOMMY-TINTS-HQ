@@ -15,6 +15,45 @@ SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
 ID = re.compile(r"[a-zA-Z0-9_-]{1,64}")
 
+# A manual HQ-Enquiries label is necessary, but not sufficient, to qualify
+# messages for a *sales* queue. Keep recognisable legal, debt and enforcement
+# correspondence in Gmail for separate handling without storing its content in
+# the customer enquiry database. This is a conservative secondary safeguard;
+# no subject/snippet keyword filter can classify every message perfectly.
+_SENSITIVE_DOMAINS = ("hmrc.gov.uk", "justice.gov.uk", "courts.gov.uk")
+_SENSITIVE_LOCAL_PART = re.compile(
+    r"(?:legal|debts?|collections?|enforcement|litigation)(?:[._+\-].*)?\Z", re.I
+)
+_SENSITIVE_TEXT = re.compile(
+    r"\b(?:"
+    r"debt\s+(?:collection|recovery|collector|owed)|"
+    r"(?:county|high)\s+court|"
+    r"court\s+(?:claim|order|judg(?:e)?ment|summons)|"
+    r"claim\s+(?:form|number)|"
+    r"notice\s+of\s+(?:enforcement|intended\s+prosecution)|"
+    r"enforcement\s+(?:agent|notice|action)|"
+    r"bailiff|writ\s+of\s+control|statutory\s+demand|"
+    r"letter\s+before\s+(?:claim|action)|"
+    r"(?:penalty|parking)\s+charge\s+notice|"
+    r"fixed\s+penalty\s+notice|"
+    r"council\s+tax\s+arrears|late\s+filing\s+penalty|"
+    r"pcn|ccj|n244|hmrc"
+    r")\b", re.I
+)
+
+
+def _excluded_from_sales(sender, subject, snippet):
+    """Only flag clear sensitive cues; no external AI or data transfer."""
+    address = sender.casefold()
+    local, separator, domain = address.partition("@")
+    if separator and (
+        any(domain == item or domain.endswith("." + item)
+            for item in _SENSITIVE_DOMAINS)
+        or _SENSITIVE_LOCAL_PART.fullmatch(local)
+    ):
+        return True
+    return bool(_SENSITIVE_TEXT.search(subject + " " + snippet))
+
 
 def _path():
     return Path(os.environ["HQ_DATA_DIR"]).resolve() / "gmail_enquiries.sqlite3"
@@ -36,11 +75,12 @@ def import_page(token, page_token=None):
     if not storage_ready():
         raise PersistedSyncError("Persistent enquiry storage is unavailable")
     verify_mailbox(token)
-    params = {"q": "in:inbox label:HQ-Enquiries", "maxResults": 10}
+    params = {"q": "in:inbox label:HQ-Enquiries -label:HQ-Legal -label:HQ-Debt", "maxResults": 10}
     if page_token:
         params["pageToken"] = page_token
     page = _get(token, "/messages", **params)
     rows = []
+    skipped_sensitive = 0
     for message in page.get("messages", []):
         ref = message["id"]
         if not ID.fullmatch(ref):
@@ -49,8 +89,14 @@ def import_page(token, page_token=None):
         if item.get("id") != ref:
             raise RuntimeError("Mismatched Gmail message reference")
         headers = {header["name"].lower(): header["value"] for header in item["payload"]["headers"]}
-        rows.append((ref, parseaddr(headers.get("from", ""))[1][:254],
-                     headers.get("subject", "")[:250], item.get("snippet", "")[:500]))
+        sender = parseaddr(headers.get("from", ""))[1]
+        subject, snippet = headers.get("subject", ""), item.get("snippet", "")
+        if not all(isinstance(value, str) for value in (sender, subject, snippet)):
+            raise RuntimeError("Invalid Gmail message fields")
+        if _excluded_from_sales(sender, subject, snippet):
+            skipped_sensitive += 1
+            continue
+        rows.append((ref, sender[:254], subject[:250], snippet[:500]))
     try:
         path = _path()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -62,7 +108,8 @@ def import_page(token, page_token=None):
                 VALUES (?,?,?,?) ON CONFLICT(id) DO NOTHING""", rows).rowcount
     except (OSError, sqlite3.Error) as exc:
         raise PersistedSyncError("Gmail enquiry storage commit failed") from exc
-    return {"added": added, "read": len(rows), "next": page.get("nextPageToken")}
+    return {"added": added, "read": len(rows) + skipped_sensitive,
+            "skipped_sensitive": skipped_sensitive, "next": page.get("nextPageToken")}
 
 
 def queue(limit=50):
