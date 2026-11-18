@@ -58,6 +58,46 @@ class ClassificationReviewTests(unittest.TestCase):
             with self.subTest(proposals=proposals), self.assertRaises(ContractError):
                 preview_manual_classifications(rows(), proposals)
 
+    def test_direction_of_receipts_funding_and_drawings_is_checked(self):
+        bank = rows()
+        for proposals in (
+            {"tx002": "customer_receipt_candidate"},
+            {"tx002": "director_funding"},
+            {"tx001": "director_drawings"},
+        ):
+            with self.subTest(proposals=proposals), self.assertRaises(ContractError):
+                preview_manual_classifications(bank, proposals)
+        # A refund, loan or transfer can legitimately have either sign.
+        result = preview_manual_classifications(bank, {
+            "tx001": "refund", "tx002": "transfer",
+            "tx003": "customer_receipt_candidate",
+        })
+        self.assertEqual(result["customer_receipt_candidates"], 1)
+        self.assertFalse(result["bank_receipt_verified"])
+        zero = normalise_monzo_rows([{
+            "transaction_id": "zero", "amount_pence": 0,
+            "currency": "GBP", "booked_at": "2026-11-18T11:00:00Z",
+        }], account_ref="synthetic-business")
+        with self.assertRaises(ContractError):
+            preview_manual_classifications(zero, {"zero": "customer_receipt_candidate"})
+
+    def test_forged_or_mixed_account_bank_evidence_fails_closed(self):
+        bank = rows()
+        first = bank["events"][0]
+        second = bank["events"][1]
+        for changed in (
+            {**first, "amount_pence": "10000"},
+            {**first, "currency": "EUR"},
+            {**first, "account_ref": "other-account"},
+            {**first, "evidence_id": "monzo:wrong:tx001"},
+        ):
+            with self.subTest(changed=changed), self.assertRaises(ContractError):
+                preview_manual_classifications({**bank, "events": (changed,)}, {})
+        mixed = {**second, "account_ref": "other-account",
+                 "evidence_id": "monzo:other-account:tx002"}
+        with self.assertRaises(ContractError):
+            preview_manual_classifications({**bank, "events": (first, mixed)}, {})
+
     def test_dna_events_cannot_be_misclassified_as_bank_credits(self):
         dna = normalise_dna_rows([{
             "event_id": "ev001", "payment_id": "payment001",
