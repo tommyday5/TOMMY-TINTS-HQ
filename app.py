@@ -1027,10 +1027,8 @@ def hq_finance_data():
     try:
         result = read_finance(entry[0] if entry else None)
     except Exception:
-        record_check("sheets", "Finance workbook read failed")
         record_check("finance", "Finance workbook read failed")
         return jsonify(error="Unable to refresh financial spreadsheet; check connection and permissions"), 502
-    record_check("sheets")
     record_check("finance")
     return jsonify(result)
 

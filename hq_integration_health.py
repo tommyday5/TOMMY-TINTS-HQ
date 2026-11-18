@@ -65,6 +65,7 @@ def integration_status(connections):
             "name": name, "status": state, "last_success": previous.get("last_success"),
             "last_error": previous.get("last_error"), "last_error_at": previous.get("last_error_at"),
             "pending_records": None,
+            "needs_attention": bool(previous.get("needs_attention")),
             "intervention_required": connected is not True or bool(previous.get("needs_attention")),
         })
     return {"history_available": history_available, "integrations": entries}

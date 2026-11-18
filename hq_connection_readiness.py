@@ -102,7 +102,10 @@ def build_readiness(health, signals):
         elif authorised is False:
             blocker = "Owner OAuth consent is not available in this session or the saved grant could not be used."
             next_action = profile["read"]
-        elif previous.get("status") == "Last read failed":
+        elif not history_available:
+            blocker = "Integration observation storage is unavailable; previous reads and syncs cannot be verified."
+            next_action = "Restore read-only access to the persistent integration health database without resetting history."
+        elif previous.get("needs_attention") is True:
             blocker = last_error or "Most recent upstream read failed; earlier success may be stale."
             next_action = profile["read"]
         elif not read_tested:
