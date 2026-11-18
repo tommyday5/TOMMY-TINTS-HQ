@@ -1,13 +1,13 @@
 """Tommy Tints HQ interactive preview. No customer data is served until auth is configured."""
 import os, secrets, time, hmac, hashlib, sqlite3
 from threading import Lock
-from flask import Flask, jsonify, render_template, render_template_string, session, request, redirect, url_for
+from flask import Flask, jsonify, render_template, render_template_string, make_response, session, request, redirect, url_for
 from quote_engine import calculate_quote
 from enquiry_agent import analyse_enquiry
 from hq_assistant import plan_request
 from assistant_task_store import create_task, list_tasks, review_task
 from assistant_memory import history as assistant_history, record_chat, clear_history, audit, audit_events
-from hq_core_records import create_internal_work_record, list_work_records, search_work_records, set_draft_financials, change_work_status, StaleWorkRecordError, work_summary, create_test_job, delete_test_job
+from hq_core_records import create_internal_work_record, list_work_records, search_work_records, set_draft_financials, change_work_status, read_work_record, StaleWorkRecordError, work_summary, create_test_job, delete_test_job
 from customer_request_store import create_request as save_customer_request, list_requests as list_customer_requests, update_request_status, storage_ready, create_review_draft, list_review_drafts
 from hq_openai import chat as openai_chat, configured as openai_configured, AssistantConfigurationError, AssistantUpstreamError
 from hq_assistant_local import answer as local_hq_answer, LocalRecordsUnavailable
@@ -873,17 +873,41 @@ def customer_breakdown(job_key):
     owner=str(session.get("google_sub") or "")
     if not owner: return "Owner identity missing",403
     try: record=read_log(owner,job_key).get("data")
-    except (RuntimeError,OSError): return "Job storage unavailable",503
+    except (RuntimeError,OSError,sqlite3.Error): return "Job storage unavailable",503
     if not record: return "Save this job in HQ before printing.",404
     description=str(record.get("description") or "Vehicle work completed")[:200]
     stages=[str(x).strip()[:200] for x in str(record.get("stages") or "").splitlines() if str(x).strip()][:30]
     if not stages: return "Add customer-facing work stages and save the job before printing.",400
-    price=record.get("sale")
-    try:
-        from decimal import Decimal
-        price_text="£"+format(Decimal(str(price)),",.2f") if price is not None and str(price).strip()!="" and Decimal(str(price)).is_finite() and Decimal(str(price))>=0 else "Not recorded"
-    except Exception: price_text="Not recorded"
-    return render_template_string("""<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Job breakdown</title><style>body{font:16px Arial,sans-serif;max-width:760px;margin:40px auto;padding:0 20px;color:#222}h1{border-bottom:3px solid #b71c1c;padding-bottom:12px}li{margin:12px 0}.small{font-size:13px;color:#555}@media print{button{display:none}body{margin:20px auto}}</style></head><body><h1>Tommy Tints — Job Work Summary</h1><p><strong>Job reference:</strong> {{ job }}</p><p><strong>Work:</strong> {{ description }}</p><h2>Work completed</h2><ol>{% for stage in stages %}<li>{{ stage }}</li>{% endfor %}</ol><p><strong>Agreed job price:</strong> {{ price }}</p><p class="small">Summary of work undertaken; not an itemised supplier-cost disclosure, VAT invoice or proof of payment.</p><button onclick="window.print()">Print / Save PDF</button></body></html>""",job=job_key,description=description,stages=stages,price=price_text)
+    # A 32-character internal HQ work ID must use its approved HQ selling
+    # price, never the independently editable sale in the costing log.
+    # Legacy manual/Sheets job keys retain their existing print behaviour.
+    if len(job_key) == 32 and all(ch in "0123456789abcdef" for ch in job_key):
+        try:
+            work = read_work_record(job_key)
+        except LookupError:
+            return "Internal HQ job not found", 404
+        except (RuntimeError, OSError, sqlite3.Error):
+            return "Job storage unavailable", 503
+        pence = work["price_pence"]
+        if (work["status"] not in ("approved", "in_progress", "completed")
+                or type(pence) is not int or not 0 <= pence <= 100000000):
+            return "Approve the internal HQ price before preparing a customer breakdown.", 409
+        price_text = f"£{pence // 100:,}.{pence % 100:02d}"
+    else:
+        price = record.get("sale")
+        try:
+            from decimal import Decimal
+            amount = Decimal(str(price))
+            price_text = ("£" + format(amount, ",.2f")
+                          if amount.is_finite() and 0 <= amount <= 1000000
+                          else "Not recorded")
+        except Exception:
+            price_text = "Not recorded"
+    response = make_response(render_template_string("""<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Job breakdown</title><style>body{font:16px Arial,sans-serif;max-width:760px;margin:40px auto;padding:0 20px;color:#222}h1{border-bottom:3px solid #b71c1c;padding-bottom:12px}li{margin:12px 0}.small{font-size:13px;color:#555}@media print{button{display:none}body{margin:20px auto}}</style></head><body><h1>Tommy Tints — Job Work Summary</h1><p><strong>Job reference:</strong> {{ job }}</p><p><strong>Work:</strong> {{ description }}</p><h2>Work completed</h2><ol>{% for stage in stages %}<li>{{ stage }}</li>{% endfor %}</ol><p><strong>Agreed job price:</strong> {{ price }}</p><p class="small">Summary of work undertaken; not an itemised supplier-cost disclosure, VAT invoice or proof of payment.</p><button onclick="window.print()">Print / Save PDF</button></body></html>""",job=job_key,description=description,stages=stages,price=price_text))
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 @app.post("/api/hq/maintenance/check-window")
 @required
