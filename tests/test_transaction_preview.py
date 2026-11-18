@@ -100,6 +100,13 @@ class CsvContractTests(unittest.TestCase):
                            scope_ref="merchant-one",
                            classifications={"evt001": "customer_receipt_candidate"})
 
+    def test_negative_bank_entry_cannot_be_proposed_as_customer_receipt(self):
+        text = MONZO + monzo_row("debit001", "-10000")
+        with self.assertRaisesRegex(PreviewError, "positive bank credit"):
+            preview_export("monzo", text, mapping=MONZO_MAP,
+                           scope_ref="business-one",
+                           classifications={"debit001": "customer_receipt_candidate"})
+
     def test_unclassified_and_unresolved_are_not_falsely_completed(self):
         text = MONZO + monzo_row("tx001") + monzo_row("tx002", "-1")
         result = preview_export("monzo", text, mapping=MONZO_MAP,

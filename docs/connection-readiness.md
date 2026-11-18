@@ -45,3 +45,7 @@ The preview has no persistence path, no provider calls and no customer-financial
 ## Offline owner classification proposal review (non-persistent)
 
 The schema preview now offers an **optional Monzo-only manual classification proposal** after explicit canonical mapping. It returns only per-category counts and unresolved counts, never amounts, account/transaction IDs or verified-revenue flags. DNA evidence is intentionally not eligible for bank transaction classification. No records are saved; no balance, bank settlement or customer job receipt is verified. This is **offline preparation**, not a live Monzo integration or a status advancement in the owner-only readiness register. Real export units, source scope, bank statement authenticity, manual approval, immutable classification audit and reconciliation remain outstanding.
+
+### Monzo proposal integrity guard (18 November 2026)
+
+Owner-only offline classification review now enforces single-account canonical evidence and prevents a debit or zero bank entry being labelled a customer receipt candidate or director funding. Director drawings must be debits. No category is inferred, and legitimate two-direction transfer/refund/loan scenarios remain reviewable. These are **proposal validation rules**, not additional Monzo connection, live-read, sync, settlement, bank balance or approved-job evidence. The Monzo register remains unimplemented as a real provider ingestion adapter until actual source mappings are verified.
