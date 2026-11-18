@@ -3,6 +3,7 @@ import base64
 import hashlib
 import json
 import os
+from pathlib import Path
 import sqlite3
 import time
 
@@ -35,6 +36,35 @@ def save_connection(provider, owner, token):
         db.execute("""INSERT INTO google_connections VALUES (?,?,?)
             ON CONFLICT(provider,owner) DO UPDATE SET token=excluded.token""", (provider, owner, encrypted))
     return True
+
+
+def stored_grant_present(provider, owner):
+    """Check owner-scoped encrypted OAuth grant locally; NEVER refresh a token.
+
+    Presence is historical consent evidence, not proof a revoked or expired
+    provider permission still works. Must not create or change SQLite tables.
+    """
+    if not owner or not provider:
+        return False
+    path = os.path.join(os.environ.get("HQ_DATA_DIR", "/tmp/tommy-tints-hq"),
+                        "owner_security.sqlite3")
+    if not os.path.isfile(path):
+        return False
+    try:
+        uri = Path(path).resolve().as_uri() + "?mode=ro"
+        with sqlite3.connect(uri, uri=True, timeout=2) as db:
+            row = db.execute(
+                "SELECT token FROM google_connections WHERE provider=? AND owner=?",
+                (provider, owner)).fetchone()
+        if row is None:
+            return False
+        grant = json.loads(_cipher().decrypt(row[0]))
+        return (isinstance(grant, dict)
+                and isinstance(grant.get("refresh"), str)
+                and bool(grant["refresh"]))
+    except (InvalidToken, OSError, sqlite3.Error, TypeError, ValueError,
+            KeyError, UnicodeError):
+        return False
 
 
 def connection(provider, owner):
