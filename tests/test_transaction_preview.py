@@ -66,6 +66,48 @@ class CsvContractTests(unittest.TestCase):
         self.assertFalse(result["job_payment_verified"])
         self.assertFalse(result["source_mapping_verified"])
 
+    def test_manual_classification_preview_counts_only_and_never_verifies_cash(self):
+        text = MONZO + monzo_row("tx001", "10000") + monzo_row("tx002", "-3000")
+        result = preview_export("monzo", text, mapping=MONZO_MAP,
+                                scope_ref="business-one",
+                                classifications={
+                                    "tx001": "customer_receipt_candidate",
+                                    "tx002": "transfer",
+                                })
+        review = result["classification_review"]
+        self.assertEqual(review["reviewed_proposals"], 2)
+        self.assertEqual(review["pending_review"], 0)
+        self.assertEqual(review["customer_receipt_candidates"], 1)
+        self.assertFalse(review["bank_receipt_verified"])
+        self.assertFalse(review["trading_revenue_verified"])
+        self.assertFalse(review["job_payment_verified"])
+        self.assertEqual(review["records_imported"], 0)
+        self.assertEqual(review["classification_changes_saved"], 0)
+        for sensitive in ("tx001", "tx002", "10000", "-3000", "business-one"):
+            self.assertNotIn(sensitive, str(result))
+
+    def test_manual_review_requires_exact_known_ids_and_monzo_mapping(self):
+        text = MONZO + monzo_row()
+        for review in ({"unknown-id": "transfer"}, {"tx001": "verified_revenue"},
+                       {"tx001": True}, ["transfer"], "revenue"):
+            with self.subTest(review=review), self.assertRaises(PreviewError):
+                preview_export("monzo", text, mapping=MONZO_MAP,
+                               scope_ref="business-one", classifications=review)
+        with self.assertRaises(PreviewError):
+            preview_export("monzo", text, classifications={"tx001": "transfer"})
+        with self.assertRaises(PreviewError):
+            preview_export("dna", DNA + dna_row(), mapping=DNA_MAP,
+                           scope_ref="merchant-one",
+                           classifications={"evt001": "customer_receipt_candidate"})
+
+    def test_unclassified_and_unresolved_are_not_falsely_completed(self):
+        text = MONZO + monzo_row("tx001") + monzo_row("tx002", "-1")
+        result = preview_export("monzo", text, mapping=MONZO_MAP,
+                                scope_ref="business-one",
+                                classifications={"tx001": "unresolved"})
+        self.assertEqual(result["classification_review"]["pending_review"], 2)
+        self.assertEqual(result["classification_review"]["reviewed_proposals"], 0)
+
     def test_conflicting_replay_aborts_no_partial_result(self):
         with self.assertRaisesRegex(PreviewError, "Conflicting"):
             preview_export("monzo", MONZO + monzo_row() + monzo_row(amount="22222"),
@@ -187,6 +229,26 @@ class OwnerPreviewHttpTests(unittest.TestCase):
         self.assertNotIn(b"Private Customer", result.data)
         self.assertNotIn(b"12345", result.data)
         self.assertNotIn(b"tx001", result.data)
+
+    def test_owner_manual_classification_preview_never_echoes_ids_or_persists(self):
+        self.owner()
+        before = set(os.listdir(self.tmp.name))
+        payload = self.payload()
+        payload["classifications"] = {"tx001": "customer_receipt_candidate"}
+        response = self.client.post("/api/hq/transaction-import-preview",
+                                    json=payload, headers={"X-HQ-CSRF": "valid-csrf"})
+        self.assertEqual(response.status_code, 200)
+        review = response.json["classification_review"]
+        self.assertEqual(review["customer_receipt_candidates"], 1)
+        self.assertFalse(review["trading_revenue_verified"])
+        self.assertEqual(review["records_imported"], 0)
+        for secret in ("tx001", "business-one", "Private Customer", "12345"):
+            self.assertNotIn(secret, response.get_data(as_text=True))
+        self.assertEqual(set(os.listdir(self.tmp.name)), before)
+        payload["classifications"] = '{"tx001": "paid"}'
+        response = self.client.post("/api/hq/transaction-import-preview",
+                                    json=payload, headers={"X-HQ-CSRF": "valid-csrf"})
+        self.assertEqual(response.status_code, 400)
 
     def test_invalid_shape_mapping_and_oversize_fail_closed(self):
         self.owner()
