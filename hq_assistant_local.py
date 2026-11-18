@@ -64,13 +64,22 @@ def answer(message):
             f"{state.replace('_', ' ')}: {number}"
             for state, number in statuses.items() if number
         ) or "no records"
-        draft = _money(snapshot["priced_draft_value_pence"])
-        outstanding = _money(snapshot["outstanding_recorded_pence"])
         return _result(
-            f"HQ internal work records: {count}. Statuses — {breakdown}.\n"
-            f"Priced draft work: {draft}. Recorded expected balance: {outstanding}.\n"
-            "These figures are owner-entered, not verified invoices, revenue or payments. "
-            "They include any synthetic TEST jobs and exclude external Square, Sheets and bank data. "
+            f"HQ internal work records: {count} (including synthetic TEST records). "
+            f"Statuses — {breakdown}.\n"
+            f"Approved priced jobs counted: {snapshot['approved_priced_record_count']}. "
+            f"Approved job prices (NOT collected): {_money(snapshot['approved_price_total_pence'])}.\n"
+            f"Planned deposits (NOT confirmed received): {_money(snapshot['planned_deposit_total_pence'])}. "
+            f"Conditional remainder after planned deposits (NOT verified outstanding): "
+            f"{_money(snapshot['conditional_remainder_pence'])}.\n"
+            f"Approved records with missing or inconsistent amounts: "
+            f"{snapshot['approved_amounts_incomplete_count']}. "
+            f"Synthetic approved TEST records excluded from these financial totals: "
+            f"{snapshot['excluded_synthetic_approved_record_count']}.\n"
+            "Verified cash received and actual unpaid balances: unavailable; "
+            "payment reconciliation is not connected. These are owner-entered plans, "
+            "not verified invoices, revenue, bank balances or customer payments. "
+            "External Square, Sheets and bank data are excluded. "
             "No changes, messages or bookings were made."
         )
 
@@ -96,7 +105,18 @@ def answer(message):
     item = read_work_record(record.group(1))
     test = "SYNTHETIC TEST RECORD — " if item["source_request_id"].startswith("TEST-") else ""
     price = item["price_pence"]
-    balance = _money(price - item["deposit_pence"]) if price is not None else "Not priced"
+    deposit = item["deposit_pence"]
+    valid_price = type(price) is int and 0 <= price <= 100000000
+    valid_deposit = type(deposit) is int and 0 <= deposit <= 100000000
+    consistent = valid_price and valid_deposit and deposit <= price
+    if item["status"] == "cancelled":
+        remainder = "Not applicable (cancelled)"
+    elif consistent:
+        remainder = _money(price - deposit)
+    else:
+        remainder = "Unavailable (missing or inconsistent amounts)"
+    price_label = _money(price) if valid_price else "Unavailable (missing or invalid)"
+    deposit_label = _money(deposit) if valid_deposit else "Unavailable (missing or invalid)"
     return _result(
         f"{test}HQ {item['kind']} record {item['id']}\n"
         f"Customer: {item['name']}\n"
@@ -106,8 +126,9 @@ def answer(message):
         f"Preferred date/time (unconfirmed): {item['preferred_date'] or 'Not supplied'} "
         f"{item['preferred_time'] or ''}\n"
         f"Notes: {item['notes'] or 'None'}\n"
-        f"Owner-entered price: {_money(price)}; recorded deposit (unverified): {_money(item['deposit_pence'])}; "
-        f"expected balance (unverified): {balance}.\n"
+        f"Owner-entered price (not payment): {price_label}; "
+        f"planned deposit (NOT confirmed received): {deposit_label}; "
+        f"conditional remainder after planned deposit (NOT verified outstanding): {remainder}.\n"
         "Private local HQ lookup only. This result is not included in external AI chat context. "
         "No customer contacted, booking made or payment processed."
     )
