@@ -1,6 +1,7 @@
 """Conservative readiness checks: no invented consent, receipts or live data."""
 import os
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -168,7 +169,7 @@ class ReadinessHttpTests(unittest.TestCase):
         from app import app
         from hq_auth import issue_session
         from hq_auth_store import auth_db
-        tmp = tempfile.TemporaryDirectory()
+        tmp = tempfile.TemporaryDirectory(dir=os.getcwd())
         self.addCleanup(tmp.cleanup)
         env = patch.dict(os.environ, {
             "HQ_DATA_DIR": tmp.name, "HQ_SESSION_SECRET": "unit-test-secret",
@@ -252,7 +253,11 @@ class ReadinessHttpTests(unittest.TestCase):
             session["csrf"] = "fixture-csrf"
         record_check("gmail")
         record_check("gmail_sync")
-        with patch("app._gmail_token", return_value="fixture-token"), patch(
+        with self.client.session_transaction() as session:
+            session["gmail_token_key"] = "fixture-gmail-key"
+        with patch("app._gmail_tokens", {
+                "fixture-gmail-key": ("fixture-token", time.time() + 60)}), patch(
+                "app._gmail_token", return_value="fixture-token"), patch(
                 "hq_gmail_enquiries.import_page",
                 side_effect=PersistedSyncError("Fixture storage failed")):
             response = self.client.post("/hq/gmail-enquiries",
