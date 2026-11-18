@@ -8,6 +8,7 @@ import sqlite3
 
 import requests
 from customer_request_store import storage_ready
+from hq_integration_health import PersistedSyncError
 
 MAILBOX = "info@tommytintsltd.co.uk"
 SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
@@ -33,7 +34,7 @@ def verify_mailbox(token):
 
 def import_page(token, page_token=None):
     if not storage_ready():
-        raise RuntimeError("Persistent enquiry storage is unavailable")
+        raise PersistedSyncError("Persistent enquiry storage is unavailable")
     verify_mailbox(token)
     params = {"q": "in:inbox label:HQ-Enquiries", "maxResults": 10}
     if page_token:
@@ -50,14 +51,17 @@ def import_page(token, page_token=None):
         headers = {header["name"].lower(): header["value"] for header in item["payload"]["headers"]}
         rows.append((ref, parseaddr(headers.get("from", ""))[1][:254],
                      headers.get("subject", "")[:250], item.get("snippet", "")[:500]))
-    path = _path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with closing(sqlite3.connect(path, timeout=5)) as db, db:
-        db.execute("""CREATE TABLE IF NOT EXISTS enquiries (
-            id TEXT PRIMARY KEY, sender TEXT NOT NULL, subject TEXT NOT NULL,
-            snippet TEXT NOT NULL, reviewed INTEGER NOT NULL DEFAULT 0)""")
-        added = db.executemany("""INSERT INTO enquiries(id,sender,subject,snippet)
-            VALUES (?,?,?,?) ON CONFLICT(id) DO NOTHING""", rows).rowcount
+    try:
+        path = _path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(path, timeout=5)) as db, db:
+            db.execute("""CREATE TABLE IF NOT EXISTS enquiries (
+                id TEXT PRIMARY KEY, sender TEXT NOT NULL, subject TEXT NOT NULL,
+                snippet TEXT NOT NULL, reviewed INTEGER NOT NULL DEFAULT 0)""")
+            added = db.executemany("""INSERT INTO enquiries(id,sender,subject,snippet)
+                VALUES (?,?,?,?) ON CONFLICT(id) DO NOTHING""", rows).rowcount
+    except (OSError, sqlite3.Error) as exc:
+        raise PersistedSyncError("Gmail enquiry storage commit failed") from exc
     return {"added": added, "read": len(rows), "next": page.get("nextPageToken")}
 
 

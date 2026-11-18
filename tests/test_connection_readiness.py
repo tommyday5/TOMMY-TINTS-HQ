@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from hq_connection_readiness import build_readiness, PROFILES
-from hq_integration_health import integration_status, record_check
+from hq_integration_health import PersistedSyncError, integration_status, record_check
 
 
 class ReadinessUnitTests(unittest.TestCase):
@@ -103,6 +103,58 @@ class ReadinessUnitTests(unittest.TestCase):
             self.assertTrue(rows[key]["read_tested"])
             self.assertFalse(rows[key]["sync_tested"])
 
+    def test_failed_persisted_sync_is_visible_despite_historical_success(self):
+        record_check("square_payments")
+        record_check("square_payments_sync")
+        record_check("square_payments_sync", "Fixture persistence failure")
+        row = self.build({
+            "square_payments": {"configured": True, "consent": None},
+        })["square_payments"]
+        self.assertTrue(row["read_tested"])
+        self.assertTrue(row["sync_tested"])  # historical successful write
+        self.assertTrue(row["sync_needs_attention"])
+        self.assertEqual(row["sync_last_error"], "Fixture persistence failure")
+        self.assertTrue(row["sync_last_error_at"])
+        self.assertEqual(row["blocker"], "Fixture persistence failure")
+        self.assertIn("refresh", row["next_safe_action"].lower())
+        self.assertFalse(row["reconciled"])
+
+    def test_recovered_sync_clears_attention_without_erasing_success(self):
+        record_check("gmail")
+        record_check("gmail_sync")
+        record_check("gmail_sync", "Fixture database unavailable")
+        self.assertTrue(self.build({"gmail": {"configured": True, "consent": True}})
+                        ["gmail"]["sync_needs_attention"])
+        record_check("gmail_sync")
+        row = self.build({"gmail": {"configured": True, "consent": True}})["gmail"]
+        self.assertTrue(row["sync_tested"])
+        self.assertFalse(row["sync_needs_attention"])
+        self.assertIsNone(row["sync_last_error"])
+        self.assertNotIn("Fixture database unavailable", row["blocker"])
+        self.assertFalse(row["reconciled"])
+
+    def test_read_only_workflows_do_not_require_nonexistent_sync(self):
+        for key in ("sheets", "finance", "calendar"):
+            record_check(key)
+        rows = self.build({key: {"configured": True, "consent": True}
+                           for key in ("sheets", "finance", "calendar")})
+        for profile in PROFILES:
+            if profile["key"] not in ("sheets", "finance", "calendar"):
+                continue
+            row = rows[profile["key"]]
+            self.assertTrue(row["read_tested"])
+            self.assertFalse(row["sync_applicable"])
+            self.assertFalse(row["sync_tested"])
+            self.assertEqual(row["stages"]["sync_tested"], "Not applicable (read-only)")
+            self.assertEqual(row["blocker"], profile["reconcile"])
+            self.assertEqual(row["next_safe_action"], profile["reconcile"])
+
+    def test_missing_configuration_requests_setup_before_provider_reads(self):
+        row = self.build()["square_payments"]
+        profile = next(p for p in PROFILES if p["key"] == "square_payments")
+        self.assertEqual(row["next_safe_action"], profile["setup"])
+        self.assertFalse(row["configured"])
+
     def test_failed_history_read_is_not_misrepresented_as_no_events(self):
         with patch("hq_integration_health._db_path", side_effect=OSError("unavailable")):
             health = integration_status([("sheets", "Google Sheets", True)])
@@ -146,6 +198,45 @@ class ReadinessHttpTests(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn(b"Connection &amp; reconciliation readiness", page.data)
         self.assertIn(b"Google Sheets finance", page.data)
+
+    def test_gmail_storage_failure_is_recorded_as_sync_not_provider_read(self):
+        with self.client.session_transaction() as session:
+            session["csrf"] = "fixture-csrf"
+        record_check("gmail")
+        record_check("gmail_sync")
+        with patch("app._gmail_token", return_value="fixture-token"), patch(
+                "hq_gmail_enquiries.import_page",
+                side_effect=PersistedSyncError("Fixture storage failed")):
+            response = self.client.post("/hq/gmail-enquiries",
+                                        data={"csrf": "fixture-csrf"})
+            row = next(x for x in self.client.get("/api/hq/integrations")
+                       .json["readiness"] if x["key"] == "gmail")
+        self.assertEqual(response.status_code, 503)
+        self.assertTrue(row["read_tested"])
+        self.assertTrue(row["sync_tested"])
+        self.assertTrue(row["sync_needs_attention"])
+        self.assertEqual(row["blocker"], "Gmail enquiry storage commit failed")
+        self.assertFalse(row["reconciled"])
+
+    def test_square_booking_storage_failure_is_recorded_as_sync(self):
+        with self.client.session_transaction() as session:
+            session["csrf"] = "fixture-csrf"
+        record_check("square")
+        record_check("square_sync")
+        with patch.dict(os.environ, {
+                "HQ_SQUARE_READ_TOKEN": "fixture-read-only",
+                "HQ_SQUARE_LOCATION_ID": "fixture-location"}), patch(
+                    "hq_square_bookings.refresh_bookings",
+                    side_effect=PersistedSyncError("Fixture disk full")):
+            response = self.client.post("/hq/square-bookings",
+                                        data={"csrf": "fixture-csrf"})
+            row = next(x for x in self.client.get("/api/hq/integrations")
+                       .json["readiness"] if x["key"] == "square")
+        self.assertEqual(response.status_code, 503)
+        self.assertTrue(row["sync_needs_attention"])
+        self.assertTrue(row["sync_tested"])
+        self.assertEqual(row["blocker"], "Square booking snapshot commit failed")
+        self.assertFalse(row["reconciled"])
 
     def test_finance_read_is_independently_recorded_from_pricing(self):
         with patch.dict(os.environ, {"HQ_GOOGLE_SERVICE_ACCOUNT_JSON": "{}"}):

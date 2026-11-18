@@ -131,6 +131,32 @@ class SquarePaymentEvidenceTests(unittest.TestCase):
         square_health = next(item for item in health["integrations"] if item["name"] == "Square payments")
         self.assertEqual(square_health["status"], "Last read succeeded")
 
+    def test_storage_commit_failure_sets_sync_warning_not_verified_receipt(self):
+        from hq_integration_health import PersistedSyncError, record_check
+        self.owner()
+        record_check("square_payments")
+        record_check("square_payments_sync")
+        with patch.object(square, "refresh_payments",
+                          side_effect=PersistedSyncError("Fixture disk full")):
+            response = self.client.post("/hq/square-payment-evidence",
+                                        data={"csrf": "owner-csrf"})
+        self.assertEqual(response.status_code, 502)
+        row = next(item for item in self.client.get("/api/hq/integrations")
+                   .get_json()["readiness"] if item["key"] == "square_payments")
+        self.assertTrue(row["sync_needs_attention"])
+        self.assertTrue(row["sync_tested"])  # historical test, not current success
+        self.assertEqual(row["blocker"], "Square payment snapshot commit failed")
+        self.assertFalse(row["reconciled"])
+
+    def test_storage_error_is_classified_after_successful_provider_read(self):
+        from hq_integration_health import PersistedSyncError
+        with patch.object(square.requests, "get",
+                          return_value=self.page([self.payment()])), patch.object(
+                              square.sqlite3, "connect",
+                              side_effect=sqlite3.OperationalError("fixture disk error")):
+            with self.assertRaises(PersistedSyncError):
+                square.refresh_payments()
+
     def test_no_credentials_means_no_verified_zero_or_automatic_fetch(self):
         self.owner()
         with patch.dict(os.environ, {"HQ_SQUARE_READ_TOKEN": ""}):
