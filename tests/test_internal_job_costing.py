@@ -236,10 +236,13 @@ class InternalJobCostingTests(unittest.TestCase):
         self.assertEqual(self.client.get(printable).status_code, 404)
 
         self.sign_in()
+        # Restore customer stages before cancelling, so the price-approval
+        # gate is tested independently from the missing-stages gate.
+        write_log("cost-owner", work, {**partial, "stages": "Prep and paint"}, expected_revision=3)
         change_work_status(work, "cancelled", expected_revision=3)
         cancelled = self.client.get(url).json
         self.assertFalse(cancelled["customer_summary_ready"])
-        self.assertIn("approved_price", cancelled["customer_summary_missing"])
+        self.assertEqual(cancelled["customer_summary_missing"], ["approved_price"])
         self.assertEqual(self.client.get(printable).status_code, 409)
 
     def test_existing_cards_can_link_to_internal_costing(self):
