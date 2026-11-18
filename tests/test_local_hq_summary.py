@@ -2,14 +2,16 @@
 import os
 import tempfile
 import unittest
+import uuid
 from unittest.mock import patch
 
 from hq_auth import issue_session
 from hq_auth_store import auth_db
 from app import app
 from hq_assistant_local import answer, LocalRecordsUnavailable
-from hq_core_records import create_test_job, set_draft_financials, create_internal_work_record
-from customer_request_store import create_request, create_review_draft
+from hq_core_records import (create_test_job, set_draft_financials,
+                             create_internal_work_record, change_work_status)
+from customer_request_store import create_request, create_review_draft, connect
 
 
 class LocalSummaryTests(unittest.TestCase):
@@ -47,10 +49,56 @@ class LocalSummaryTests(unittest.TestCase):
                 self.assertEqual(data["actions_executed"], 0)
                 self.assertFalse(data["payment_verified"])
                 self.assertIn("HQ internal work records: 1", data["reply"])
-                self.assertIn("£250.00", data["reply"])
-                self.assertIn("£174.00", data["reply"])
+                self.assertIn("Approved job prices (NOT collected): £0.00", data["reply"])
+                self.assertIn("Planned deposits (NOT confirmed received): £0.00", data["reply"])
+                self.assertIn("Verified cash received and actual unpaid balances: unavailable", data["reply"])
                 self.assertIn("synthetic TEST", data["reply"])
+                # A draft TEST job is not an approved sale or a cash receipt.
+                self.assertNotIn("£250.00", data["reply"])
+                self.assertNotIn("£174.00", data["reply"])
             provider.assert_not_called()
+
+
+    def test_approved_pipeline_excludes_synthetic_jobs_and_does_not_claim_cash(self):
+        payload = dict(kind="job", name="Private Customer", email="example@example.invalid",
+                       phone="07123456789", service="Window Tinting", make="Ford", model="Focus",
+                       year="2021", registration="AB21 XYZ", date="", time="", notes="",
+                       privacy_acknowledged=True)
+        source = create_request(payload, "local-summary-" + uuid.uuid4().hex)
+        create_review_draft(source, "job")
+        real_job = create_internal_work_record(source)
+        set_draft_financials(real_job, 35000, 7600)
+        change_work_status(real_job, "ready_for_review")
+        change_work_status(real_job, "approved")
+
+        fake_job = create_test_job()
+        set_draft_financials(fake_job, 99000, 3000)
+        change_work_status(fake_job, "ready_for_review")
+        change_work_status(fake_job, "approved")
+
+        with patch("hq_assistant_local.storage_ready", return_value=True):
+            response = answer("HQ work summary")["reply"]
+        self.assertIn("HQ internal work records: 2", response)
+        self.assertIn("Approved priced jobs counted: 1", response)
+        self.assertIn("Approved job prices (NOT collected): £350.00", response)
+        self.assertIn("Planned deposits (NOT confirmed received): £76.00", response)
+        self.assertIn("Conditional remainder after planned deposits (NOT verified outstanding): £274.00", response)
+        self.assertIn("Synthetic approved TEST records excluded from these financial totals: 1", response)
+        self.assertIn("Verified cash received and actual unpaid balances: unavailable", response)
+        self.assertNotIn("£990.00", response)
+        self.assertNotIn("£960.00", response)
+        self.assertNotIn("received £76", response.lower())
+
+    def test_inconsistent_legacy_deposit_withholds_remainder_in_record_detail(self):
+        job = create_test_job()
+        set_draft_financials(job, 10000, 1000)
+        with connect() as db:
+            db.execute("UPDATE hq_work_records SET deposit_pence=20000 WHERE id=?", (job,))
+        with patch("hq_assistant_local.storage_ready", return_value=True):
+            response = answer("HQ record " + job)["reply"]
+        self.assertIn("planned deposit (NOT confirmed received): £200.00", response)
+        self.assertIn("conditional remainder after planned deposit (NOT verified outstanding): Unavailable", response)
+        self.assertNotIn("£-100.00", response)
 
     def test_unknown_question_never_reads_work_records(self):
         with patch("hq_assistant_local.work_summary") as reader:
@@ -106,6 +154,9 @@ class LocalSummaryTests(unittest.TestCase):
             self.assertIn("AB20 XYZ", detail.json["reply"])
             self.assertIn("£250.00", detail.json["reply"])
             self.assertIn("£174.00", detail.json["reply"])
+            self.assertIn("planned deposit (NOT confirmed received)", detail.json["reply"])
+            self.assertIn("NOT verified outstanding", detail.json["reply"])
+            self.assertNotIn("expected balance (unverified)", detail.json["reply"])
             self.assertNotIn("owner@example.test", detail.json["reply"])
             self.assertEqual(detail.json["actions_executed"], 0)
             self.assertEqual(ask("HQ record invalid").status_code, 400)
