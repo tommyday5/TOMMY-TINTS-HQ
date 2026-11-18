@@ -182,6 +182,66 @@ class InternalJobCostingTests(unittest.TestCase):
                 self.assertEqual(read_log("cost-owner", work)["revision"],
                                  saved["revision"])
 
+    def test_customer_work_summary_preview_requires_approved_price_and_saved_stages(self):
+        work = create_test_job()
+        self.sign_in()
+        url = "/api/hq/work-records/" + work + "/costing"
+        printable = "/customer-breakdown/" + work
+
+        empty = self.client.get(url)
+        self.assertEqual(empty.status_code, 200)
+        self.assertFalse(empty.json["customer_summary_ready"])
+        self.assertCountEqual(empty.json["customer_summary_missing"],
+                              ["approved_price", "saved_work_stages"])
+
+        log = {**self.log("1.00"), "stages": "Prepare bonnet\\nSpray basecoat and clearcoat",
+               "description": "Hyundai bonnet work"}
+        write_log("cost-owner", work, log, expected_revision=0)
+        self.assertFalse(self.client.get(url).json["customer_summary_ready"])
+        self.assertEqual(self.client.get(printable).status_code, 409)
+
+        set_draft_financials(work, 35000, 7600, expected_revision=0)
+        change_work_status(work, "ready_for_review", expected_revision=1)
+        change_work_status(work, "approved", expected_revision=2)
+        approved = self.client.get(url)
+        self.assertTrue(approved.json["customer_summary_ready"])
+        self.assertEqual(approved.json["customer_summary_missing"], [])
+        self.assertFalse(approved.json["saved_sale_matches_record"])
+        self.assertNotIn("stages", approved.json)
+        self.assertNotIn("description", approved.json)
+        html = self.client.get(printable).get_data(as_text=True)
+        self.assertIn("£350.00", html)
+        self.assertNotIn("£1.00", html)
+
+        # Printable work stages are independent of internal profitability:
+        # missing costs cannot be silently interpreted as a zero-cost job.
+        partial = {"sale": "1.00", "lines": [], "stages": "Prep and paint"}
+        write_log("cost-owner", work, partial, expected_revision=1)
+        summary = self.client.get(url).json
+        self.assertTrue(summary["customer_summary_ready"])
+        self.assertFalse(summary["complete_costs"])
+        self.assertIsNone(summary["estimated_contribution"])
+        self.assertEqual(self.client.get(printable).status_code, 200)
+
+        write_log("cost-owner", work, {**partial, "stages": " \\n "}, expected_revision=2)
+        no_stages = self.client.get(url).json
+        self.assertFalse(no_stages["customer_summary_ready"])
+        self.assertEqual(no_stages["customer_summary_missing"], ["saved_work_stages"])
+        self.assertEqual(self.client.get(printable).status_code, 400)
+
+        self.sign_in("another-owner")
+        other = self.client.get(url).json
+        self.assertFalse(other["customer_summary_ready"])
+        self.assertIn("saved_work_stages", other["customer_summary_missing"])
+        self.assertEqual(self.client.get(printable).status_code, 404)
+
+        self.sign_in()
+        change_work_status(work, "cancelled", expected_revision=3)
+        cancelled = self.client.get(url).json
+        self.assertFalse(cancelled["customer_summary_ready"])
+        self.assertIn("approved_price", cancelled["customer_summary_missing"])
+        self.assertEqual(self.client.get(printable).status_code, 409)
+
     def test_existing_cards_can_link_to_internal_costing(self):
         self.sign_in()
         html = self.client.get("/").get_data(as_text=True)
@@ -192,6 +252,9 @@ class InternalJobCostingTests(unittest.TestCase):
         self.assertIn('snapshot.labour_hours', html)
         self.assertIn('snapshot.allocated_overhead', html)
         self.assertIn('snapshot.missing_cost_fields', html)
+        self.assertIn('snapshot.customer_summary_ready', html)
+        self.assertIn('preview.href="/customer-breakdown/"+encodeURIComponent(job.id)', html)
+        self.assertIn('preview.rel="noopener noreferrer"', html)
 
 
 if __name__ == "__main__":
