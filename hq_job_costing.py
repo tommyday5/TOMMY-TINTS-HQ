@@ -37,6 +37,8 @@ def costing_snapshot(owner, record_id):
         "payment_verified": False,
         "costing_saved": payload is not None,
         "costing_revision": log["revision"],
+        "customer_summary_ready": False,
+        "customer_summary_missing": [],
         "complete_costs": False,
         "saved_sale_matches_record": None,
         "total_recorded_cost": None,
@@ -52,6 +54,20 @@ def costing_snapshot(owner, record_id):
         "margin_percent": None,
         "note": "Internal estimates only. Payment is unverified; tax and omitted costs may alter profit.",
     }
+    # Customer previews use the separate, existing /customer-breakdown route.
+    # Report readiness without exposing work descriptions, PII or private costs.
+    # The preview requires approved HQ pricing and saved, nonempty work stages;
+    # it does NOT depend on completeness of the private profitability log.
+    missing_summary = []
+    if not approved or type(price_pence) is not int or not 0 <= price_pence <= 100000000:
+        missing_summary.append("approved_price")
+    if not isinstance(payload, dict) or not isinstance(payload.get("stages"), str) or not any(
+        stage.strip() for stage in payload["stages"].splitlines()
+    ):
+        missing_summary.append("saved_work_stages")
+    snapshot["customer_summary_missing"] = missing_summary
+    snapshot["customer_summary_ready"] = not missing_summary
+
     if payload is None:
         return snapshot
     if not isinstance(payload, dict):

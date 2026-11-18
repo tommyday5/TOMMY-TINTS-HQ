@@ -213,6 +213,17 @@ async function loadJobCards(){
      else line(costDetail,"p","Contribution withheld until price is approved and all costing inputs are complete.");
      if(!snapshot.complete_costs&&(!snapshot.missing_cost_fields||!snapshot.missing_cost_fields.length))
       line(costDetail,"p",snapshot.note);
+     if(snapshot.customer_summary_ready){
+      const preview=document.createElement("a");
+      preview.href="/customer-breakdown/"+encodeURIComponent(job.id);
+      preview.target="_blank";preview.rel="noopener noreferrer";
+      preview.textContent="Preview approved customer work summary";
+      costDetail.append(preview);
+      line(costDetail,"small","Private preview only; no customer message or booking is created.");
+     }else if(snapshot.customer_summary_missing){
+      const labels={approved_price:"an approved HQ selling price",saved_work_stages:"saved customer-facing work stages"};
+      line(costDetail,"p","Customer work summary unavailable: "+snapshot.customer_summary_missing.map(field=>labels[field]||field).join(" and ")+".");
+     }
      line(costDetail,"small","Payments unverified. Estimated contribution is not accounting profit.");
     }catch(error){costDetail.textContent="Costing unavailable: "+error.message;}
     finally{costReview.disabled=false;}
