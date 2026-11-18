@@ -153,7 +153,11 @@ def read_snapshot():
             created_at,updated_at FROM payments ORDER BY created_at DESC,id DESC LIMIT 50""").fetchall()
     refreshed = _timestamp(meta["refreshed_at"])
     age = datetime.now(timezone.utc) - datetime.fromisoformat(refreshed)
-    result.update(snapshot_available=True, stale=not configured() or age < timedelta(0)
+    # A previous location's evidence must never look current after credentials
+    # or the Square location have been switched.
+    same_location = configured() and secrets.compare_digest(
+        meta["location"], os.environ["HQ_SQUARE_LOCATION_ID"])
+    result.update(snapshot_available=True, stale=not same_location or age < timedelta(0)
                   or age > timedelta(hours=24), last_refreshed_at=refreshed,
                   window_start=meta["window_start"], window_end=meta["window_end"],
                   payment_count=meta["item_count"], payments=[dict(r) for r in rows])
@@ -206,6 +210,7 @@ Refunds and processing fees can affect net proceeds.</p>
 <td>{{ p.refunded_minor if p.refunded_minor is not none else "Not supplied" }}</td>
 <td>{{ p.created_at }}</td></tr>{% endfor %}
 </tbody></table></div>{% endif %}
+<p><a href="/hq/square-payment-review">Compare one exact Square payment reference with an approved HQ job (read-only)</a></p>
 <p><small>Snapshot contains minimal payment identifiers, timestamps, statuses and amounts only.
 No card, buyer identity, access token or payment method details are stored.
 Reconciliation with HQ jobs is deliberately disabled until exact matching and approval controls are implemented.</small></p>
