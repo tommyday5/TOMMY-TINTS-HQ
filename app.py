@@ -29,6 +29,7 @@ import hq_square_bookings as square
 import hq_square_payments as square_payments
 from hq_payment_review import payment_review
 from hq_integration_health import integration_status, record_check
+from hq_connection_readiness import build_readiness
 from hq_version import ICON_VERSION, UPDATE_SCRIPT_VERSION, build_version
 from hq_commerce import commerce
 from customer_edits import customer_edits
@@ -1026,9 +1027,9 @@ def hq_finance_data():
     try:
         result = read_finance(entry[0] if entry else None)
     except Exception:
-        record_check("sheets", "Finance workbook read failed")
+        record_check("finance", "Finance workbook read failed")
         return jsonify(error="Unable to refresh financial spreadsheet; check connection and permissions"), 502
-    record_check("sheets")
+    record_check("finance")
     return jsonify(result)
 
 @app.get("/api/hq/pricing")
@@ -1184,6 +1185,7 @@ def _hq_integrations():
     calendar = _google_connection("calendar")
     health = integration_status([
         ("sheets", "Google Sheets", bool(sheets and sheets[1] > now)),
+        ("finance", "Sheets finance", bool(sheets and sheets[1] > now)),
         ("calendar", "Google Calendar", bool(calendar and calendar[1] > now)),
         ("square", "Square", square.configured()),
         ("square_payments", "Square payments", square_payments.configured()),
@@ -1200,6 +1202,24 @@ def _hq_integrations():
         next(item for item in health["integrations"] if item["name"] == "Square")["status"] = "Configuration required"
     if not square_payments.configured():
         next(item for item in health["integrations"] if item["name"] == "Square payments")["status"] = "Configuration and PAYMENTS_READ permission required"
+    google_configured = bool(
+        (os.environ.get("GOOGLE_CLIENT_ID") and os.environ.get("GOOGLE_CLIENT_SECRET"))
+        or sheets_configured())
+    google_oauth_configured = bool(
+        os.environ.get("GOOGLE_CLIENT_ID") and os.environ.get("GOOGLE_CLIENT_SECRET"))
+    sheets_authorised = bool(sheets and sheets[1] > now)
+    health["readiness"] = build_readiness(health, {
+        "sheets": {"configured": google_configured, "consent": sheets_authorised if google_oauth_configured else None},
+        "finance": {"configured": google_configured, "consent": sheets_authorised if google_oauth_configured else None},
+        "calendar": {"configured": google_oauth_configured, "consent": bool(calendar and calendar[1] > now)},
+        "gmail": {"configured": google_oauth_configured, "consent": bool(_gmail_token())},
+        "square": {"configured": square.configured(), "consent": None},
+        "square_payments": {"configured": square_payments.configured(), "consent": None},
+        "monzo": {"configured": False, "consent": None},
+        "dna": {"configured": False, "consent": None},
+        "maps": {"configured": bool(os.environ.get("HQ_GOOGLE_MAPS_BROWSER_KEY")
+                                    and os.environ.get("HQ_GOOGLE_MAPS_API_KEY")), "consent": None},
+    })
     return health
 
 @app.get("/api/hq/integrations")
@@ -1218,7 +1238,11 @@ def hq_integration_dashboard():
 main{max-width:1080px;margin:auto;padding:24px}a{color:#ff8088}
 section{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,285px),1fr));gap:16px}
 article{background:#151e2b;border:1px solid #2c394b;border-radius:12px;padding:16px}
-h2{font-size:19px;margin-top:0}dl{margin-bottom:0}dt{color:#aab6c8}dd{margin:0 0 8px}</style>
+h2{font-size:19px;margin-top:0}dl{margin-bottom:0}dt{color:#aab6c8}dd{margin:0 0 8px}
+.readiness-scroll{overflow-x:auto;margin:14px 0}table{border-collapse:collapse;width:100%;min-width:880px}
+td,th{border-bottom:1px solid #344355;padding:9px;text-align:left;vertical-align:top}
+th{color:#ced8e4}td:first-child{font-weight:650}small{color:#adbbc9}
+</style>
 </head><body><main><p><a href="/">Back to HQ</a></p><h1>Integration health</h1>
 <p>Last observed reads only. Times are UTC.</p><p><a href="/hq/gmail-enquiries">Gmail enquiry review</a> · <a href="/hq/square-bookings">Square booking snapshot</a> · <a href="/hq/square-payment-evidence">Square payment evidence</a></p>
 {% if not health.history_available %}<p role="alert">Integration history is unavailable.</p>{% endif %}
@@ -1229,7 +1253,23 @@ h2{font-size:19px;margin-top:0}dl{margin-bottom:0}dt{color:#aab6c8}dd{margin:0 0
 {% if item.last_error_at %} at {{ item.last_error_at }}{% endif %}</dd>
 <dt>Pending records</dt><dd>{{ item.pending_records if item.pending_records is not none else "Unavailable" }}</dd>
 <dt>Action required</dt><dd>{{ "Yes" if item.intervention_required else "No recorded issue" }}</dd></dl>
-</article>{% endfor %}</section></main></body></html>""", health=_hq_integrations()), 200, {"Cache-Control": "no-store"}
+</article>{% endfor %}</section>
+<h2>Connection &amp; reconciliation readiness</h2>
+<p>Owner-only evidence. Configuration is not authorisation; historical read success is not current permission; imported payment evidence is not received bank cash. No live provider request is made by this page.</p>
+<div class="readiness-scroll"><table><thead><tr>
+<th>Provider / workstream</th><th>Implemented</th><th>Configured</th><th>Authorised</th>
+<th>Read-tested</th><th>Sync-tested</th><th>Reconciled</th><th>Last observed success (UTC)</th>
+</tr></thead><tbody>{% for item in health.readiness %}<tr>
+<td>{{ item.name }}</td><td>{{ item.stages.implemented }}</td><td>{{ item.stages.configured }}</td>
+<td>{{ item.stages.authorised }}</td><td>{{ item.stages.read_tested }}</td>
+<td>{{ item.stages.sync_tested }}</td><td>{{ item.stages.reconciled }}</td>
+<td>{{ item.last_success or "No verified read" }}</td></tr>{% endfor %}</tbody></table></div>
+<section>{% for item in health.readiness %}<article>
+<h2>{{ item.name }}</h2><dl><dt>Exact outstanding blocker</dt><dd>{{ item.blocker }}</dd>
+<dt>Next safe owner / engineering action</dt><dd>{{ item.next_safe_action }}</dd>
+</dl></article>{% endfor %}</section>
+<p><small>Owner-only connection readiness; not a bank-reconciled ledger or permission to send, book, charge, or modify live records.</small></p>
+</main></body></html>""", health=_hq_integrations()), 200, {"Cache-Control": "no-store"}
 
 def _assistant_csrf_valid():
     return secrets.compare_digest(request.headers.get("X-HQ-CSRF", ""), session.get("csrf", "not-set"))
