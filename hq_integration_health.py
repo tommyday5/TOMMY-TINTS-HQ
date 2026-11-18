@@ -9,6 +9,10 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 
+class PersistedSyncError(RuntimeError):
+    """Provider snapshot/queue storage failed; not an upstream read error."""
+
+
 def _db_path():
     root = Path(os.environ.get("HQ_DATA_DIR", "/tmp/tommy-tints-hq"))
     return root / "integration_health.sqlite3"
