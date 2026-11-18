@@ -284,7 +284,7 @@ def work_summary():
                 THEN price_pence - deposit_pence ELSE 0 END),0) AS outstanding
             FROM hq_work_records GROUP BY status""").fetchall()
         # A planned deposit is a quote field, NOT a receipt. Only use approved,
-        # priced, internally consistent records when presenting pipeline values.
+        # priced, internally consistent, non-TEST records for pipeline values.
         # Neither invoices nor bank/payment integrations are reconciled here.
         approved = db.execute("""SELECT COUNT(*) AS valid_count,
             COALESCE(SUM(price_pence),0) AS price_total,
@@ -293,9 +293,14 @@ def work_summary():
             FROM hq_work_records
             WHERE status IN ('approved','in_progress','completed')
               AND price_pence BETWEEN 0 AND 100000000
-              AND deposit_pence BETWEEN 0 AND price_pence""").fetchone()
+              AND deposit_pence BETWEEN 0 AND price_pence
+              AND source_request_id NOT LIKE 'TEST-%'""").fetchone()
         approved_count = db.execute("""SELECT COUNT(*) FROM hq_work_records
-            WHERE status IN ('approved','in_progress','completed')""").fetchone()[0]
+            WHERE status IN ('approved','in_progress','completed')
+              AND source_request_id NOT LIKE 'TEST-%'""").fetchone()[0]
+        excluded_test_count = db.execute("""SELECT COUNT(*) FROM hq_work_records
+            WHERE status IN ('approved','in_progress','completed')
+              AND source_request_id LIKE 'TEST-%'""").fetchone()[0]
     return {
         "record_count": sum(row["record_count"] for row in rows),
         "by_status": {status: sum(row["record_count"] for row in rows if row["status"] == status)
@@ -307,6 +312,7 @@ def work_summary():
         "outstanding_recorded_basis": "legacy_unverified_price_less_planned_deposit_including_drafts",
         "approved_priced_record_count": approved["valid_count"],
         "approved_amounts_incomplete_count": approved_count - approved["valid_count"],
+        "excluded_synthetic_approved_record_count": excluded_test_count,
         "approved_price_total_pence": approved["price_total"],
         "planned_deposit_total_pence": approved["planned_deposit_total"],
         "conditional_remainder_pence": approved["conditional_remainder"],
