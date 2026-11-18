@@ -128,7 +128,7 @@ class DnaContractTests(unittest.TestCase):
         for bad in (
             {"net_pence": 10000}, {"gross_pence": 99.0},
             {"fee_pence": -10}, {"fee_pence": True}, {"kind": "settlement"},
-            {"kind": "refund"}, {"kind": "fee"},
+            {"kind": "refund"}, {"kind": "fee"}, {"kind": []},
             {"kind": "payment", "gross_pence": -100, "net_pence": -220},
             {"currency": "EUR"}, {"batch_id": "bad/ref"},
             {"occurred_at": "2026-11-18T10:30:00"}, {"payment_id": ""},
