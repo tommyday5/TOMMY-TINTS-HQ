@@ -13,3 +13,13 @@ Existing private OpenAI chat, CSRF, owner authentication, business data permissi
 ## Refined British delivery
 
 Prefer local British voices advertised by the device as Premium, Enhanced, Natural or Neural, with Daniel/Oliver/Arthur as secondary preferences. These labels are device metadata, not a guarantee of quality. The owner can choose from actual installed local en-GB voices. Pace 0.90, pitch 0.94; no actor/character cloning. Introduction uses a more personal, restrained phrasing. Quality ultimately depends on the installed voice engine; this does not add a studio/cloud TTS voice or require credentials.
+
+## Human-like neural speech
+
+The default voice option now uses an owner-only, CSRF-protected POST /api/hq/assistant/speech with the existing OPENAI_API_KEY. Built-in Cedar voice is prompted for refined, warm, natural British phrasing, without actor imitation. UI discloses AI generation, text transmission to OpenAI and API charges. Device voices remain explicit alternatives; failures do not silently revert to robotic device output.
+
+No audio files or spoken text are saved by HQ. Response no-store; audio uses a short-lived browser object URL revoked on stop/end/background/navigation. Optional spoken replies default off. Safari receives a native audio Play control if automatic playback is blocked. State follows actual playing events; bars show playback activity, not measured acoustic amplitude.
+
+Limits: 2000 input characters, 3 MB output, 5 requests/minute and 60 requests/day per owner, including failed generation attempts. Durable usage table stores only owner subject and timestamps. No financial transaction or booking tools are added.
+
+Model defaults to gpt-4o-mini-tts, overridable via OPENAI_TTS_MODEL. Model access and funded API billing must be verified in the owner's runtime. No production credentials or owner session are available to local tests; provider calls are mocked.

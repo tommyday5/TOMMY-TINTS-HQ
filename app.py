@@ -1331,6 +1331,29 @@ def hq_assistant_history_clear():
 def hq_assistant_audit():
     return jsonify(events=audit_events())
 
+@app.post("/api/hq/assistant/speech")
+@required
+def hq_assistant_speech():
+    from flask import Response
+    import hq_speech
+    if not _assistant_csrf_valid():
+        return jsonify(error="Invalid CSRF token"), 403
+    if request.content_length and request.content_length > 12000:
+        return jsonify(error="Speech request too large"), 413
+    data=request.get_json(silent=True)
+    text=data.get("text") if isinstance(data,dict) else None
+    if not isinstance(text,str) or not text.strip() or len(text)>2000:
+        return jsonify(error="Speech text must contain 1–2000 characters"),400
+    if not hq_speech.configured():
+        return jsonify(error="Human-like voice requires the existing OpenAI API key to be configured. Device voice remains selectable."),503
+    if not hq_speech.reserve(session.get("google_sub") or "owner"):
+        return jsonify(error="Voice limit reached. Try later or choose a device voice."),429
+    try:
+        audio=hq_speech.generate(text)
+    except Exception:
+        return jsonify(error="Neural speech unavailable. Check OpenAI model access and billing, or select a device voice."),502
+    return Response(audio,mimetype="audio/mpeg",headers={"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"})
+
 @app.post("/api/hq/assistant/chat")
 @required
 def hq_assistant_chat():
