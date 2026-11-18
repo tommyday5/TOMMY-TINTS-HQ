@@ -17,6 +17,7 @@ from hq_auth import required
 from hq_reconciliation_contracts import (
     ContractError, normalise_monzo_rows, normalise_dna_rows,
 )
+from hq_transaction_classification import CATEGORIES, preview_manual_classifications
 
 transaction_preview = Blueprint("transaction_preview", __name__)
 MAX_TEXT = 120_000
@@ -38,7 +39,7 @@ class PreviewError(ValueError):
     """An export is malformed or its claimed mapping cannot be validated."""
 
 
-def preview_export(source, csv_text, *, mapping=None, scope_ref=None):
+def preview_export(source, csv_text, *, mapping=None, scope_ref=None, classifications=None):
     """Examine headers, then optionally validate explicitly mapped rows in memory.
 
     Never return source row values, account IDs, financial totals or raw events.
@@ -77,6 +78,8 @@ def preview_export(source, csv_text, *, mapping=None, scope_ref=None):
             "notice": "Schema preview only. No provider data was saved or reconciled.",
         }
         if mapping is None or mapping == {}:
+            if classifications is not None:
+                raise PreviewError("Classification review requires validated canonical mapping")
             return output
 
         if not isinstance(mapping, dict):
@@ -121,6 +124,14 @@ def preview_export(source, csv_text, *, mapping=None, scope_ref=None):
         except ContractError as exc:
             # Do not reflect sensitive input rows or raw IDs into an error.
             raise PreviewError("Canonical integrity check failed: " + str(exc)) from None
+        if source != "monzo" and classifications is not None:
+            raise PreviewError("Manual bank classifications are only supported for Monzo preview")
+        if source == "monzo":
+            try:
+                output["classification_review"] = preview_manual_classifications(
+                    result, classifications)
+            except ContractError as exc:
+                raise PreviewError(str(exc)) from None
         output.update(
             mapping_complete=True, canonical_preview_valid=True,
             mapped_rows=len(records), unique_events=len(result["events"]),
@@ -158,16 +169,28 @@ def _submitted_data():
                 raise PreviewError("Mapping must be valid JSON") from None
         else:
             mapping = None
-    return data, mapping
+    classifications = data.get("classifications")
+    if isinstance(classifications, str):
+        if len(classifications) > 50000:
+            raise PreviewError("Classification proposal is too large")
+        if classifications.strip():
+            try:
+                classifications = json.loads(classifications)
+            except (TypeError, ValueError):
+                raise PreviewError("Classification proposal must be valid JSON") from None
+        else:
+            classifications = None
+    return data, mapping, classifications
 
 
 @transaction_preview.post("/api/hq/transaction-import-preview")
 @required
 def api_preview():
     try:
-        data, mapping = _submitted_data()
+        data, mapping, classifications = _submitted_data()
         result = preview_export(data.get("source"), data.get("csv_text"),
-                                mapping=mapping, scope_ref=data.get("scope_ref"))
+                                mapping=mapping, scope_ref=data.get("scope_ref"),
+                                classifications=classifications)
     except PreviewError as exc:
         return jsonify(error=str(exc), imported=False, reconciled=False), 400
     return jsonify(result), 200
@@ -197,6 +220,10 @@ placeholder="Paste an export header or a bounded CSV; contents are never redispl
 <label for="mapping">Explicit column mapping (JSON, optional for header inspection)</label>
 <textarea id="mapping" name="mapping" rows="5" maxlength="3000" autocomplete="off"
 spellcheck="false" placeholder='{"transaction_id":"EXACT SOURCE COLUMN","amount_pence":"EXACT SOURCE COLUMN","currency":"EXACT SOURCE COLUMN","booked_at":"EXACT SOURCE COLUMN"}'></textarea>
+<label for="classifications">Monzo only: optional manual classification proposals (JSON transaction ID to review category). Never mark a proposal as verified cash.</label>
+<textarea id="classifications" name="classifications" rows="4" maxlength="50000" autocomplete="off"
+spellcheck="false" placeholder='{"tx001":"transfer","tx002":"customer_receipt_candidate"}'></textarea>
+<p>Allowed review categories: {{ categories|join(", ") }}. No categories are inferred. Exact source transaction IDs are used only in memory.</p>
 <button type="submit">Inspect without importing</button></form></section>
 {% if error %}<section role="alert">{{ error }}</section>{% endif %}
 {% if result %}<section><h2>Preview only — not reconciled</h2>
@@ -206,6 +233,10 @@ spellcheck="false" placeholder='{"transaction_id":"EXACT SOURCE COLUMN","amount_
 <p>Canonical validation passed: {{ result.mapped_rows }} mapped rows,
 {{ result.unique_events }} distinct events, {{ result.exact_duplicate_rows }} identical repeats.</p>
 {% else %}<p>Mapping incomplete; no row-level validation or import was performed.</p>{% endif %}
+{% if result.classification_review %}<h3>Manual classification proposals — not saved</h3>
+<p>{{ result.classification_review.reviewed_proposals }} proposed classifications, {{ result.classification_review.pending_review }} still unresolved. {{ result.classification_review.customer_receipt_candidates }} customer receipt candidates, none verified.</p>
+{% for category, count in result.classification_review.proposal_counts.items() %}<p>{{ category }}: {{ count }}</p>{% endfor %}
+{% endif %}
 <p>Authorisation, source mapping, provider read, sync, job receipts and bank settlement:
 <strong>unverified</strong>. No balance or revenue totals have been changed.</p>
 </section>{% endif %}</main></body></html>"""
@@ -217,11 +248,12 @@ def preview_page():
     result, error, code = None, None, 200
     if request.method == "POST":
         try:
-            data, mapping = _submitted_data()
+            data, mapping, classifications = _submitted_data()
             result = preview_export(data.get("source"), data.get("csv_text"),
-                                    mapping=mapping, scope_ref=data.get("scope_ref"))
+                                    mapping=mapping, scope_ref=data.get("scope_ref"),
+                                    classifications=classifications)
         except PreviewError as exc:
             error, code = str(exc), 400
-    return (render_template_string(_PAGE, csrf=session.get("csrf"),
+    return (render_template_string(_PAGE, csrf=session.get("csrf"), categories=CATEGORIES,
                                    result=result, error=error),
             code, {"Cache-Control": "no-store"})
