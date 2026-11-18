@@ -1122,6 +1122,8 @@ def hq_gmail_queue():
             record_check("gmail", "Read-only Gmail import failed")
             return "Gmail import failed. Check Integration Health.", 502
         record_check("gmail")
+        # import_page has committed to the persistent queue before returning.
+        record_check("gmail_sync")
     try:
         count, rows = gmail.queue()
     except (OSError, sqlite3.Error):
@@ -1161,6 +1163,8 @@ def hq_square_snapshot():
             record_check("square", "Read-only Square booking retrieval failed")
             return "Square booking retrieval failed. Check Integration Health.", 502
         record_check("square")
+        # refresh_bookings commits its versioned snapshot before returning.
+        record_check("square_sync")
     try:
         rows = square.upcoming_bookings()
     except (OSError, sqlite3.Error):

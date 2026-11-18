@@ -236,6 +236,8 @@ def payment_page():
             error = "Unable to refresh payment evidence. Check read-only Square access and PAYMENTS_READ permission."
         else:
             record_check("square_payments")
+            # The atomic payment snapshot has committed, not a bank receipt.
+            record_check("square_payments_sync")
     try:
         data = read_snapshot()
     except (OSError, sqlite3.Error, ValueError):

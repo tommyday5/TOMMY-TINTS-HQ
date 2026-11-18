@@ -68,4 +68,10 @@ def integration_status(connections):
             "needs_attention": bool(previous.get("needs_attention")),
             "intervention_required": connected is not True or bool(previous.get("needs_attention")),
         })
-    return {"history_available": history_available, "integrations": entries}
+    # A successful read is not evidence of a committed import/snapshot. Only
+    # explicit post-commit markers from the owner-initiated flows qualify.
+    sync_successes = ({key: history.get(key + "_sync", {}).get("last_success")
+                       for key in ("gmail", "square", "square_payments")}
+                      if history_available else {})
+    return {"history_available": history_available, "integrations": entries,
+            "sync_successes": sync_successes}
