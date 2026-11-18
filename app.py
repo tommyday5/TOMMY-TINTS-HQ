@@ -130,6 +130,8 @@ async function loadJobPaymentSummary(){
   ];
   if(summary.approved_amounts_incomplete_count)
    notes.push(summary.approved_amounts_incomplete_count+" approved record(s) with missing or invalid prices excluded");
+  if(summary.excluded_synthetic_approved_record_count)
+   notes.push(summary.excluded_synthetic_approved_record_count+" synthetic TEST job(s) excluded from financial planning totals");
   display.textContent=notes.join(" · ");
  }catch(error){
   if(requestId===jobPaymentSummaryRequestId)
