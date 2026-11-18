@@ -9,3 +9,7 @@ Optional introduction requires a button press and uses UK local time (Europe/Lon
 Optional browser dictation requires a separate session-only consent checkbox and explicit Start. UI explains that the browser speech provider may process audio. Transcripts are not submitted automatically. Unsupported devices use keyboard text/dictation. Real physical iPhone Safari/PWA voice availability requires testing on the owner's device; no emulator result substitutes for that.
 
 Existing private OpenAI chat, CSRF, owner authentication, business data permissions and approval gates are unchanged. Existing HTML no-store and automatic update injection continue to apply.
+
+## Refined British delivery
+
+Prefer local British voices advertised by the device as Premium, Enhanced, Natural or Neural, with Daniel/Oliver/Arthur as secondary preferences. These labels are device metadata, not a guarantee of quality. The owner can choose from actual installed local en-GB voices. Pace 0.90, pitch 0.94; no actor/character cloning. Introduction uses a more personal, restrained phrasing. Quality ultimately depends on the installed voice engine; this does not add a studio/cloud TTS voice or require credentials.
