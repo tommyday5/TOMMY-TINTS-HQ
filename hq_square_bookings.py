@@ -8,6 +8,7 @@ import sqlite3
 import requests
 
 from customer_request_store import storage_ready
+from hq_integration_health import PersistedSyncError
 from maintenance_calendar import timestamp
 
 
@@ -20,8 +21,10 @@ def _path():
 
 
 def refresh_bookings():
-    if not configured() or not storage_ready():
-        raise RuntimeError("Square credentials or persistent storage unavailable")
+    if not configured():
+        raise RuntimeError("Square credentials unavailable")
+    if not storage_ready():
+        raise PersistedSyncError("Square booking snapshot storage unavailable")
     location = os.environ["HQ_SQUARE_LOCATION_ID"]
     now = datetime.now(timezone.utc)
     params = {"location_id": location, "limit": 100,
@@ -56,16 +59,20 @@ def refresh_bookings():
     else:
         raise RuntimeError("Square booking window exceeds the page limit")
 
-    path = _path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with closing(sqlite3.connect(path, timeout=5)) as db, db:
-        db.execute("""CREATE TABLE IF NOT EXISTS bookings (
-            location TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL,
-            status TEXT NOT NULL, start_at TEXT NOT NULL, PRIMARY KEY(location, id))""")
-        return db.executemany("""INSERT INTO bookings VALUES (?,?,?,?,?)
-            ON CONFLICT(location,id) DO UPDATE SET
-            version=excluded.version, status=excluded.status, start_at=excluded.start_at
-            WHERE excluded.version > bookings.version""", rows).rowcount
+    try:
+        path = _path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(path, timeout=5)) as db, db:
+            db.execute("""CREATE TABLE IF NOT EXISTS bookings (
+                location TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL,
+                status TEXT NOT NULL, start_at TEXT NOT NULL, PRIMARY KEY(location, id))""")
+            changed = db.executemany("""INSERT INTO bookings VALUES (?,?,?,?,?)
+                ON CONFLICT(location,id) DO UPDATE SET
+                version=excluded.version, status=excluded.status, start_at=excluded.start_at
+                WHERE excluded.version > bookings.version""", rows).rowcount
+        return changed
+    except (OSError, sqlite3.Error) as exc:
+        raise PersistedSyncError("Square booking snapshot commit failed") from exc
 
 
 def upcoming_bookings():
