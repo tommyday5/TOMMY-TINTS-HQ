@@ -66,6 +66,13 @@ class InternalJobCostingTests(unittest.TestCase):
         self.assertEqual(approved.json["total_recorded_cost"], "94.00")
         self.assertEqual(approved.json["estimated_contribution"], "256.00")
         self.assertEqual(approved.json["margin_percent"], "73.14")
+        self.assertEqual(approved.json["material_line_count"], 1)
+        self.assertEqual(approved.json["labour_hours"], "3")
+        self.assertEqual(approved.json["actual_labour_rate"], "18")
+        self.assertEqual(approved.json["allocated_overhead"], "25.00")
+        self.assertEqual(approved.json["other_costs"], "5.00")
+        self.assertEqual(approved.json["missing_cost_fields"], [])
+        self.assertNotIn("Clearcoat", approved.get_data(as_text=True))
         # GET must never mutate the cost log or its revision.
         self.assertEqual(read_log("cost-owner", work)["revision"], 1)
 
@@ -83,6 +90,11 @@ class InternalJobCostingTests(unittest.TestCase):
         self.assertIsNone(unpriced.json["price_pence"])
         self.assertIsNone(unpriced.json["estimated_contribution"])
         self.assertIsNone(unpriced.json["saved_sale_matches_record"])
+        # Costs still exist even without an approved selling price; never
+        # treat the temporary calculation sale=0 as verified revenue.
+        self.assertEqual(unpriced.json["total_recorded_cost"], "94.00")
+        self.assertEqual(unpriced.json["materials"], "10.00")
+        self.assertEqual(unpriced.json["actual_labour_cost"], "54.00")
 
     def test_incomplete_costs_and_owner_isolation(self):
         work = create_test_job()
@@ -96,6 +108,15 @@ class InternalJobCostingTests(unittest.TestCase):
         self.sign_in()
         incomplete = self.client.get("/api/hq/work-records/" + work + "/costing")
         self.assertFalse(incomplete.json["complete_costs"])
+        self.assertEqual(incomplete.json["missing_cost_fields"],
+                         ["actual_labour_rate", "overhead", "other_costs"])
+        self.assertEqual(incomplete.json["material_line_count"], 0)
+        self.assertEqual(incomplete.json["labour_hours"], "2")
+        self.assertEqual(incomplete.json["materials"], "0.00")
+        self.assertIsNone(incomplete.json["actual_labour_cost"])
+        self.assertIsNone(incomplete.json["allocated_overhead"])
+        self.assertIsNone(incomplete.json["other_costs"])
+        self.assertIsNone(incomplete.json["total_recorded_cost"])
         self.assertIsNone(incomplete.json["estimated_contribution"])
         self.assertTrue(incomplete.json["saved_sale_matches_record"])
 
@@ -116,6 +137,9 @@ class InternalJobCostingTests(unittest.TestCase):
         response = self.client.get("/api/hq/work-records/" + work + "/costing")
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json["complete_costs"])
+        self.assertIsNone(response.json["total_recorded_cost"])
+        self.assertIsNone(response.json["materials"])
+        self.assertIn("invalid", response.json["note"])
         self.assertIsNone(response.json["estimated_contribution"])
 
     def test_existing_cards_can_link_to_internal_costing(self):
@@ -124,6 +148,10 @@ class InternalJobCostingTests(unittest.TestCase):
         self.assertIn('"/api/hq/work-records/"+encodeURIComponent(job.id)+"/costing"', html)
         self.assertIn('currentMaterialJob=job.id', html)
         self.assertIn('await loadServerMat()', html)
+        self.assertIn('snapshot.material_line_count', html)
+        self.assertIn('snapshot.labour_hours', html)
+        self.assertIn('snapshot.allocated_overhead', html)
+        self.assertIn('snapshot.missing_cost_fields', html)
 
 
 if __name__ == "__main__":
