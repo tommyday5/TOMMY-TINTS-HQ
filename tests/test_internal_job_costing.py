@@ -142,6 +142,46 @@ class InternalJobCostingTests(unittest.TestCase):
         self.assertIn("invalid", response.json["note"])
         self.assertIsNone(response.json["estimated_contribution"])
 
+    def test_missing_or_invalid_legacy_materials_list_never_implies_zero_cost(self):
+        work = create_test_job()
+        set_draft_financials(work, 35000, 0, expected_revision=0)
+        change_work_status(work, "ready_for_review", expected_revision=1)
+        change_work_status(work, "approved", expected_revision=2)
+        self.sign_in()
+        url = "/api/hq/work-records/" + work + "/costing"
+
+        # Explicit [] means reviewed zero material lines; omitting the key,
+        # storing null, or storing the wrong type must NOT mean zero.
+        for case, material_lines in (("absent", None), ("null", None),
+                                     ("wrong-type", "[]")):
+            with self.subTest(case=case):
+                log = self.log("350")
+                if case == "absent":
+                    del log["lines"]
+                else:
+                    log["lines"] = material_lines
+                current = read_log("cost-owner", work)
+                saved = write_log("cost-owner", work, log,
+                                  expected_revision=current["revision"])
+                response = self.client.get(url)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.headers["Cache-Control"], "no-store")
+                self.assertTrue(response.json["costing_saved"])
+                self.assertTrue(response.json["price_approved"])
+                self.assertEqual(response.json["price_pence"], 35000)
+                self.assertFalse(response.json["complete_costs"])
+                self.assertIn("lines", response.json["missing_cost_fields"])
+                for key in ("materials", "material_line_count",
+                            "total_recorded_cost", "estimated_contribution",
+                            "margin_percent"):
+                    self.assertIsNone(response.json[key], key)
+                self.assertIn("materials list", response.json["note"])
+                self.assertEqual(response.json["costing_revision"],
+                                 saved["revision"])
+                # Reading this snapshot cannot alter its saved revision.
+                self.assertEqual(read_log("cost-owner", work)["revision"],
+                                 saved["revision"])
+
     def test_existing_cards_can_link_to_internal_costing(self):
         self.sign_in()
         html = self.client.get("/").get_data(as_text=True)
