@@ -1136,8 +1136,8 @@ def hq_gmail_callback():
     if not persisted:
         record_check("gmail", "Gmail secure offline credential storage failed")
         return "Gmail profile verified, but secure offline credentials could not be saved. Check persistent HQ storage and reconnect for offline consent.", 503
-    if not record_check("gmail"):
-        return "Gmail credentials saved, but verification history could not be recorded. Check Integration Health storage.", 503
+    if not record_check("gmail_profile"):
+        return "Gmail credentials saved, but profile verification history could not be recorded. Check Integration Health storage.", 503
     key = secrets.token_urlsafe(32)
     with _gmail_lock:
         for old, entry in list(_gmail_tokens.items()):
