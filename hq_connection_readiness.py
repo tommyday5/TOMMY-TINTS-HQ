@@ -4,6 +4,7 @@ Never infer a provider's permission, read result, bank cash or reconciliation
 from the existence of adapter code or a configured secret. The status page
 does not invoke provider APIs or create local databases.
 """
+from hq_integration_health import valid_observation_time as _observation_time
 
 # Keys match integration_health provider evidence, not marketing product names.
 PROFILES = (
@@ -98,7 +99,10 @@ def build_readiness(health, signals):
         consent_present = signal.get("consent") if configured else False
         if consent_present not in (True, False, None):
             consent_present = None
-        success = previous.get("last_success") if history_available else None
+        raw_success = previous.get("last_success") if history_available else None
+        success = _observation_time(raw_success)
+        read_evidence_invalid = (previous.get("observation_invalid") is True
+                                 or raw_success is not None and success is None)
         last_error = previous.get("last_error") if history_available else None
         read_tested = bool(success) if history_available else None
         # Read-confirmed authorisation is historical and provider-specific.
@@ -109,8 +113,10 @@ def build_readiness(health, signals):
         # Historical upstream reads cannot establish that storage committed.
         # New explicit markers are recorded only after each import/snapshot
         # operation returns successfully; legacy records remain unverified.
-        sync_success = (health.get("sync_successes", {}).get(key)
-                        if history_available else None)
+        raw_sync = (health.get("sync_successes", {}).get(key)
+                    if history_available and profile["persisted_read"] else None)
+        sync_success = _observation_time(raw_sync)
+        sync_evidence_invalid = raw_sync is not None and sync_success is None
         sync_tested = (bool(success) and bool(sync_success)
                        and profile["persisted_read"]) if history_available else None
         sync_observation = (health.get("sync_failures", {}).get(key, {})
@@ -130,6 +136,11 @@ def build_readiness(health, signals):
         elif not history_available:
             blocker = "Integration observation storage is unavailable; previous reads and syncs cannot be verified."
             next_action = "Restore read-only access to the persistent integration health database without resetting history."
+        elif read_evidence_invalid or sync_evidence_invalid:
+            blocker = ("Stored integration read or sync success timestamp is invalid or future-dated; "
+                       "this evidence cannot establish readiness.")
+            next_action = ("Inspect the owner-only persistent integration health history and "
+                           "restore trustworthy evidence before repeating a read or sync.")
         elif previous.get("needs_attention") is True:
             blocker = last_error or "Most recent upstream read failed; earlier success may be stale."
             next_action = profile["read"]
@@ -158,6 +169,7 @@ def build_readiness(health, signals):
             "consent_present": consent_present,
             "authorisation_verified_at": success if authorised is True else None,
             "read_tested": read_tested, "sync_tested": sync_tested,
+            "observation_integrity_issue": read_evidence_invalid or sync_evidence_invalid,
             "sync_applicable": profile["persisted_read"],
             "sync_needs_attention": sync_needs_attention,
             "sync_last_error": sync_error,

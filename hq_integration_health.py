@@ -3,7 +3,7 @@ import logging
 import os
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -11,6 +11,25 @@ log = logging.getLogger(__name__)
 
 class PersistedSyncError(RuntimeError):
     """Provider snapshot/queue storage failed; not an upstream read error."""
+
+
+def valid_observation_time(value):
+    """Accept only timezone-aware, non-future local read/sync evidence dates.
+
+    This checks database metadata shape, NOT the authenticity of a provider
+    response. A small window allows ordinary server clock skew.
+    """
+    if not isinstance(value, str) or not 10 <= len(value) <= 40:
+        return None
+    try:
+        observed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if observed.tzinfo is None or observed.utcoffset() is None:
+            return None
+        if observed.astimezone(timezone.utc) > datetime.now(timezone.utc) + timedelta(minutes=5):
+            return None
+    except (ValueError, OverflowError):
+        return None
+    return value
 
 
 def _db_path():
@@ -55,22 +74,29 @@ def integration_status(connections):
     entries = []
     for key, name, connected in connections:
         previous = history.get(key, {})
+        raw_success = previous.get("last_success")
+        checked_success = valid_observation_time(raw_success)
+        observation_invalid = raw_success is not None and checked_success is None
         if connected is None:
             state = "Not implemented"
         elif not connected:
             state = "Consent required in this session"
+        elif observation_invalid:
+            state = "Stored read observation invalid"
         elif previous.get("needs_attention"):
             state = "Last read failed"
-        elif previous.get("last_success"):
+        elif checked_success:
             state = "Last read succeeded"
         else:
             state = "Consent present, read unverified"
         entries.append({
-            "name": name, "status": state, "last_success": previous.get("last_success"),
+            "name": name, "status": state, "last_success": checked_success,
+            "observation_invalid": observation_invalid,
             "last_error": previous.get("last_error"), "last_error_at": previous.get("last_error_at"),
             "pending_records": None,
             "needs_attention": bool(previous.get("needs_attention")),
-            "intervention_required": connected is not True or bool(previous.get("needs_attention")),
+            "intervention_required": (connected is not True or observation_invalid
+                                      or bool(previous.get("needs_attention"))),
         })
     # A successful read is not evidence of a committed import/snapshot. Only
     # explicit post-commit markers from the owner-initiated flows qualify.

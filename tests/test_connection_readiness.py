@@ -1,5 +1,6 @@
 """Conservative readiness checks: no invented consent, receipts or live data."""
 import os
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -194,6 +195,56 @@ class ReadinessUnitTests(unittest.TestCase):
         row = build_readiness(health, {"sheets": {"configured": True, "consent": True}})[0]
         self.assertIsNone(row["read_tested"])
         self.assertIsNone(row["sync_tested"])
+
+
+    def test_corrupt_or_future_read_success_fails_closed(self):
+        # Persisted health metadata is local evidence, not provider proof.
+        from hq_integration_health import _db_path
+        record_check("gmail")
+        record_check("gmail_sync")
+        for bad_time in ("not-a-date", "9999-12-31T00:00:00+00:00",
+                         "2026-11-19T09:00:00"):
+            with sqlite3.connect(_db_path()) as db:
+                db.execute("UPDATE integration_checks SET last_success=? "
+                           "WHERE provider='gmail'", (bad_time,))
+            signals = {"gmail": {"configured": True, "consent": True}}
+            row = self.build(signals)["gmail"]
+            self.assertFalse(row["read_tested"])
+            self.assertFalse(row["sync_tested"])
+            self.assertFalse(row["authorised"])
+            self.assertIsNone(row["last_success"])
+            self.assertTrue(row["observation_integrity_issue"])
+            self.assertIn("timestamp", row["blocker"])
+            status = integration_status([("gmail", "Gmail", True)])["integrations"][0]
+            self.assertEqual(status["status"], "Stored read observation invalid")
+            self.assertIsNone(status["last_success"])
+            self.assertTrue(status["intervention_required"])
+        record_check("gmail")
+        recovered = self.build({"gmail": {"configured": True, "consent": True}})["gmail"]
+        self.assertTrue(recovered["read_tested"])
+        self.assertTrue(recovered["authorised"])
+        self.assertFalse(recovered["observation_integrity_issue"])
+
+    def test_corrupt_sync_success_never_counts_as_persisted_sync(self):
+        from hq_integration_health import _db_path
+        record_check("square_payments")
+        record_check("square_payments_sync")
+        with sqlite3.connect(_db_path()) as db:
+            db.execute("UPDATE integration_checks SET last_success=? "
+                       "WHERE provider='square_payments_sync'",
+                       ("9999-12-31T00:00:00Z",))
+        signal = {"square_payments": {"configured": True, "consent": None}}
+        row = self.build(signal)["square_payments"]
+        self.assertTrue(row["read_tested"])
+        self.assertFalse(row["sync_tested"])
+        self.assertIsNone(row["sync_last_success"])
+        self.assertTrue(row["observation_integrity_issue"])
+        self.assertFalse(row["reconciled"])
+        self.assertIn("timestamp", row["blocker"])
+        record_check("square_payments_sync")
+        recovered = self.build(signal)["square_payments"]
+        self.assertTrue(recovered["sync_tested"])
+        self.assertFalse(recovered["observation_integrity_issue"])
 
 
 class ReadinessHttpTests(unittest.TestCase):
