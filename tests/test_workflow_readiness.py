@@ -22,7 +22,7 @@ class WorkflowReadinessTests(unittest.TestCase):
             self.assertFalse(row["reconciled"])
             self.assertTrue(row["blocker"])
             self.assertTrue(row["next_safe_action"])
-            self.assertNotIn("verified receipt", str(row).lower())
+            self.assertNotEqual(row["stages"]["read_tested"], "Observed / present")
         self.assertFalse(next(r for r in rows if r["key"] == "basket_checkout")["implemented"])
         self.assertFalse(next(r for r in rows if r["key"] == "customer_accounts")["implemented"])
 
