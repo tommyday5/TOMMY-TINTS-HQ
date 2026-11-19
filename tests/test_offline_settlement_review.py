@@ -233,6 +233,58 @@ class OfflineSettlementReviewTests(unittest.TestCase):
                         expected_revision=1, request_id="request-2")
 
 
+    def test_guarded_review_checks_retained_anchor_during_write_and_replay(self):
+        self.record()
+        first_head = self.ledger.export_anchor()
+        backup = Path(self.tmp.name) / "before-guarded-reviews.sqlite3"
+        with sqlite3.connect(self.path) as source, sqlite3.connect(backup) as dest:
+            source.backup(dest)
+
+        # Append-only progress is permitted even when the independently
+        # retained anchor predates legitimate newer reviews.
+        second = self.record(
+            decision="investigate", reason="operator_correction",
+            request_id="request-2", expected_revision=1,
+            trusted_anchor=first_head)
+        self.assertEqual(second["revision"], 2)
+        second_head = self.ledger.export_anchor()
+        third = self.record(
+            decision="rejected", reason="new_evidence",
+            request_id="request-3", expected_revision=2,
+            trusted_anchor=first_head)
+        self.assertEqual(third["revision"], 3)
+        self.assertTrue(self.record(
+            decision="rejected", reason="new_evidence",
+            request_id="request-3", expected_revision=2,
+            trusted_anchor=second_head)["idempotent_replay"])
+
+        with self.assertRaisesRegex(ContractError, "head required"):
+            self.record(
+                decision="rejected", reason="new_evidence",
+                request_id="request-3", expected_revision=2,
+                trusted_anchor={"format": "offline-settlement-head-v1"})
+        self.assertEqual(self.ledger.verify_integrity()["events_checked"], 3)
+
+        # Restoring a valid but older SQLite copy cannot be followed by a
+        # guarded new review or even an idempotent replay using a later head.
+        shutil.copyfile(backup, self.path)
+        self.assertEqual(self.ledger.verify_integrity()["events_checked"], 1)
+        with self.assertRaisesRegex(ContractError, "rollback"):
+            self.record(
+                decision="investigate", reason="operator_correction",
+                request_id="request-2", expected_revision=1,
+                trusted_anchor=second_head)
+        self.assertEqual(self.ledger.verify_integrity()["events_checked"], 1)
+
+        # A stale but genuine prefix still permits an explicitly reviewed
+        # correction. Source evidence and optimistic revision rules remain.
+        resumed = self.record(
+            decision="investigate", reason="operator_correction",
+            request_id="request-2", expected_revision=1,
+            trusted_anchor=first_head)
+        self.assertEqual(resumed["revision"], 2)
+        self.assertFalse(resumed["reconciled"])
+
 
 if __name__ == "__main__":
     unittest.main()
