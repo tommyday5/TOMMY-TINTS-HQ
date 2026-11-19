@@ -107,6 +107,42 @@ class IntegrationHealthTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             record_committed_sync("finance")
 
+
+    def test_failure_to_commit_local_sync_proof_rolls_back_both_successes(self):
+        from hq_integration_health import record_check, record_committed_sync, integration_status
+        record_check("gmail", "Previous provider read failure")
+        record_check("gmail_sync", "Previous snapshot failure")
+        path = self.data_dir / "integration_health.sqlite3"
+        with sqlite3.connect(path) as db:
+            db.execute("""CREATE TABLE committed_sync_proofs (
+                provider TEXT PRIMARY KEY, observed_at TEXT NOT NULL)""")
+            db.execute("""CREATE TRIGGER reject_fixture_proof
+                BEFORE INSERT ON committed_sync_proofs
+                BEGIN SELECT RAISE(FAIL, 'synthetic third write failure'); END""")
+        self.assertFalse(record_committed_sync("gmail"))
+        status = integration_status([("gmail", "Gmail", True)])
+        self.assertIsNone(status["integrations"][0]["last_success"])
+        self.assertIsNone(status["sync_successes"]["gmail"])
+        self.assertTrue(status["sync_failures"]["gmail"]["needs_attention"])
+        with sqlite3.connect(path) as db:
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM committed_sync_proofs").fetchone()[0], 0)
+            db.execute("DROP TRIGGER reject_fixture_proof")
+        self.assertTrue(record_committed_sync("gmail"))
+        status = integration_status([("gmail", "Gmail", True)])
+        self.assertTrue(status["sync_successes"]["gmail"])
+        self.assertFalse(status["sync_unpaired"]["gmail"])
+
+    def test_legacy_marker_remains_readable_but_is_not_atomic_sync_proof(self):
+        from hq_integration_health import record_check, integration_status
+        record_check("square")
+        record_check("square_sync")
+        status = integration_status([("square", "Square", True)])
+        self.assertTrue(status["integrations"][0]["last_success"])
+        self.assertIsNone(status["sync_successes"]["square"])
+        self.assertTrue(status["sync_unpaired"]["square"])
+        self.assertTrue(status["sync_raw_successes"]["square"])
+
     def test_failed_second_observation_rolls_back_first_success(self):
         from hq_integration_health import record_check, record_committed_sync, integration_status
         record_check("gmail", "Previous upstream failure")
