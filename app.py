@@ -1010,10 +1010,10 @@ def hq_maintenance():
     try:
         result = maintenance_data(entry[0])
     except Exception:
-        record_check("sheets", "Maintenance workbook read failed")
+        record_check("maintenance_sheets", "Maintenance workbook read failed")
         app.logger.warning("Read-only maintenance Sheets sync failed")
         return jsonify(error="Unable to read existing maintenance sheets"), 502
-    record_check("sheets")
+    record_check("maintenance_sheets")
     return jsonify(result)
 
 @app.get("/hq/finance")
@@ -1045,10 +1045,10 @@ def hq_pricing():
     try:
         result = read_workbook_with_access_token(entry[0])
     except Exception:
-        record_check("sheets", "Pricing workbook read failed")
+        record_check("pricing_sheets", "Pricing workbook read failed")
         app.logger.warning("Read-only Google Sheets sync failed")
         return jsonify(error="Unable to read HQ spreadsheet. Reconnect Google Sheets and check API permissions."), 502
-    record_check("sheets")
+    record_check("pricing_sheets")
     return jsonify(result)
 
 _gmail_tokens = {}
@@ -1227,7 +1227,8 @@ def _hq_integrations():
     calendar = _local_google_consent("calendar")
     gmail_consent = _local_google_consent("gmail")
     health = integration_status([
-        ("sheets", "Google Sheets", sheets),
+        ("pricing_sheets", "Google Sheets", sheets),
+        ("maintenance_sheets", "Maintenance Sheets", sheets),
         ("finance", "Sheets finance", sheets),
         ("calendar", "Google Calendar", calendar),
         ("square", "Square", square.configured()),
@@ -1252,6 +1253,7 @@ def _hq_integrations():
         os.environ.get("GOOGLE_CLIENT_ID") and os.environ.get("GOOGLE_CLIENT_SECRET"))
     health["readiness"] = build_readiness(health, {
         "sheets": {"configured": google_configured, "consent": sheets if google_oauth_configured else None},
+        "maintenance_sheets": {"configured": google_configured, "consent": sheets if google_oauth_configured else None},
         "finance": {"configured": google_configured, "consent": sheets if google_oauth_configured else None},
         "calendar": {"configured": google_oauth_configured, "consent": calendar},
         "gmail": {"configured": google_oauth_configured, "consent": gmail_consent},
