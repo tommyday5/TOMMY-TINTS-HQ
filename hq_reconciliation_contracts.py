@@ -7,6 +7,8 @@ No adapter should use the resulting preview as live financial evidence.
 """
 from collections import defaultdict
 from datetime import datetime, timezone
+import hashlib
+import json
 import re
 
 _REF = re.compile(r"[A-Za-z0-9._-]{1,128}\Z")
@@ -72,6 +74,16 @@ def _gbp(row):
         raise ContractError("Only explicitly GBP-mapped evidence is supported")
 
 
+def _event_digest(events):
+    """Unkeyed in-process mutation guard, NOT trusted provider provenance.
+
+    Both an event and this checksum can be replaced by an actor who controls
+    the preview. Real bank/merchant evidence needs independent authentication.
+    """
+    payload = json.dumps(events, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def normalise_monzo_rows(rows, *, account_ref):
     """Preview already-mapped Monzo bank rows; does NOT read Monzo or a CSV.
 
@@ -100,6 +112,7 @@ def normalise_monzo_rows(rows, *, account_ref):
     events, duplicates = _dedupe(prepared)
     return {
         "provider": "monzo", "events": events, "duplicate_rows": duplicates,
+        "canonical_event_digest": _event_digest(events),
         "source_mapping_verified": False, "bank_balance_verified": False,
         "verified_trading_receipts_pence": None, "reconciled": False,
     }
@@ -153,6 +166,7 @@ def normalise_dna_rows(rows, *, merchant_ref):
     events, duplicates = _dedupe(prepared)
     return {
         "provider": "dna", "events": events, "duplicate_rows": duplicates,
+        "canonical_event_digest": _event_digest(events),
         "source_mapping_verified": False, "bank_settlement_verified": False,
         "verified_job_receipts_pence": None, "reconciled": False,
     }
@@ -174,6 +188,8 @@ def _validated_monzo_events(preview):
     events = preview.get("events")
     if not isinstance(events, tuple) or len(events) > _MAX_ROWS:
         raise ContractError("Canonical bank evidence must be a bounded tuple")
+    if preview.get("canonical_event_digest") != _event_digest(events):
+        raise ContractError("Canonical bank preview was changed after normalisation")
     if not events:
         return events
     try:
@@ -202,6 +218,8 @@ def _validated_dna_events(preview):
     events = preview.get("events")
     if not isinstance(events, tuple) or len(events) > _MAX_ROWS:
         raise ContractError("Canonical processor evidence must be a bounded tuple")
+    if preview.get("canonical_event_digest") != _event_digest(events):
+        raise ContractError("Canonical processor preview was changed after normalisation")
     if not events:
         return events
     try:
