@@ -118,8 +118,7 @@ class ReadinessUnitTests(unittest.TestCase):
         self.assertEqual(fresh["blocker"], profile["reconcile"])
 
     def test_last_read_failure_preserves_historical_success_not_current_health(self):
-        record_check("square_payments")
-        record_check("square_payments_sync")
+        record_committed_sync("square_payments")
         record_check("square_payments", "Square payment read failed")
         row = self.build({"square_payments": {"configured": True, "consent": None}})["square_payments"]
         self.assertTrue(row["read_tested"])
@@ -128,24 +127,41 @@ class ReadinessUnitTests(unittest.TestCase):
         self.assertFalse(row["reconciled"])
 
     def test_explicit_post_commit_evidence_is_required_for_each_sync(self):
-        # A sync marker without a successful upstream read is insufficient.
+        # Independently written, even same-second, success markers cannot
+        # impersonate an atomic read-and-committed-snapshot observation.
         record_check("gmail_sync")
+        record_check("gmail")
         self.assertFalse(self.build()["gmail"]["sync_tested"])
+        self.assertTrue(self.build()["gmail"]["sync_proof_unverified"])
         for provider in ("gmail", "square", "square_payments"):
             record_check(provider)
-            row = self.build({provider: {"configured": True, "consent": None}})[provider]
-            if provider != "gmail":
-                self.assertFalse(row["sync_tested"])
-                self.assertIsNone(row["sync_last_success"])
-            else:
-                self.assertTrue(row["sync_tested"])
-                self.assertTrue(row["sync_last_success"])
             record_check(provider + "_sync")
             row = self.build({provider: {"configured": True, "consent": None}})[provider]
             self.assertTrue(row["read_tested"])
+            self.assertFalse(row["sync_tested"])
+            self.assertTrue(row["sync_proof_unverified"])
+            self.assertIsNone(row["sync_last_success"])
+            self.assertIn("atomic", row["blocker"])
+            self.assertTrue(record_committed_sync(provider))
+            row = self.build({provider: {"configured": True, "consent": None}})[provider]
+            self.assertTrue(row["read_tested"])
             self.assertTrue(row["sync_tested"])
+            self.assertFalse(row["sync_proof_unverified"])
             self.assertTrue(row["sync_last_success"])
             self.assertFalse(row["reconciled"])
+
+    def test_later_standalone_read_does_not_reuse_earlier_sync_proof(self):
+        self.assertTrue(record_committed_sync("square"))
+        row = self.build({"square": {"configured": True, "consent": None}})["square"]
+        self.assertTrue(row["sync_tested"])
+        record_check("square")
+        row = self.build({"square": {"configured": True, "consent": None}})["square"]
+        self.assertTrue(row["read_tested"])
+        self.assertFalse(row["sync_tested"])
+        self.assertTrue(row["sync_proof_unverified"])
+        self.assertTrue(record_committed_sync("square"))
+        self.assertTrue(self.build({"square": {"configured": True, "consent": None}})
+                        ["square"]["sync_tested"])
 
     def test_legacy_shared_sheet_history_is_not_source_specific_evidence(self):
         # Old history mixed pricing and maintenance and cannot attest either.
@@ -187,8 +203,7 @@ class ReadinessUnitTests(unittest.TestCase):
             self.assertFalse(rows[key]["sync_tested"])
 
     def test_failed_persisted_sync_is_visible_despite_historical_success(self):
-        record_check("square_payments")
-        record_check("square_payments_sync")
+        record_committed_sync("square_payments")
         record_check("square_payments_sync", "Fixture persistence failure")
         row = self.build({
             "square_payments": {"configured": True, "consent": None},
@@ -203,12 +218,11 @@ class ReadinessUnitTests(unittest.TestCase):
         self.assertFalse(row["reconciled"])
 
     def test_recovered_sync_clears_attention_without_erasing_success(self):
-        record_check("gmail")
-        record_check("gmail_sync")
+        record_committed_sync("gmail")
         record_check("gmail_sync", "Fixture database unavailable")
         self.assertTrue(self.build({"gmail": {"configured": True, "consent": True}})
                         ["gmail"]["sync_needs_attention"])
-        record_check("gmail_sync")
+        record_committed_sync("gmail")
         row = self.build({"gmail": {"configured": True, "consent": True}})["gmail"]
         self.assertTrue(row["sync_tested"])
         self.assertFalse(row["sync_needs_attention"])
@@ -249,8 +263,7 @@ class ReadinessUnitTests(unittest.TestCase):
     def test_corrupt_or_future_read_success_fails_closed(self):
         # Persisted health metadata is local evidence, not provider proof.
         from hq_integration_health import _db_path
-        record_check("gmail")
-        record_check("gmail_sync")
+        record_committed_sync("gmail")
         for bad_time in ("not-a-date", "9999-12-31T00:00:00+00:00",
                          "2026-11-19T09:00:00"):
             with sqlite3.connect(_db_path()) as db:
@@ -276,8 +289,7 @@ class ReadinessUnitTests(unittest.TestCase):
 
     def test_corrupt_sync_success_never_counts_as_persisted_sync(self):
         from hq_integration_health import _db_path
-        record_check("square_payments")
-        record_check("square_payments_sync")
+        record_committed_sync("square_payments")
         with sqlite3.connect(_db_path()) as db:
             db.execute("UPDATE integration_checks SET last_success=? "
                        "WHERE provider='square_payments_sync'",
@@ -290,7 +302,7 @@ class ReadinessUnitTests(unittest.TestCase):
         self.assertTrue(row["observation_integrity_issue"])
         self.assertFalse(row["reconciled"])
         self.assertIn("timestamp", row["blocker"])
-        record_check("square_payments_sync")
+        record_committed_sync("square_payments")
         recovered = self.build(signal)["square_payments"]
         self.assertTrue(recovered["sync_tested"])
         self.assertFalse(recovered["observation_integrity_issue"])
