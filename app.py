@@ -840,7 +840,10 @@ def hq_calendar_live_check():
         record_check("calendar", "Calendar read failed")
         app.logger.warning("Read-only Calendar check failed")
         return jsonify(error="Unable to verify Google Calendar availability"), 502
-    record_check("calendar")
+    if not record_check("calendar"):
+        return jsonify(error=("Calendar was read, but HQ could not record the " 
+                              "readiness evidence. Check Integration Health storage; " 
+                              "do not treat this as a verified read.")), 503
     return jsonify(result)
 
 @app.post("/api/materials/calculate")
@@ -1014,7 +1017,10 @@ def hq_maintenance():
         record_check("maintenance_sheets", "Maintenance workbook read failed")
         app.logger.warning("Read-only maintenance Sheets sync failed")
         return jsonify(error="Unable to read existing maintenance sheets"), 502
-    record_check("maintenance_sheets")
+    if not record_check("maintenance_sheets"):
+        return jsonify(error=("Maintenance Sheets was read, but HQ could not record " 
+                              "the readiness evidence. Check Integration Health storage; " 
+                              "do not treat this as a verified read.")), 503
     return jsonify(result)
 
 @app.get("/hq/finance")
@@ -1034,7 +1040,10 @@ def hq_finance_data():
     except Exception:
         record_check("finance", "Finance workbook read failed")
         return jsonify(error="Unable to refresh financial spreadsheet; check connection and permissions"), 502
-    record_check("finance")
+    if not record_check("finance"):
+        return jsonify(error=("Finance Sheets was read, but HQ could not record " 
+                              "the readiness evidence. Check Integration Health storage; " 
+                              "do not treat this as a verified read.")), 503
     return jsonify(result)
 
 @app.get("/api/hq/pricing")
@@ -1049,7 +1058,10 @@ def hq_pricing():
         record_check("pricing_sheets", "Pricing workbook read failed")
         app.logger.warning("Read-only Google Sheets sync failed")
         return jsonify(error="Unable to read HQ spreadsheet. Reconnect Google Sheets and check API permissions."), 502
-    record_check("pricing_sheets")
+    if not record_check("pricing_sheets"):
+        return jsonify(error=("Pricing Sheets was read, but HQ could not record " 
+                              "the readiness evidence. Check Integration Health storage; " 
+                              "do not treat this as a verified read.")), 503
     return jsonify(result)
 
 _gmail_tokens = {}
