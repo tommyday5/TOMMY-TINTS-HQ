@@ -128,11 +128,11 @@ class ReadinessUnitTests(unittest.TestCase):
                          "Fixture maintenance read failed")
 
     def test_source_reads_not_committed_syncs(self):
-        for provider in ("sheets", "finance", "calendar", "square_payments"):
+        for provider in ("pricing_sheets", "maintenance_sheets", "finance", "calendar", "square_payments"):
             record_check(provider)
         rows = self.build({key: {"configured": True, "consent": True}
                            for key in ("sheets", "maintenance_sheets", "finance", "calendar")})
-        for key in ("sheets", "finance", "calendar", "square_payments"):
+        for key in ("sheets", "maintenance_sheets", "finance", "calendar", "square_payments"):
             self.assertTrue(rows[key]["read_tested"])
             self.assertFalse(rows[key]["sync_tested"])
 
