@@ -104,9 +104,8 @@ def build_readiness(health, signals):
         # Read-confirmed authorisation is historical and provider-specific.
         # Token-only providers cannot claim it from secret configuration.
         # A saved OAuth grant without a recorded successful read stays unknown.
-        authorised = (bool(read_tested) if consent_present is True
-                      and history_available else
-                      False if consent_present is False else None)
+        authorised = (True if consent_present is True and read_tested is True
+                      else False if consent_present is False else None)
         # Historical upstream reads cannot establish that storage committed.
         # New explicit markers are recorded only after each import/snapshot
         # operation returns successfully; legacy records remain unverified.
