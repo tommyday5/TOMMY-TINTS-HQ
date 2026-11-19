@@ -4,7 +4,7 @@ Never infer a provider's permission, read result, bank cash or reconciliation
 from the existence of adapter code or a configured secret. The status page
 does not invoke provider APIs or create local databases.
 """
-from datetime import datetime, timedelta, timezone
+from hq_integration_health import valid_observation_time as _observation_time
 
 # Keys match integration_health provider evidence, not marketing product names.
 PROFILES = (
@@ -69,25 +69,6 @@ def _stage(value):
     return "Unverified"
 
 
-def _observation_time(value):
-    """Validate local health timestamps; this is NOT upstream provenance.
-
-    A non-empty malformed or future-dated database value must never satisfy
-    a read/sync stage. Allow modest UTC clock skew, not arbitrary future proof.
-    """
-    if not isinstance(value, str) or not 10 <= len(value) <= 40:
-        return None
-    try:
-        observed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        if observed.tzinfo is None or observed.utcoffset() is None:
-            return None
-        if observed.astimezone(timezone.utc) > datetime.now(timezone.utc) + timedelta(minutes=5):
-            return None
-    except (ValueError, OverflowError):
-        return None
-    return value
-
-
 def build_readiness(health, signals):
     """Create a conservative, owner-scoped snapshot from already-read evidence.
 
@@ -120,7 +101,8 @@ def build_readiness(health, signals):
             consent_present = None
         raw_success = previous.get("last_success") if history_available else None
         success = _observation_time(raw_success)
-        read_evidence_invalid = raw_success is not None and success is None
+        read_evidence_invalid = (previous.get("observation_invalid") is True
+                                 or raw_success is not None and success is None)
         last_error = previous.get("last_error") if history_available else None
         read_tested = bool(success) if history_available else None
         # Read-confirmed authorisation is historical and provider-specific.
