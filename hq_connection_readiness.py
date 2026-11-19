@@ -12,6 +12,11 @@ PROFILES = (
      "setup": "Configure Google read-only OAuth or HQ_GOOGLE_SERVICE_ACCOUNT_JSON on Railway; grant workbook access.",
      "read": "Connect Google Sheets in HQ, then open Jobs and load the workbook read-only.",
      "reconcile": "Verify job and cost-library mappings against the actual workbook; do not assume its values are bank receipts."},
+    {"key": "maintenance_sheets", "name": "Google Sheets maintenance data", "implemented": True,
+     "persisted_read": False,
+     "setup": "Configure owner Google Sheets read-only access and verify maintenance workbook permissions.",
+     "read": "Open the private Maintenance page and manually read the maintenance workbook.",
+     "reconcile": "Verify actual customer/visit IDs, service dates and package balances against the source; no route or booking is confirmed."},
     {"key": "finance", "name": "Google Sheets finance", "implemented": True,
      "persisted_read": False,
      "setup": "Configure Google OAuth or the read-only Sheets service account and access to the actual finance workbook.",
@@ -72,7 +77,8 @@ def build_readiness(health, signals):
     """
     by_name = {entry["name"]: entry for entry in health.get("integrations", [])}
     old_names = {
-        "sheets": "Google Sheets", "finance": "Sheets finance",
+        "sheets": "Google Sheets", "maintenance_sheets": "Maintenance Sheets",
+        "finance": "Sheets finance",
         "gmail": "Gmail", "calendar": "Google Calendar",
         "square": "Square", "square_payments": "Square payments",
     }
