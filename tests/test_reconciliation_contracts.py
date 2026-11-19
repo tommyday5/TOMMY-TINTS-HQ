@@ -115,8 +115,8 @@ class MonzoContractTests(unittest.TestCase):
             dict(original, events=(first, {"provider": "monzo"})),
             dict(original, events=(first,) * 5001),
         )
-        for modified in alterations:
-            with self.subTest(modification=str(modified)[:80]), self.assertRaises(ContractError):
+        for case, modified in enumerate(alterations):
+            with self.subTest(case=case), self.assertRaises(ContractError):
                 preview_bank_rollforward(modified, opening_pence=100, closing_pence=11930)
 
 
@@ -187,8 +187,8 @@ class DnaContractTests(unittest.TestCase):
             dict(original, events=({**event, "event_id": "evt/invalid"},)),
             dict(original, events=(event,) * 5001),
         )
-        for modified in alterations:
-            with self.subTest(modification=str(modified)[:80]), self.assertRaises(ContractError):
+        for case, modified in enumerate(alterations):
+            with self.subTest(case=case), self.assertRaises(ContractError):
                 preview_processor_batches(modified)
 
 
