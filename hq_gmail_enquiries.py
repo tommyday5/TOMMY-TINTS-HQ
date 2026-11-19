@@ -71,6 +71,10 @@ def verify_mailbox(token):
         raise ValueError("Select the Tommy Tints business mailbox")
 
 
+class EnquiryLabelError(RuntimeError):
+    """Required owner-managed sales labels cannot safely be resolved."""
+
+
 def _resolve_sales_label_ids(token):
     """Resolve user-label names to provider IDs for a fresh, per-message check.
 
@@ -91,10 +95,10 @@ def _resolve_sales_label_ids(token):
             continue
         ref = item.get("id")
         if name in names or not isinstance(ref, str) or not ID.fullmatch(ref):
-            raise RuntimeError("Business Gmail labels are ambiguous or invalid")
+            raise EnquiryLabelError("Business Gmail labels are ambiguous or invalid")
         names[name] = ref
     if "HQ-Enquiries" not in names or len(set(names.values())) != len(names):
-        raise RuntimeError("Business Gmail enquiry label is missing or ambiguous")
+        raise EnquiryLabelError("Business Gmail enquiry label is missing or ambiguous")
     return names
 
 
@@ -220,3 +224,22 @@ def profile_error_diagnostic(exc):
     if project and code == 'api_disabled':
         action += ' Google identifies consumer project ' + project + '. Open https://console.cloud.google.com/apis/library/gmail.googleapis.com?project=' + project
     return 'Gmail profile HTTP ' + str(status or 'unknown') + ' [' + code + ']', action
+
+
+def import_error_diagnostic(exc):
+    """Return fixed actionable import diagnostics without mailbox content."""
+    if isinstance(exc, EnquiryLabelError):
+        return ("Gmail enquiry label setup required",
+                "Gmail connected, but the HQ-Enquiries label is missing or ambiguous. "
+                "In the business Gmail account, create a label named exactly HQ-Enquiries "
+                "and apply it only to genuine customer enquiries in the Inbox. "
+                "Keep legal/debt mail under HQ-Legal or HQ-Debt. HQ has not created "
+                "or changed any Gmail labels. Then retry Import latest page.")
+    if isinstance(exc, requests.HTTPError):
+        diagnostic, action = profile_error_diagnostic(exc)
+        return diagnostic.replace("Gmail profile HTTP", "Gmail import HTTP"), action
+    if isinstance(exc, (requests.Timeout, requests.ConnectionError)):
+        return "Gmail import network unavailable", "Gmail could not be reached. Retry the import later; existing enquiries are preserved."
+    if isinstance(exc, ValueError):
+        return "Gmail import mailbox or response invalid", "Gmail mailbox or response verification failed. Reconnect using the business mailbox."
+    return "Read-only Gmail import failed", "Gmail import failed during response validation. Existing enquiries are preserved. Check Integration Health and contact support if it persists."
