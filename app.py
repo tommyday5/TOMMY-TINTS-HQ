@@ -32,6 +32,7 @@ from hq_payment_review import payment_review
 from hq_transaction_preview import transaction_preview
 from hq_integration_health import PersistedSyncError, integration_status, record_check
 from hq_connection_readiness import build_readiness
+from hq_workflow_readiness import build_workflow_readiness
 from hq_version import ICON_VERSION, UPDATE_SCRIPT_VERSION, build_version
 from hq_commerce import commerce
 from customer_edits import customer_edits
@@ -1261,6 +1262,10 @@ def _hq_integrations():
         "maps": {"configured": bool(os.environ.get("HQ_GOOGLE_MAPS_BROWSER_KEY")
                                     and os.environ.get("HQ_GOOGLE_MAPS_API_KEY")), "consent": None},
     })
+    # Internal products use a distinct evidence register: no provider reads,
+    # accounts, receipts or booking success inferred from code/storage presence.
+    health["workflow_readiness"] = build_workflow_readiness(
+        persistent_storage_configured=storage_ready())
     return health
 
 @app.get("/api/hq/integrations")
@@ -1309,7 +1314,17 @@ th{color:#ced8e4}td:first-child{font-weight:650}small{color:#adbbc9}
 <h2>{{ item.name }}</h2><dl><dt>Exact outstanding blocker</dt><dd>{{ item.blocker }}</dd>
 <dt>Next safe owner / engineering action</dt><dd>{{ item.next_safe_action }}</dd>
 </dl></article>{% endfor %}</section>
-<p><small>Owner-only connection readiness; not a bank-reconciled ledger or permission to send, book, charge, or modify live records.</small></p>
+<h2>Internal workflow readiness</h2>
+<p>These are code and declared-storage observations only. No live customer transaction, approved payment, private tier entitlement or successful provider synchronisation is inferred. Storage path configured does not mean writable, encrypted, backed up or restored.</p>
+<div class="readiness-scroll"><table><thead><tr><th>Workstream</th><th>Implementation</th><th>Storage configuration</th><th>Current live evidence</th><th>Reconciliation</th></tr></thead>
+<tbody>{% for item in health.workflow_readiness %}<tr><td>{{ item.name }}</td><td>{{ item.stages.implemented }}</td>
+<td>{{ item.stages.configured }}</td><td>{{ item.stages.read_tested }} / {{ item.stages.sync_tested }}</td>
+<td>{{ item.stages.reconciled }}</td></tr>{% endfor %}</tbody></table></div>
+<section>{% for item in health.workflow_readiness %}<article><h2>{{ item.name }}</h2>
+<dl><dt>Current code state</dt><dd>{{ item.code_status }}</dd>
+<dt>Exact blocker</dt><dd>{{ item.blocker }}</dd>
+<dt>Next safe action</dt><dd>{{ item.next_safe_action }}</dd></dl></article>{% endfor %}</section>
+<p><small>Owner-only readiness; not a bank-reconciled ledger or permission to send, book, charge, or modify live records.</small></p>
 </main></body></html>""", health=_hq_integrations()), 200, {"Cache-Control": "no-store"}
 
 def _assistant_csrf_valid():
