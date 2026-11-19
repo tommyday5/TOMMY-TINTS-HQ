@@ -47,3 +47,26 @@ class GmailConnectionRepairTests(unittest.TestCase):
    r=self.c.get('/hq/gmail-setup');self.assertEqual(r.status_code,200);self.assertIn(b'123-publicid.apps.googleusercontent.com',r.data);self.assertNotIn(b'never-show-secret',r.data);self.assertEqual(r.headers['Cache-Control'],'no-store')
   with self.c.session_transaction() as session:session.clear()
   self.assertEqual(self.c.get('/hq/gmail-setup').status_code,302)
+
+ def test_import_failure_actions_are_redacted_and_owner_only(self):
+  cases=[(gmail.EnquiryLabelError('secret-mailbox-content'),409,b'HQ-Enquiries'),
+         (failure(403,{'error':{'errors':[{'reason':'insufficientPermissions'}],'message':'secret-mailbox-content'}}),502,b'grant gmail.readonly'),
+         (requests.Timeout('secret-mailbox-content'),502,b'could not be reached'),
+         (RuntimeError('secret-mailbox-content'),502,b'response validation')]
+  for error,status,expected in cases:
+   with self.c.session_transaction() as s:s['csrf']='synthetic-csrf'
+   with patch('app._gmail_token',return_value='synthetic'),patch('app.gmail.import_page',side_effect=error),patch('app.record_check') as record:
+    r=self.c.post('/hq/gmail-enquiries',data={'csrf':'synthetic-csrf'})
+   self.assertEqual(r.status_code,status);self.assertIn(expected,r.data)
+   self.assertNotIn(b'secret-mailbox-content',r.data)
+   self.assertNotIn('secret-mailbox-content',str(record.call_args))
+   self.assertEqual(r.headers['Cache-Control'],'no-store')
+  with self.c.session_transaction() as s:s.clear();s['customer_id']='retail'
+  with patch('app.gmail.import_page') as importer:
+   self.assertEqual(self.c.post('/hq/gmail-enquiries').status_code,302)
+   importer.assert_not_called()
+
+ def test_missing_label_never_reads_messages_or_changes_labels(self):
+  with patch.object(gmail,'storage_ready',return_value=True),patch.object(gmail,'_get',side_effect=[{'emailAddress':gmail.MAILBOX},{'labels':[]}]) as api:
+   with self.assertRaises(gmail.EnquiryLabelError):gmail.import_page('synthetic')
+  self.assertEqual([call.args[1] for call in api.call_args_list],['/profile','/labels'])

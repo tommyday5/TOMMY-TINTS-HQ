@@ -1172,9 +1172,10 @@ def hq_gmail_queue():
         except PersistedSyncError:
             record_check("gmail_sync", "Gmail enquiry storage commit failed")
             return "Gmail enquiry storage unavailable. Check Integration Health.", 503
-        except Exception:
-            record_check("gmail", "Read-only Gmail import failed")
-            return "Gmail import failed. Check Integration Health.", 502
+        except Exception as exc:
+            diagnostic, action = gmail.import_error_diagnostic(exc)
+            record_check("gmail", diagnostic)
+            return action, 409 if isinstance(exc, gmail.EnquiryLabelError) else 502
         # Provider queue commit and readiness evidence are separate writes.
         # A successful import cannot be presented as a verified sync if its
         # observation transaction failed; do not replay the provider import.
