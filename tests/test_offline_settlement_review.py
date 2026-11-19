@@ -303,5 +303,61 @@ class OfflineSettlementReviewTests(unittest.TestCase):
         self.assertFalse(resumed["reconciled"])
 
 
+    def test_guarded_history_detects_rollback_of_unrelated_pair(self):
+        # The target review is intact in the old SQLite backup, so its local
+        # event HMAC alone cannot reveal a later review was lost.
+        self.record()
+        backup = Path(self.tmp.name) / "history-before-second-pair.sqlite3"
+        with sqlite3.connect(self.path) as source, sqlite3.connect(backup) as dest:
+            source.backup(dest)
+        self.ledger.record(
+            bank(account="another-bank"), dna(merchant="another-merchant"),
+            batch_id="batch-A", transaction_id="bank-1",
+            decision="candidate", reason="initial_review",
+            actor_ref="owner-1", request_id="other-pair", expected_revision=0)
+        trusted = self.ledger.export_anchor()
+        self.assertEqual(trusted["events_checked"], 2)
+        self.assertEqual(len(self.ledger.history(
+            self.b, self.d, batch_id="batch-A", transaction_id="bank-1",
+            trusted_anchor=trusted)["reviews"]), 1)
+        shutil.copyfile(backup, self.path)
+        # An unguarded read is backward compatible, but does not establish
+        # the independently retained history's completeness.
+        self.assertEqual(len(self.ledger.history(
+            self.b, self.d, batch_id="batch-A",
+            transaction_id="bank-1")["reviews"]), 1)
+        with self.assertRaisesRegex(ContractError, "rollback"):
+            self.ledger.history(
+                self.b, self.d, batch_id="batch-A",
+                transaction_id="bank-1", trusted_anchor=trusted)
+
+    def test_guarded_history_accepts_valid_prefix_and_rejects_bad_anchor(self):
+        self.record()
+        first = self.ledger.export_anchor()
+        self.record(decision="investigate", reason="operator_correction",
+                    request_id="request-2", expected_revision=1)
+        history = self.ledger.history(
+            self.b, self.d, batch_id="batch-A", transaction_id="bank-1",
+            trusted_anchor=first)
+        self.assertEqual([item["decision"] for item in history["reviews"]],
+                         ["candidate", "investigate"])
+        self.assertFalse(history["reconciled"])
+        for invalid in (
+            {"format": "offline-settlement-head-v1"},
+            {**first, "head_hmac": "0" * 64},
+            {**first, "events_checked": True},
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(ContractError):
+                self.ledger.history(
+                    self.b, self.d, batch_id="batch-A",
+                    transaction_id="bank-1", trusted_anchor=invalid)
+        wrong_key = OfflineSettlementReviewLedger(
+            self.path, hmac_key=b"different-audit-secret-must-be-at-least-32-bytes")
+        with self.assertRaises(ContractError):
+            wrong_key.history(
+                self.b, self.d, batch_id="batch-A",
+                transaction_id="bank-1", trusted_anchor=first)
+
+
 if __name__ == "__main__":
     unittest.main()
