@@ -16,7 +16,7 @@ from flask import Blueprint, abort, jsonify, render_template_string, request, se
 
 from customer_request_store import storage_ready
 from hq_auth import required
-from hq_integration_health import PersistedSyncError, record_check
+from hq_integration_health import PersistedSyncError, record_check, record_committed_sync
 
 payment_evidence = Blueprint("payment_evidence", __name__)
 _API = "https://connect.squareup.com/v2/payments"
@@ -243,9 +243,8 @@ def payment_page():
             record_check("square_payments", "Square payment read failed")
             error = "Unable to refresh payment evidence. Check read-only Square access and PAYMENTS_READ permission."
         else:
-            record_check("square_payments")
-            # The atomic payment snapshot has committed, not a bank receipt.
-            record_check("square_payments_sync")
+            # The payment snapshot has committed, not a bank receipt.
+            record_committed_sync("square_payments")
     try:
         data = read_snapshot()
     except (OSError, sqlite3.Error, ValueError):
