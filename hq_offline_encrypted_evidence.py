@@ -280,14 +280,30 @@ class OfflineEncryptedEvidenceStore:
         except sqlite3.Error:
             raise ContractError("Fixture evidence database write failed") from None
 
-    def load(self, *, owner_ref, source_ref, provider, request_id):
-        """Owner/source-scoped fixture read. Caller still must authenticate."""
+    def load(self, *, owner_ref, source_ref, provider, request_id,
+             trusted_checkpoint=None):
+        """Read a scoped fixture, optionally validating independent audit custody.
+
+        The caller must authenticate the owner AND independently retain the
+        checkpoint; a locally regenerated head cannot detect a restored DB.
+        When supplied, verify the full trusted history in the same SQLite
+        read transaction as the target row. This is not live bank evidence.
+        """
         scope, request = self._keys(owner_ref, source_ref, provider, request_id)
         try:
             with closing(sqlite3.connect(
                     "file:" + str(Path(self._path).resolve()) + "?mode=ro",
                     uri=True, timeout=5)) as db:
                 db.row_factory = sqlite3.Row
+                # Freeze both the checkpoint history and the target row in a
+                # single read snapshot; concurrent staging cannot change the
+                # interpretation between the two SELECT operations.
+                db.execute("BEGIN")
+                if trusted_checkpoint is not None:
+                    rows = db.execute(
+                        "SELECT * FROM offline_encrypted_evidence ORDER BY seq"
+                    ).fetchall()
+                    self._verify_checkpoint_rows(rows, trusted_checkpoint)
                 row = db.execute(
                     "SELECT * FROM offline_encrypted_evidence WHERE request_key=?",
                     (request,)).fetchone()
