@@ -174,6 +174,67 @@ class OfflineClassificationLedger:
             raise ContractError(
                 "Offline review audit integrity could not be verified") from None
 
+
+    def _detached_anchor(self, db):
+        """HMAC the complete ordered synthetic audit table, not just its last row.
+
+        A detached anchor detects rollback only when a previously exported
+        value has actually been retained in an independent trusted location.
+        Never store the only anchor beside the SQLite database.
+        """
+        self._verify(db)
+        rows = db.execute("""SELECT seq, request_key, payload_key, scope_key,
+            evidence_key, source_key, revision, category, reason, actor_key,
+            recorded_at, signature_version, event_key
+            FROM offline_review_events ORDER BY seq ASC""").fetchall()
+        return {
+            "format": "offline-classification-head-v1",
+            "events_checked": len(rows),
+            "head_hmac": self._digest("detached-review-head-v1", rows),
+        }
+
+    def export_anchor(self):
+        """Return a detached synthetic audit anchor; DOES NOT store it anywhere.
+
+        Callers must retain this outside the database and protect the HMAC
+        key independently. Exporting a new head after a suspected rollback
+        would destroy its ability to detect the rollback.
+        """
+        try:
+            with sqlite3.connect(self._path, timeout=5) as db:
+                db.execute("BEGIN")
+                return self._detached_anchor(db)
+        except sqlite3.Error:
+            raise ContractError(
+                "Offline audit anchor could not be exported") from None
+
+    def verify_anchor(self, expected_anchor):
+        """Fail closed if the entire current audit differs from a trusted head.
+
+        This is not automatic rollback protection: only an independently
+        retained, trusted *previous* anchor gives this comparison meaning.
+        No real funds, source provenance or production backup are verified.
+        """
+        if (not isinstance(expected_anchor, dict)
+                or set(expected_anchor) != {"format", "events_checked", "head_hmac"}
+                or expected_anchor["format"] != "offline-classification-head-v1"
+                or type(expected_anchor["events_checked"]) is not int
+                or expected_anchor["events_checked"] < 0
+                or not isinstance(expected_anchor["head_hmac"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", expected_anchor["head_hmac"])):
+            raise ContractError("A valid independently retained audit head is required")
+        current = self.export_anchor()
+        if (expected_anchor["events_checked"] != current["events_checked"]
+                or not hmac.compare_digest(
+                    expected_anchor["head_hmac"], current["head_hmac"])):
+            raise ContractError("Detached audit head mismatch: rollback or change detected")
+        return {
+            "anchor_matches": True,
+            "events_checked": current["events_checked"],
+            "offline_fixture_only": True,
+            **self._flags(),
+        }
+
     def record(self, bank_preview, *, transaction_id, category, actor_ref,
                request_id, expected_revision, reason):
         """Record one explicitly proposed classification, atomically.
