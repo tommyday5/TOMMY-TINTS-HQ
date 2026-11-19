@@ -256,9 +256,45 @@ class ReadinessHttpTests(unittest.TestCase):
             remote.assert_not_called()
         for provider in ("sheets", "finance", "calendar", "gmail"):
             row = rows[provider]
-            self.assertTrue(row["authorised"])  # saved grant only; not live permission
+            self.assertTrue(row["consent_present"])  # local grant, not live permission
+            self.assertIsNone(row["authorised"])
+            self.assertIsNone(row["authorisation_verified_at"])
+            self.assertIn("permission unverified", row["stages"]["authorised"])
             self.assertFalse(row["read_tested"])
             self.assertFalse(row["reconciled"])
+
+    def test_grant_requires_a_source_specific_read_before_authorised_stage(self):
+        from hq_google_connections import save_connection
+        with self.client.session_transaction() as session:
+            session["google_sub"] = "test-owner"
+        self.assertTrue(save_connection("gmail", "test-owner", {
+            "access_token": "expired-private-token", "refresh_token": "private-refresh",
+            "expires_in": 0,
+        }))
+        def get_rows():
+            return {r["key"]: r for r in self.client.get(
+                "/api/hq/integrations").json["readiness"]}
+        rows = get_rows()
+        self.assertTrue(rows["gmail"]["consent_present"])
+        self.assertIsNone(rows["gmail"]["authorised"])
+        self.assertIsNone(rows["gmail"]["authorisation_verified_at"])
+        self.assertFalse(rows["gmail"]["read_tested"])
+        # A pricing workbook read does not verify Gmail's permission.
+        record_check("pricing_sheets")
+        self.assertIsNone(get_rows()["gmail"]["authorised"])
+        # A recorded Gmail read confirms only historical authorisation.
+        record_check("gmail")
+        gmail = get_rows()["gmail"]
+        self.assertTrue(gmail["authorised"])
+        self.assertEqual(gmail["authorisation_verified_at"], gmail["last_success"])
+        self.assertIn("historically read-confirmed", gmail["stages"]["authorised"].lower())
+        self.assertFalse(gmail["reconciled"])
+        record_check("gmail", "Gmail read could not be verified")
+        gmail = get_rows()["gmail"]
+        self.assertTrue(gmail["authorised"])  # prior historical read still exists
+        self.assertIn("Gmail read could not be verified", gmail["blocker"])
+        self.assertTrue(gmail["read_tested"])
+        self.assertFalse(gmail["reconciled"])
 
     def test_stored_consent_is_owner_scoped_and_corruption_fails_closed(self):
         from hq_google_connections import save_connection, stored_grant_present
