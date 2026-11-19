@@ -217,11 +217,24 @@ class OfflineSettlementReviewLedger:
                 (*fields, self._h("event-v1", *fields)))
         return {"revision": revision, "idempotent_replay": False, **_unverified()}
 
-    def history(self, bank_preview, dna_preview, *, batch_id, transaction_id):
+    def history(self, bank_preview, dna_preview, *, batch_id, transaction_id,
+                trusted_anchor=None):
+        """Read synthetic review history against an optional retained audit head.
+
+        The anchor must come from independent custody. Verify its signed
+        historical prefix and the requested reviews in the SAME SQLite read
+        transaction, so concurrent writes cannot change the checked snapshot.
+        An unguarded history read cannot detect restoration of an intact old DB.
+        """
+        if trusted_anchor is not None:
+            _require_detached_anchor(trusted_anchor)
         pair, _, _, source, _ = self._source(
             bank_preview, dna_preview, batch_id, transaction_id)
         with sqlite3.connect(self._path, timeout=5) as db:
-            self._verify(db)
+            db.execute("BEGIN")
+            audit_rows, _, _, _ = self._verify(db)
+            if trusted_anchor is not None:
+                self._check_trusted_prefix(trusted_anchor, audit_rows)
             rows = db.execute("""SELECT revision, decision, reason, recorded_at, source_key
                 FROM offline_settlement_reviews WHERE pair_key=?
                 ORDER BY revision""", (pair,)).fetchall()
