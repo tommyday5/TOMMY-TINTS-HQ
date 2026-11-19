@@ -144,5 +144,44 @@ class OfflineSettlementPairTests(unittest.TestCase):
             preview_explicit_settlement_pairs(b, dict(p, source_mapping_verified=True), {})
 
 
+    def test_bank_before_latest_processor_event_requires_investigation(self):
+        # All values match in pence, but an alleged settlement cannot predate
+        # a processor event that is included in its proposed payout batch.
+        early_bank = normalise_monzo_rows([{
+            "transaction_id": "bank-early", "amount_pence": 7850,
+            "currency": "GBP", "booked_at": "2026-11-18T10:00:00Z",
+        }], account_ref="fixture-bank")
+        late_event_batch = normalise_dna_rows([
+            {"event_id": "evt-payment", "payment_id": "pay-1",
+             "kind": "payment", "gross_pence": 10000, "fee_pence": 120,
+             "net_pence": 9880, "currency": "GBP",
+             "occurred_at": "2026-11-18T09:00:00Z", "batch_id": "batch-A"},
+            {"event_id": "evt-refund", "payment_id": "pay-1",
+             "kind": "refund", "gross_pence": -2000, "fee_pence": 30,
+             "net_pence": -2030, "currency": "GBP",
+             "occurred_at": "2026-11-18T11:00:00Z", "batch_id": "batch-A"},
+        ], merchant_ref="fixture-merchant")
+        review = preview_explicit_settlement_pairs(
+            early_bank, late_event_batch, {"batch-A": "bank-early"})
+        self.assertEqual(review["chronology_conflicts"], 1)
+        self.assertEqual(review["amount_equal_but_chronology_conflicts"], 1)
+        self.assertEqual(review["amount_equal_candidates"], 0)
+        self.assertEqual(review["credit_amount_equal_candidates"], 0)
+        self.assertEqual(review["amount_mismatches"], 0)
+        self.assertFalse(review["bank_settlement_verified"])
+        self.assertNotIn("bank-early", str(review))
+        # Later postings are eligible for amount-only candidacy, not verified.
+        late_bank = normalise_monzo_rows([{
+            "transaction_id": "bank-late", "amount_pence": 7850,
+            "currency": "GBP", "booked_at": "2026-11-18T11:00:00Z",
+        }], account_ref="fixture-bank")
+        later = preview_explicit_settlement_pairs(
+            late_bank, late_event_batch, {"batch-A": "bank-late"})
+        self.assertEqual(later["chronology_conflicts"], 0)
+        self.assertEqual(later["amount_equal_candidates"], 1)
+        self.assertFalse(later["reconciled"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
