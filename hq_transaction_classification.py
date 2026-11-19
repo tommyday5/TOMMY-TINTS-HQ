@@ -6,7 +6,7 @@ Only canonical, already-mapped Monzo preview rows may be passed here.
 """
 from collections import Counter
 
-from hq_reconciliation_contracts import ContractError
+from hq_reconciliation_contracts import ContractError, _validated_monzo_events
 
 
 # Deliberately exclude a "verified revenue", "paid" or "settled" label.
@@ -35,8 +35,12 @@ def preview_manual_classifications(bank_preview, proposals=None):
     """
     if not isinstance(bank_preview, dict) or bank_preview.get("provider") != "monzo":
         raise ContractError("Classification review requires canonical Monzo preview")
-    events = bank_preview.get("events")
-    if not isinstance(events, tuple) or len(events) > 500:
+    # A canonical preview is mutable after normalization. Check the original
+    # checksum, source-evidence flags, exact amounts and every event again
+    # before accepting labels: valid-looking changed credits are not evidence.
+    # This is a local tamper guard, NOT independent proof from Monzo.
+    events = _validated_monzo_events(bank_preview)
+    if len(events) > 500:
         raise ContractError("Invalid or unbounded canonical bank preview")
     if proposals is None:
         proposals = {}
