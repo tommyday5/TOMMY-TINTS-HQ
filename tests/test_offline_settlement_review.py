@@ -216,6 +216,23 @@ class OfflineSettlementReviewTests(unittest.TestCase):
             OfflineSettlementReviewLedger(self.path, hmac_key=b"short")
 
 
+    def test_audit_candidate_rejects_subsecond_bank_before_processor_event(self):
+        self.b = normalise_monzo_rows([{
+            "transaction_id": "bank-1", "amount_pence": 9880,
+            "currency": "GBP", "booked_at": "2026-11-18T10:00:00.100Z",
+        }], account_ref="fixture-bank")
+        self.d = normalise_dna_rows([{
+            "event_id": "evt-1", "payment_id": "payment-1",
+            "kind": "payment", "gross_pence": 10000,
+            "fee_pence": 120, "net_pence": 9880, "currency": "GBP",
+            "occurred_at": "2026-11-18T10:00:00.900Z",
+            "batch_id": "batch-A",
+        }], merchant_ref="fixture-merchant")
+        with self.assertRaisesRegex(ContractError, "mismatched"):
+            self.record()
+        self.assertEqual(self.record(decision="investigate")["revision"], 1)
+        self.assertEqual(self.ledger.verify_integrity()["events_checked"], 1)
+
     def test_candidate_rejects_impossible_payout_posting_but_allows_investigation(self):
         self.b = normalise_monzo_rows([{
             "transaction_id": "bank-1", "amount_pence": 9880,
