@@ -216,5 +216,93 @@ class OfflineEncryptedEvidenceTests(unittest.TestCase):
         # audit anchors and independently verified production restores remain mandatory.
 
 
+    def test_detached_checkpoint_allows_append_only_growth_and_guarded_replay(self):
+        self.store.stage(
+            monzo(), owner_ref="fixture-owner", source_ref="fixture-account",
+            request_id="first")
+        trusted = self.store.checkpoint()
+        self.assertEqual(trusted["entries"], 1)
+        self.assertEqual(len(trusted["head"]), 64)
+        self.assertNotIn(b"fixture-account", str(trusted).encode())
+        self.store.stage(
+            dna(), owner_ref="fixture-owner", source_ref="fixture-merchant",
+            request_id="second", trusted_checkpoint=trusted)
+        self.assertEqual(self.store.checkpoint(
+            trusted_checkpoint=trusted)["entries"], 2)
+        replay = self.store.stage(
+            monzo(), owner_ref="fixture-owner", source_ref="fixture-account",
+            request_id="first", trusted_checkpoint=trusted)
+        self.assertTrue(replay["idempotent_replay"])
+
+    def test_detached_checkpoint_blocks_older_database_and_new_writes(self):
+        backup = self.path.parent / "older.sqlite3"
+        self.store.stage(
+            monzo(), owner_ref="fixture-owner", source_ref="fixture-account",
+            request_id="first")
+        with sqlite3.connect(self.path) as source, sqlite3.connect(backup) as target:
+            source.backup(target)
+        self.store.stage(
+            dna(), owner_ref="fixture-owner", source_ref="fixture-merchant",
+            request_id="second")
+        trusted = self.store.checkpoint()
+        restored = OfflineEncryptedEvidenceStore(
+            backup, encryption_key=self.aes_key, audit_key=self.audit_key)
+        with self.assertRaisesRegex(ContractError, "rollback"):
+            restored.checkpoint(trusted_checkpoint=trusted)
+        with self.assertRaisesRegex(ContractError, "rollback"):
+            restored.stage(
+                monzo(), owner_ref="fixture-owner", source_ref="fixture-account",
+                request_id="first", trusted_checkpoint=trusted)
+        with sqlite3.connect(backup) as db:
+            self.assertEqual(
+                db.execute("SELECT count(*) FROM offline_encrypted_evidence"
+                           ).fetchone()[0], 1)
+
+    def test_detached_checkpoint_rejects_old_row_edits_and_deletion(self):
+        for modification in (
+            "UPDATE offline_encrypted_evidence SET recorded_at='2020-01-01T00:00:00Z' WHERE seq=1",
+            "DELETE FROM offline_encrypted_evidence WHERE seq=1",
+        ):
+            path = self.path.parent / ("case-" + str(len(list(self.path.parent.iterdir()))) + ".sqlite3")
+            store = OfflineEncryptedEvidenceStore(
+                path, encryption_key=self.aes_key, audit_key=self.audit_key)
+            store.stage(
+                monzo(), owner_ref="fixture-owner", source_ref="fixture-account",
+                request_id="first")
+            store.stage(
+                dna(), owner_ref="fixture-owner", source_ref="fixture-merchant",
+                request_id="second")
+            trusted = store.checkpoint()
+            with sqlite3.connect(path) as db:
+                db.execute(modification)
+            with self.assertRaisesRegex(ContractError, "checkpoint"):
+                store.checkpoint(trusted_checkpoint=trusted)
+            with self.assertRaises(ContractError):
+                store.stage(
+                    dna(), owner_ref="fixture-owner", source_ref="fixture-merchant",
+                    request_id="second", trusted_checkpoint=trusted)
+
+    def test_detached_checkpoint_malformed_or_wrong_key_fails_closed(self):
+        self.store.stage(
+            monzo(), owner_ref="fixture-owner", source_ref="fixture-account",
+            request_id="first")
+        trusted = self.store.checkpoint()
+        cases = [
+            {**trusted, "entries": True},
+            {**trusted, "entries": -1},
+            {**trusted, "head": "0" * 64},
+            {**trusted, "head": trusted["head"].upper()},
+            {**trusted, "provider": "monzo"},
+        ]
+        for anchor in cases:
+            with self.subTest(anchor=anchor), self.assertRaises(ContractError):
+                self.store.checkpoint(trusted_checkpoint=anchor)
+        other = OfflineEncryptedEvidenceStore(
+            self.path, encryption_key=self.aes_key,
+            audit_key=bytes.fromhex("ef" * 32))
+        with self.assertRaisesRegex(ContractError, "checkpoint"):
+            other.checkpoint(trusted_checkpoint=trusted)
+
+
 if __name__ == "__main__":
     unittest.main()
