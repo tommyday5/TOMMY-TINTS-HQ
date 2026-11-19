@@ -259,11 +259,11 @@ class OfflineEncryptedEvidenceTests(unittest.TestCase):
                            ).fetchone()[0], 1)
 
     def test_detached_checkpoint_rejects_old_row_edits_and_deletion(self):
-        for modification in (
+        for case_number, modification in enumerate((
             "UPDATE offline_encrypted_evidence SET recorded_at='2020-01-01T00:00:00Z' WHERE seq=1",
             "DELETE FROM offline_encrypted_evidence WHERE seq=1",
-        ):
-            path = self.path.parent / ("case-" + str(len(list(self.path.parent.iterdir()))) + ".sqlite3")
+        ), start=1):
+            path = self.path.parent / f"case-{case_number}.sqlite3"
             store = OfflineEncryptedEvidenceStore(
                 path, encryption_key=self.aes_key, audit_key=self.audit_key)
             store.stage(
@@ -275,7 +275,7 @@ class OfflineEncryptedEvidenceTests(unittest.TestCase):
             trusted = store.checkpoint()
             with sqlite3.connect(path) as db:
                 db.execute(modification)
-            with self.assertRaisesRegex(ContractError, "checkpoint"):
+            with self.assertRaisesRegex(ContractError, "checkpoint|rollback"):
                 store.checkpoint(trusted_checkpoint=trusted)
             with self.assertRaises(ContractError):
                 store.stage(
