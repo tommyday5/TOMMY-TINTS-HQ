@@ -92,12 +92,20 @@ def build_readiness(health, signals):
         configured = bool(signal.get("configured")) if implemented else False
         # OAuth grant presence is separate from the result of an API call.
         # API key presence is NOT proof of provider authorisation.
-        authorised = signal.get("consent") if configured else False
-        if authorised not in (True, False, None):
-            authorised = None
+        # A locally stored refresh grant only establishes that an encrypted
+        # owner-scoped grant was found. It does not prove that Google currently
+        # accepts the grant, or even that a provider read has ever succeeded.
+        consent_present = signal.get("consent") if configured else False
+        if consent_present not in (True, False, None):
+            consent_present = None
         success = previous.get("last_success") if history_available else None
         last_error = previous.get("last_error") if history_available else None
         read_tested = bool(success) if history_available else None
+        # Read-confirmed authorisation is historical and provider-specific.
+        # Token-only providers cannot claim it from secret configuration.
+        # A saved OAuth grant without a recorded successful read stays unknown.
+        authorised = (True if consent_present is True and read_tested is True
+                      else False if consent_present is False else None)
         # Historical upstream reads cannot establish that storage committed.
         # New explicit markers are recorded only after each import/snapshot
         # operation returns successfully; legacy records remain unverified.
@@ -116,7 +124,7 @@ def build_readiness(health, signals):
         if not implemented or not configured:
             blocker = profile["setup"]
             next_action = profile["setup"]
-        elif authorised is False:
+        elif consent_present is False:
             blocker = "Owner OAuth consent is not available in this session or the saved grant could not be used."
             next_action = profile["read"]
         elif not history_available:
@@ -147,6 +155,8 @@ def build_readiness(health, signals):
         result.append({
             "key": key, "name": profile["name"], "implemented": implemented,
             "configured": configured, "authorised": authorised,
+            "consent_present": consent_present,
+            "authorisation_verified_at": success if authorised is True else None,
             "read_tested": read_tested, "sync_tested": sync_tested,
             "sync_applicable": profile["persisted_read"],
             "sync_needs_attention": sync_needs_attention,
@@ -160,8 +170,12 @@ def build_readiness(health, signals):
             "stages": {
                 **{stage: _stage(value) for stage, value in (
                     ("implemented", implemented), ("configured", configured),
-                    ("authorised", authorised), ("read_tested", read_tested),
-                    ("reconciled", reconciled))},
+                    ("read_tested", read_tested), ("reconciled", reconciled))},
+                "authorised": (
+                    "Historically read-confirmed (not current proof)"
+                    if authorised is True else
+                    "Grant present; permission unverified"
+                    if consent_present is True else _stage(authorised)),
                 "sync_tested": (_stage(sync_tested) if profile["persisted_read"]
                                 else "Not applicable (read-only)"),
             },
