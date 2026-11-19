@@ -166,6 +166,42 @@ class OfflineSettlementReviewTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "rollback"):
             self.ledger.verify_anchor(current)
 
+    def test_prior_anchor_verifies_append_only_prefix_but_rejects_rollback(self):
+        self.record()
+        original_head = self.ledger.export_anchor()
+        old_backup = Path(self.tmp.name) / "before-review.sqlite3"
+        with sqlite3.connect(self.path) as source, sqlite3.connect(old_backup) as dest:
+            source.backup(dest)
+
+        self.record(decision="investigate", reason="operator_correction",
+                    request_id="request-2", expected_revision=1)
+        # Exact verification intentionally rejects a newer ledger, while
+        # prefix verification accepts additional *signed* append-only events.
+        with self.assertRaisesRegex(ContractError, "rollback"):
+            self.ledger.verify_anchor(original_head)
+        prefix = self.ledger.verify_anchor_prefix(original_head)
+        self.assertTrue(prefix["anchor_prefix_matches"])
+        self.assertEqual(prefix["new_events_since_anchor"], 1)
+        self.assertFalse(prefix["reconciled"])
+        current_head = self.ledger.export_anchor()
+        self.assertEqual(
+            self.ledger.verify_anchor_prefix(current_head)["new_events_since_anchor"], 0)
+        with self.assertRaises(ContractError):
+            self.ledger.verify_anchor_prefix({**original_head, "events_checked": True})
+
+        # A later review cannot conceal modifications to the signed prefix.
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE offline_settlement_reviews SET decision='rejected' WHERE seq=1")
+        with self.assertRaises(ContractError):
+            self.ledger.verify_anchor_prefix(original_head)
+
+        # Even a structurally valid older SQLite copy cannot satisfy an
+        # independently retained head from a later review.
+        shutil.copyfile(old_backup, self.path)
+        self.assertEqual(self.ledger.verify_integrity()["events_checked"], 1)
+        with self.assertRaisesRegex(ContractError, "rollback"):
+            self.ledger.verify_anchor_prefix(current_head)
+
     def test_anchor_input_and_forged_canonical_records_fail_closed(self):
         with self.assertRaises(ContractError):
             self.ledger.verify_anchor({"format": "offline-settlement-head-v1"})
