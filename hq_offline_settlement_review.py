@@ -33,6 +33,18 @@ def _unverified():
     }
 
 
+def _require_detached_anchor(previous):
+    """Validate a previously exported, independently retained audit head."""
+    if (not isinstance(previous, dict)
+            or set(previous) != {"format", "events_checked", "head_hmac"}
+            or previous["format"] != "offline-settlement-head-v1"
+            or type(previous["events_checked"]) is not int
+            or previous["events_checked"] < 0
+            or not isinstance(previous["head_hmac"], str)
+            or not _HASH.fullmatch(previous["head_hmac"])):
+        raise ContractError("Independently retained settlement audit head required")
+
+
 class OfflineSettlementReviewLedger:
     """Append-only logical SQLite revisions; physical DB is NOT immutable.
 
@@ -218,16 +230,31 @@ class OfflineSettlementReviewLedger:
                 "head_hmac": self._h("detached-head-v1", rows)}
 
     def verify_anchor(self, previous):
-        if (not isinstance(previous, dict)
-                or set(previous) != {"format", "events_checked", "head_hmac"}
-                or previous["format"] != "offline-settlement-head-v1"
-                or type(previous["events_checked"]) is not int
-                or previous["events_checked"] < 0
-                or not isinstance(previous["head_hmac"], str)
-                or not _HASH.fullmatch(previous["head_hmac"])):
-            raise ContractError("Independently retained settlement audit head required")
+        """Require an exact full-ledger match (including the current event count)."""
+        _require_detached_anchor(previous)
         current = self.export_anchor()
         if (current["events_checked"] != previous["events_checked"]
                 or not hmac.compare_digest(current["head_hmac"], previous["head_hmac"])):
             raise ContractError("Settlement audit rollback or modification detected")
         return {"anchor_matches": True, **_unverified()}
+
+    def verify_anchor_prefix(self, previous):
+        """Verify an older trusted head without rejecting legitimate later reviews.
+
+        An independent retained head authenticates the *prefix* of today's
+        complete ledger. Verify all current event seals and sequence integrity
+        before comparing that prefix. This accepts append-only growth but
+        rejects rollback, deletion or modification of anchored history.
+        Neither method stores the head outside the fixture SQLite database.
+        """
+        _require_detached_anchor(previous)
+        with sqlite3.connect(self._path, timeout=5) as db:
+            db.execute("BEGIN")
+            rows, _, _, _ = self._verify(db)
+        checked = previous["events_checked"]
+        if (checked > len(rows)
+                or not hmac.compare_digest(
+                    self._h("detached-head-v1", rows[:checked]), previous["head_hmac"])):
+            raise ContractError("Settlement audit anchored prefix rollback or modification detected")
+        return {"anchor_prefix_matches": True,
+                "new_events_since_anchor": len(rows) - checked, **_unverified()}
