@@ -201,8 +201,19 @@ class OfflineEncryptedEvidenceStore:
             raise ContractError("Fixture checkpoint database read failed") from None
 
     def _decode(self, row, *, owner_ref, source_ref, provider, scope, request):
-        if (row["request_key"] != request or row["scope_key"] != scope
-                or row["provider"] != provider):
+        if row["request_key"] != request:
+            raise ContractError("Fixture evidence owner/source mismatch")
+        return self._decode_scoped(
+            row, owner_ref=owner_ref, source_ref=source_ref,
+            provider=provider, scope=scope)
+
+    def _decode_scoped(self, row, *, owner_ref, source_ref, provider, scope):
+        """Validate one historical encrypted snapshot without its original run ID.
+
+        The opaque request key is authenticated by AES-GCM associated data;
+        checking a prior source snapshot must never require plaintext run IDs.
+        """
+        if row["scope_key"] != scope or row["provider"] != provider:
             raise ContractError("Fixture evidence owner/source mismatch")
         try:
             data = self._aead.decrypt(row["nonce"], row["sealed_payload"],
@@ -246,9 +257,43 @@ class OfflineEncryptedEvidenceStore:
                             "SELECT * FROM offline_encrypted_evidence ORDER BY seq"
                         ).fetchall()
                         self._verify_checkpoint_rows(rows, trusted_checkpoint)
+                    # Different import/run IDs may contain the same provider
+                    # event. Those repeats are harmless only if the canonical
+                    # event is IDENTICAL. Never let a fresh request bypass the
+                    # original idempotency key by silently changing its amount,
+                    # timestamp, batch, fee or transaction classification.
+                    # Check the entire owner/provider/source scope, including
+                    # older fixture databases without a new index/migration.
+                    prior_events = {}
+                    for historical in db.execute(
+                            "SELECT * FROM offline_encrypted_evidence "
+                            "WHERE scope_key=? ORDER BY seq", (scope,)):
+                        prior, _ = self._decode_scoped(
+                            historical, owner_ref=owner_ref,
+                            source_ref=source_ref, provider=provider, scope=scope)
+                        for old_event in prior["events"]:
+                            evidence_id = old_event["evidence_id"]
+                            if (evidence_id in prior_events
+                                    and prior_events[evidence_id] != old_event):
+                                raise ContractError(
+                                    "Conflicting provider event in staged fixture history")
+                            prior_events[evidence_id] = old_event
                     row = db.execute(
                         "SELECT * FROM offline_encrypted_evidence WHERE request_key=?",
                         (request,)).fetchone()
+                    reused = 0
+                    for event in events:
+                        evidence_id = event["evidence_id"]
+                        if evidence_id in prior_events:
+                            if prior_events[evidence_id] != event:
+                                # Preserve the established same-request error
+                                # before reporting a cross-run collision.
+                                if row:
+                                    raise ContractError(
+                                        "Fixture idempotency key reused for different evidence")
+                                raise ContractError(
+                                    "Conflicting provider event across fixture runs")
+                            reused += 1
                     if row:
                         previous, _ = self._decode(
                             row, owner_ref=owner_ref, source_ref=source_ref,
@@ -276,6 +321,7 @@ class OfflineEncryptedEvidenceStore:
             return {
                 **_unverified(), "provider": provider,
                 "events_staged": len(events), "idempotent_replay": replay,
+                "events_already_seen_in_scope": reused,
             }
         except sqlite3.Error:
             raise ContractError("Fixture evidence database write failed") from None

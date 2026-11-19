@@ -107,6 +107,50 @@ class OfflineEncryptedEvidenceTests(unittest.TestCase):
             count = db.execute("SELECT count(*) FROM offline_encrypted_evidence").fetchone()[0]
         self.assertEqual(count, 1)
 
+    def test_distinct_runs_reject_changed_provider_event_without_altering_history(self):
+        # A fresh run ID is not permission to overwrite the same bank/merchant
+        # event with different money or timing. Identical repeated evidence is
+        # allowed, but must be separately identifiable as already seen.
+        for provider, preview, changed, source in (
+            ("monzo", monzo(), monzo(amount=30000), "fixture-account"),
+            ("dna", dna(), dna(net=8000), "fixture-merchant"),
+        ):
+            with self.subTest(provider=provider):
+                owner = "fixture-owner-" + provider
+                params = dict(owner_ref=owner, source_ref=source)
+                first = self.store.stage(preview, request_id="run-one", **params)
+                self.assertEqual(first["events_already_seen_in_scope"], 0)
+                repeated = self.store.stage(preview, request_id="run-two", **params)
+                self.assertFalse(repeated["idempotent_replay"])
+                self.assertEqual(repeated["events_already_seen_in_scope"], 1)
+                with self.assertRaisesRegex(ContractError, "Conflicting provider event"):
+                    self.store.stage(changed, request_id="run-three", **params)
+                self.assertEqual(self.store.load(
+                    provider=provider, request_id="run-one", **params), preview)
+                with sqlite3.connect(self.path) as db:
+                    count = db.execute(
+                        "SELECT COUNT(*) FROM offline_encrypted_evidence "
+                        "WHERE scope_key=?", (
+                            self.store._keys(owner, source, provider, "run-one")[0],
+                        )).fetchone()[0]
+                self.assertEqual(count, 2)
+
+    def test_scope_collision_protection_allows_distinct_owner_or_source(self):
+        # Matching provider event IDs in independent owner/source scopes
+        # cannot block each other or be mistaken for the same bank receipt.
+        first = self.store.stage(
+            monzo(amount=10023), owner_ref="owner-one",
+            source_ref="fixture-account", request_id="first")
+        second = self.store.stage(
+            monzo(amount=22222), owner_ref="owner-two",
+            source_ref="fixture-account", request_id="second")
+        third = self.store.stage(
+            monzo(amount=33333, account="other-account"), owner_ref="owner-one",
+            source_ref="other-account", request_id="third")
+        for response in (first, second, third):
+            self.assertEqual(response["events_already_seen_in_scope"], 0)
+            self.assertFalse(response["reconciled"])
+
     def test_same_request_string_different_owner_has_separate_encrypted_scope(self):
         for owner in ("owner-one", "owner-two"):
             self.store.stage(
