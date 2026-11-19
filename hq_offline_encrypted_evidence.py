@@ -135,6 +135,71 @@ class OfflineEncryptedEvidenceStore:
         request = self._h("request-v1", owner_ref, provider, source_ref, request_id)
         return scope, request
 
+
+    def _checkpoint_rows(self, rows):
+        """Keyed head of the *ordered* encrypted rows, with no plaintext IDs.
+
+        A locally generated head is NOT trusted until separately retained
+        outside this SQLite file, under independent owner-controlled custody.
+        """
+        digest = hmac.new(self._audit_key, b"offline-evidence-checkpoint-v1",
+                          hashlib.sha256).digest()
+        try:
+            for row in rows:
+                item = [
+                    row["seq"], row["request_key"], row["scope_key"],
+                    row["provider"], row["payload_key"], row["recorded_at"],
+                    row["nonce"].hex(), row["sealed_payload"].hex(),
+                ]
+                encoded = json.dumps(item, separators=(",", ":"),
+                                     ensure_ascii=True).encode("ascii")
+                digest = hmac.new(self._audit_key, digest + encoded,
+                                  hashlib.sha256).digest()
+        except (TypeError, ValueError, AttributeError, UnicodeError, KeyError):
+            raise ContractError("Fixture checkpoint rows are malformed") from None
+        return {"format": "offline-evidence-checkpoint-v1",
+                "entries": len(rows), "head": digest.hex()}
+
+    def _verify_checkpoint_rows(self, rows, trusted_checkpoint):
+        """Accept an independently held *prefix* only, never infer provenance."""
+        if (not isinstance(trusted_checkpoint, dict)
+                or set(trusted_checkpoint) != {"format", "entries", "head"}
+                or trusted_checkpoint["format"] != "offline-evidence-checkpoint-v1"
+                or type(trusted_checkpoint["entries"]) is not int
+                or trusted_checkpoint["entries"] < 0
+                or not isinstance(trusted_checkpoint["head"], str)
+                or len(trusted_checkpoint["head"]) != 64
+                or any(c not in "0123456789abcdef"
+                       for c in trusted_checkpoint["head"])):
+            raise ContractError("Trusted fixture checkpoint is malformed")
+        count = trusted_checkpoint["entries"]
+        if count > len(rows):
+            raise ContractError("Fixture evidence database rollback detected")
+        prefix = self._checkpoint_rows(rows[:count])
+        if not hmac.compare_digest(prefix["head"], trusted_checkpoint["head"]):
+            raise ContractError("Fixture evidence checkpoint mismatch")
+
+    def checkpoint(self, *, trusted_checkpoint=None):
+        """Return a detached candidate anchor; optionally verify an older one.
+
+        This does not save the head externally or certify real bank evidence.
+        The caller must retain/verify a prior head independently to notice
+        rollback, deletion or historical edits.
+        """
+        try:
+            with closing(sqlite3.connect(
+                    Path(self._path).resolve().as_uri() + "?mode=ro",
+                    uri=True, timeout=5)) as db:
+                db.row_factory = sqlite3.Row
+                rows = db.execute(
+                    "SELECT * FROM offline_encrypted_evidence ORDER BY seq"
+                ).fetchall()
+                if trusted_checkpoint is not None:
+                    self._verify_checkpoint_rows(rows, trusted_checkpoint)
+                return self._checkpoint_rows(rows)
+        except sqlite3.Error:
+            raise ContractError("Fixture checkpoint database read failed") from None
+
     def _decode(self, row, *, owner_ref, source_ref, provider, scope, request):
         if (row["request_key"] != request or row["scope_key"] != scope
                 or row["provider"] != provider):
@@ -165,7 +230,7 @@ class OfflineEncryptedEvidenceStore:
                 KeyError, OverflowError, AttributeError):
             raise ContractError("Fixture ciphertext integrity check failed") from None
 
-    def stage(self, preview, *, owner_ref, source_ref, request_id):
+    def stage(self, preview, *, owner_ref, source_ref, request_id, trusted_checkpoint=None):
         """Atomically insert/replay one synthetic snapshot; never book or pay."""
         provider, events = _validated_preview(preview, source_ref=source_ref)
         scope, request = self._keys(owner_ref, source_ref, provider, request_id)
@@ -176,6 +241,11 @@ class OfflineEncryptedEvidenceStore:
                 db.row_factory = sqlite3.Row
                 with db:
                     db.execute("BEGIN IMMEDIATE")
+                    if trusted_checkpoint is not None:
+                        rows = db.execute(
+                            "SELECT * FROM offline_encrypted_evidence ORDER BY seq"
+                        ).fetchall()
+                        self._verify_checkpoint_rows(rows, trusted_checkpoint)
                     row = db.execute(
                         "SELECT * FROM offline_encrypted_evidence WHERE request_key=?",
                         (request,)).fetchone()
