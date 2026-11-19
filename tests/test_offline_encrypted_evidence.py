@@ -304,5 +304,75 @@ class OfflineEncryptedEvidenceTests(unittest.TestCase):
             other.checkpoint(trusted_checkpoint=trusted)
 
 
+    def test_guarded_load_rejects_rollback_of_other_records(self):
+        """Target ciphertext survives rollback; retained external head still blocks read."""
+        backup = self.path.parent / "older-for-read.sqlite3"
+        self.store.stage(
+            monzo(), owner_ref="fixture-owner", source_ref="fixture-account",
+            request_id="first")
+        with sqlite3.connect(self.path) as source, sqlite3.connect(backup) as target:
+            source.backup(target)
+        self.store.stage(
+            dna(), owner_ref="fixture-owner", source_ref="fixture-merchant",
+            request_id="second")
+        trusted = self.store.checkpoint()
+        restored = OfflineEncryptedEvidenceStore(
+            backup, encryption_key=self.aes_key, audit_key=self.audit_key)
+        # A targeted decrypt by itself cannot discover deleted unrelated rows.
+        self.assertEqual(restored.load(
+            owner_ref="fixture-owner", source_ref="fixture-account",
+            provider="monzo", request_id="first"), monzo())
+        with self.assertRaisesRegex(ContractError, "rollback"):
+            restored.load(
+                owner_ref="fixture-owner", source_ref="fixture-account",
+                provider="monzo", request_id="first",
+                trusted_checkpoint=trusted)
+
+    def test_guarded_load_checks_other_row_and_accepts_append_only_growth(self):
+        self.store.stage(
+            monzo(), owner_ref="fixture-owner", source_ref="fixture-account",
+            request_id="first")
+        prior = self.store.checkpoint()
+        self.store.stage(
+            dna(), owner_ref="fixture-owner", source_ref="fixture-merchant",
+            request_id="second")
+        # The previously retained prefix remains valid when rows are appended.
+        self.assertEqual(self.store.load(
+            owner_ref="fixture-owner", source_ref="fixture-account",
+            provider="monzo", request_id="first",
+            trusted_checkpoint=prior), monzo())
+        trusted = self.store.checkpoint()
+        # Damage an unrelated row; the requested first row still decrypts.
+        with sqlite3.connect(self.path) as db:
+            db.execute(
+                "UPDATE offline_encrypted_evidence SET recorded_at=? WHERE seq=2",
+                ("2020-01-01T00:00:00Z",))
+        self.assertEqual(self.store.load(
+            owner_ref="fixture-owner", source_ref="fixture-account",
+            provider="monzo", request_id="first"), monzo())
+        with self.assertRaisesRegex(ContractError, "checkpoint"):
+            self.store.load(
+                owner_ref="fixture-owner", source_ref="fixture-account",
+                provider="monzo", request_id="first",
+                trusted_checkpoint=trusted)
+
+    def test_guarded_load_fails_closed_for_malformed_or_wrong_key_head(self):
+        self.store.stage(
+            monzo(), owner_ref="fixture-owner", source_ref="fixture-account",
+            request_id="first")
+        trusted = self.store.checkpoint()
+        params = dict(owner_ref="fixture-owner", source_ref="fixture-account",
+                      provider="monzo", request_id="first")
+        for bad in ({"entries": 1}, {**trusted, "head": "0" * 64},
+                    {**trusted, "entries": True}):
+            with self.subTest(bad=bad), self.assertRaises(ContractError):
+                self.store.load(**params, trusted_checkpoint=bad)
+        wrong = OfflineEncryptedEvidenceStore(
+            self.path, encryption_key=self.aes_key,
+            audit_key=bytes.fromhex("ef" * 32))
+        with self.assertRaises(ContractError):
+            wrong.load(**params, trusted_checkpoint=trusted)
+
+
 if __name__ == "__main__":
     unittest.main()
