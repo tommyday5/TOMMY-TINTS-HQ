@@ -80,7 +80,11 @@ def _event_digest(events):
     Both an event and this checksum can be replaced by an actor who controls
     the preview. Real bank/merchant evidence needs independent authentication.
     """
-    payload = json.dumps(events, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    try:
+        payload = json.dumps(events, sort_keys=True, separators=(",", ":"),
+                             ensure_ascii=True, allow_nan=False)
+    except (TypeError, ValueError, OverflowError):
+        raise ContractError("Malformed canonical event payload") from None
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
