@@ -278,17 +278,22 @@ class OfflineEncryptedEvidenceStore:
                                 raise ContractError(
                                     "Conflicting provider event in staged fixture history")
                             prior_events[evidence_id] = old_event
+                    row = db.execute(
+                        "SELECT * FROM offline_encrypted_evidence WHERE request_key=?",
+                        (request,)).fetchone()
                     reused = 0
                     for event in events:
                         evidence_id = event["evidence_id"]
                         if evidence_id in prior_events:
                             if prior_events[evidence_id] != event:
+                                # Preserve the established same-request error
+                                # before reporting a cross-run collision.
+                                if row:
+                                    raise ContractError(
+                                        "Fixture idempotency key reused for different evidence")
                                 raise ContractError(
                                     "Conflicting provider event across fixture runs")
                             reused += 1
-                    row = db.execute(
-                        "SELECT * FROM offline_encrypted_evidence WHERE request_key=?",
-                        (request,)).fetchone()
                     if row:
                         previous, _ = self._decode(
                             row, owner_ref=owner_ref, source_ref=source_ref,
