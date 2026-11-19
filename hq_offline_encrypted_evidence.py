@@ -49,7 +49,7 @@ def _validated_preview(preview, *, source_ref):
     if not isinstance(preview, dict):
         raise ContractError("Canonical unverified fixture evidence required")
     provider = preview.get("provider")
-    if provider not in _KEYS or set(preview) != _KEYS[provider]:
+    if not isinstance(provider, str) or provider not in _KEYS or set(preview) != _KEYS[provider]:
         raise ContractError("Unknown or altered canonical preview schema")
     events = (_validated_monzo_events(preview) if provider == "monzo"
               else _validated_dna_events(preview))
