@@ -4,7 +4,21 @@ Never infer a provider's permission, read result, bank cash or reconciliation
 from the existence of adapter code or a configured secret. The status page
 does not invoke provider APIs or create local databases.
 """
+from datetime import datetime, timedelta, timezone
+
 from hq_integration_health import valid_observation_time as _observation_time
+
+# Advisory recheck interval for historical LOCAL observations, not an expiry
+# claim about Google/Square permissions or bank/source record freshness.
+_READ_RECHECK_AFTER = timedelta(days=7)
+
+
+def _observation_stale(timestamp, now):
+    """Only valid, aware observation timestamps can be evaluated for age."""
+    return bool(timestamp and
+                now - datetime.fromisoformat(
+                    timestamp.replace("Z", "+00:00")).astimezone(timezone.utc)
+                > _READ_RECHECK_AFTER)
 
 # Keys match integration_health provider evidence, not marketing product names.
 PROFILES = (
@@ -85,6 +99,7 @@ def build_readiness(health, signals):
     }
     history_available = health.get("history_available") is True
     result = []
+    checked_at = datetime.now(timezone.utc)
     for profile in PROFILES:
         key = profile["key"]
         previous = by_name.get(old_names.get(key), {})
@@ -117,6 +132,12 @@ def build_readiness(health, signals):
                     if history_available and profile["persisted_read"] else None)
         sync_success = _observation_time(raw_sync)
         sync_evidence_invalid = raw_sync is not None and sync_success is None
+        # Do not erase a historically valid stage solely because it aged.
+        # Surface a separate advisory blocker prompting the owner to rerun
+        # the exact source-specific read/persisted snapshot.
+        read_stale = _observation_stale(success, checked_at)
+        sync_stale = (_observation_stale(sync_success, checked_at)
+                      if profile["persisted_read"] else False)
         sync_tested = (bool(success) and bool(sync_success)
                        and profile["persisted_read"]) if history_available else None
         sync_observation = (health.get("sync_failures", {}).get(key, {})
@@ -149,6 +170,14 @@ def build_readiness(health, signals):
             # recent failed persistence attempt behind that old success.
             blocker = sync_error or "Most recent persisted sync failed; historical success may be stale."
             next_action = profile["read"]
+        elif read_stale or sync_stale:
+            stale_stage = ("read and persisted sync" if read_stale and sync_stale
+                           else "upstream read" if read_stale else "persisted sync")
+            blocker = (
+                f"Last successful {stale_stage} observation is over seven days old. "
+                "Historical tests remain recorded, but current source access and "
+                "snapshot health must be rechecked.")
+            next_action = profile["read"]
         elif not read_tested:
             blocker = "No successful upstream read has been recorded for this specific workstream."
             next_action = profile["read"]
@@ -169,6 +198,7 @@ def build_readiness(health, signals):
             "consent_present": consent_present,
             "authorisation_verified_at": success if authorised is True else None,
             "read_tested": read_tested, "sync_tested": sync_tested,
+            "read_stale": read_stale, "sync_stale": sync_stale,
             "observation_integrity_issue": read_evidence_invalid or sync_evidence_invalid,
             "sync_applicable": profile["persisted_read"],
             "sync_needs_attention": sync_needs_attention,
@@ -183,12 +213,17 @@ def build_readiness(health, signals):
                 **{stage: _stage(value) for stage, value in (
                     ("implemented", implemented), ("configured", configured),
                     ("read_tested", read_tested), ("reconciled", reconciled))},
+                "read_tested": ("Historical read success (stale; recheck)"
+                                if read_stale else _stage(read_tested)),
                 "authorised": (
-                    "Historically read-confirmed (not current proof)"
+                    ("Historically read-confirmed (stale; recheck)"
+                     if read_stale else "Historically read-confirmed (not current proof)")
                     if authorised is True else
                     "Grant present; permission unverified"
                     if consent_present is True else _stage(authorised)),
-                "sync_tested": (_stage(sync_tested) if profile["persisted_read"]
+                "sync_tested": (("Historical persisted success (stale; recheck)"
+                                 if sync_stale and sync_tested else _stage(sync_tested))
+                                if profile["persisted_read"]
                                 else "Not applicable (read-only)"),
             },
         })
