@@ -42,6 +42,20 @@ class MonzoContractTests(unittest.TestCase):
         self.assertIsNone(preview["verified_trading_receipts_pence"])
         self.assertFalse(preview["reconciled"])
 
+    def test_fractional_bank_timestamps_preserve_order_and_detect_replay_change(self):
+        early = bank(booked_at="2026-11-18T10:30:00.100Z")
+        later = bank(booked_at="2026-11-18T10:30:00.900Z")
+        preview = normalise_monzo_rows([early], account_ref="fixture-bank")
+        self.assertEqual(preview["events"][0]["occurred_at"],
+                         "2026-11-18T10:30:00.100000+00:00")
+        with self.assertRaisesRegex(ContractError, "Conflicting rows"):
+            normalise_monzo_rows([early, later], account_ref="fixture-bank")
+        offset = normalise_monzo_rows([
+            bank(booked_at="2026-11-18T11:30:00.100+01:00")
+        ], account_ref="fixture-bank")
+        self.assertEqual(offset["events"][0]["occurred_at"],
+                         preview["events"][0]["occurred_at"])
+
     def test_identical_replay_dedupes_but_changed_history_aborts(self):
         preview = normalise_monzo_rows([bank(), bank()], account_ref="account-A")
         self.assertEqual(len(preview["events"]), 1)
@@ -138,6 +152,15 @@ class DnaContractTests(unittest.TestCase):
         self.assertFalse(summary["bank_settlement_verified"])
         self.assertFalse(summary["job_receipts_verified"])
         self.assertIsNone(preview["verified_job_receipts_pence"])
+
+    def test_fractional_processor_timestamps_detect_conflicting_event_replay(self):
+        early = card(occurred_at="2026-11-18T10:30:00.100Z")
+        later = card(occurred_at="2026-11-18T10:30:00.900Z")
+        preview = normalise_dna_rows([early], merchant_ref="fixture-merchant")
+        self.assertEqual(preview["events"][0]["occurred_at"],
+                         "2026-11-18T10:30:00.100000+00:00")
+        with self.assertRaisesRegex(ContractError, "Conflicting rows"):
+            normalise_dna_rows([early, later], merchant_ref="fixture-merchant")
 
     def test_identical_replay_and_changed_same_event(self):
         preview = normalise_dna_rows([card(), card()], merchant_ref="merchant-A")
