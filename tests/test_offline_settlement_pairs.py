@@ -144,6 +144,32 @@ class OfflineSettlementPairTests(unittest.TestCase):
             preview_explicit_settlement_pairs(b, dict(p, source_mapping_verified=True), {})
 
 
+    def test_bank_before_processor_event_within_same_second_is_not_candidate(self):
+        processor = normalise_dna_rows([{
+            "event_id": "evt-fraction", "payment_id": "pay-fraction",
+            "kind": "payment", "gross_pence": 10000,
+            "fee_pence": 120, "net_pence": 9880, "currency": "GBP",
+            "occurred_at": "2026-11-18T10:00:00.900Z",
+            "batch_id": "batch-fraction",
+        }], merchant_ref="fixture-merchant")
+        def bank_at(posted):
+            return normalise_monzo_rows([{
+                "transaction_id": "bank-fraction", "amount_pence": 9880,
+                "currency": "GBP", "booked_at": posted,
+            }], account_ref="fixture-bank")
+        early = preview_explicit_settlement_pairs(
+            bank_at("2026-11-18T10:00:00.100Z"), processor,
+            {"batch-fraction": "bank-fraction"})
+        self.assertEqual(early["amount_equal_candidates"], 0)
+        self.assertEqual(early["chronology_conflicts"], 1)
+        self.assertEqual(early["amount_equal_but_chronology_conflicts"], 1)
+        later = preview_explicit_settlement_pairs(
+            bank_at("2026-11-18T10:00:00.950Z"), processor,
+            {"batch-fraction": "bank-fraction"})
+        self.assertEqual(later["amount_equal_candidates"], 1)
+        self.assertEqual(later["chronology_conflicts"], 0)
+        self.assertFalse(later["bank_settlement_verified"])
+
     def test_bank_before_latest_processor_event_requires_investigation(self):
         # All values match in pence, but an alleged settlement cannot predate
         # a processor event that is included in its proposed payout batch.
