@@ -175,3 +175,48 @@ def review(ref):
         return False
     with closing(sqlite3.connect(_path(), timeout=5)) as db, db:
         return db.execute("UPDATE enquiries SET reviewed=1 WHERE id=?", (ref,)).rowcount == 1
+
+
+def profile_error_diagnostic(exc):
+    """Allowlist Google reason codes; never persist/echo arbitrary provider text."""
+    response = getattr(exc, 'response', None)
+    status = response.status_code if response is not None else None
+    reasons = set()
+    project = None
+    try:
+        if response is not None and len(response.content) <= 65536:
+            payload = response.json().get('error', {})
+            for item in payload.get('errors', []):
+                if isinstance(item, dict) and isinstance(item.get('reason'), str):
+                    reasons.add(item['reason'])
+            for item in payload.get('details', []):
+                if not isinstance(item, dict): continue
+                if (item.get('@type') == 'type.googleapis.com/google.rpc.ErrorInfo'
+                        and item.get('domain') == 'googleapis.com'):
+                    reasons.add(item.get('reason', ''))
+                    meta = item.get('metadata', {})
+                    if (isinstance(meta, dict) and meta.get('service') == 'gmail.googleapis.com'
+                            and isinstance(meta.get('consumer'), str)
+                            and re.fullmatch(r'projects/[0-9]{1,24}', meta['consumer'])):
+                        project = meta['consumer'].split('/')[1]
+    except (ValueError, TypeError, AttributeError):
+        pass
+    code = 'unknown'
+    action = 'Gmail API verification failed. Retry Connect Gmail; if it persists, check Gmail API, OAuth client project and Workspace API controls.'
+    if status == 401:
+        code, action = 'authError', 'Google rejected the access token. Reconnect Gmail with the business mailbox.'
+    elif status == 403:
+        if reasons & {'SERVICE_DISABLED', 'accessNotConfigured'}:
+            code, action = 'api_disabled', 'Google reports Gmail API disabled or not configured for the calling project. Enable gmail.googleapis.com in the project owning the deployed OAuth client, then reconnect Gmail.'
+        elif reasons & {'ACCESS_TOKEN_SCOPE_INSUFFICIENT', 'insufficientPermissions'}:
+            code, action = 'scope_insufficient', 'Google reports insufficient permission. Reconnect and grant gmail.readonly to the business mailbox; do not add write/send permissions.'
+        elif 'domainPolicy' in reasons:
+            code, action = 'workspace_policy', 'Google reports a Workspace domain policy block. Ask the Workspace administrator to allow this existing OAuth app access to Gmail read-only.'
+        elif reasons & {'dailyLimitExceeded','rateLimitExceeded','userRateLimitExceeded','quotaExceeded','RATE_LIMIT_EXCEEDED'}:
+            code, action = 'quota_limit', 'Google reports a quota or rate limit. Wait and check Gmail API quota for the existing client project before retrying.'
+        else:
+            code, action = 'forbidden_unknown', 'Gmail API access denied (HTTP 403); Google supplied no recognised safe reason. Check Gmail API enablement, Workspace API controls and the OAuth client project; the cause is not yet confirmed.'
+    # Numeric project number is configuration metadata, not a credential.
+    if project and code == 'api_disabled':
+        action += ' Google identifies consumer project ' + project + '. Open https://console.cloud.google.com/apis/library/gmail.googleapis.com?project=' + project
+    return 'Gmail profile HTTP ' + str(status or 'unknown') + ' [' + code + ']', action

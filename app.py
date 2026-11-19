@@ -1077,6 +1077,16 @@ def _gmail_token():
         return entry[0] if entry and entry[1] > time.time() else None
 
 
+@app.get("/hq/gmail-setup")
+@required
+def hq_gmail_setup():
+    import re
+    client_id=os.environ.get("GOOGLE_CLIENT_ID", "")
+    if not re.fullmatch(r"[0-9]+-[A-Za-z0-9_-]+\.apps\.googleusercontent\.com",client_id):
+        client_id="Not configured as a recognised Google OAuth web client ID"
+    return render_template("gmail_setup.html", client_id=client_id,
+        callback=url_for("hq_gmail_callback",_external=True,_scheme="https"), mailbox=gmail.MAILBOX)
+
 @app.get("/auth/gmail/connect")
 @required
 def hq_gmail_connect():
@@ -1091,28 +1101,43 @@ def hq_gmail_connect():
 def hq_gmail_callback():
     try:
         token = google.authorize_access_token()
-        if gmail.SCOPE not in token.get("scope", "").split():
-            return "Gmail read-only access was not granted", 403
-        access_token = token["access_token"]
-        gmail.verify_mailbox(access_token)
-        save_connection("gmail", session.get("google_sub"), token)
-        expiry = time.time() + min(int(token.get("expires_in", 3600)), 3600)
-    except ValueError:
-        return "Select the Tommy Tints business mailbox and retry", 403
-    except requests.exceptions.HTTPError as exc:
-        status = exc.response.status_code if exc.response is not None else None
-        # Never log or expose access tokens, OAuth codes, response bodies or account data.
-        if status == 403:
-            message = "Gmail API access denied. Check that Gmail API is enabled and the authorised account has access."
-        elif status == 401:
-            message = "Gmail authorisation was rejected. Reconnect the business mailbox."
-        else:
-            message = "Gmail API verification failed. Check the API configuration and retry."
-        record_check("gmail", "Gmail profile verification HTTP " + str(status or "unknown"))
-        return message, 502
     except Exception:
-        record_check("gmail", "Gmail OAuth token exchange or secure credential storage failed")
-        return "Gmail authorisation could not be completed. Check HQ server diagnostics.", 502
+        record_check("gmail", "Gmail OAuth exchange failed")
+        return "Google authorisation exchange failed. Restart Connect Gmail; do not reuse the callback URL.", 502
+    if not isinstance(token, dict) or gmail.SCOPE not in str(token.get("scope", "")).split():
+        record_check("gmail", "Gmail read-only scope missing")
+        return "Gmail read-only access was not granted. Reconnect and grant gmail.readonly.", 403
+    try:
+        access_token = token["access_token"]
+        if not isinstance(access_token, str) or not access_token:
+            raise ValueError()
+        expiry = time.time() + min(int(token.get("expires_in", 3600)), 3600)
+        if expiry <= time.time():
+            raise ValueError()
+    except (KeyError, ValueError, TypeError):
+        record_check("gmail", "Gmail OAuth token invalid or expired")
+        return "Google returned an invalid or expired token. Restart Connect Gmail.", 401
+    try:
+        gmail.verify_mailbox(access_token)
+    except requests.exceptions.HTTPError as exc:
+        diagnostic, action = gmail.profile_error_diagnostic(exc)
+        record_check("gmail", diagnostic)
+        return action, 502
+    except ValueError:
+        record_check("gmail", "Gmail mailbox mismatch")
+        return "Select info@tommytintsltd.co.uk and retry. A mailbox alias is not a separate Gmail account.", 403
+    except Exception:
+        record_check("gmail", "Gmail profile verification failed")
+        return "Unable to verify the business Gmail profile. Retry Connect Gmail.", 502
+    try:
+        persisted = save_connection("gmail", session.get("google_sub"), token)
+    except Exception:
+        persisted = False
+    if not persisted:
+        record_check("gmail", "Gmail secure offline credential storage failed")
+        return "Gmail profile verified, but secure offline credentials could not be saved. Check persistent HQ storage and reconnect for offline consent.", 503
+    if not record_check("gmail"):
+        return "Gmail credentials saved, but verification history could not be recorded. Check Integration Health storage.", 503
     key = secrets.token_urlsafe(32)
     with _gmail_lock:
         for old, entry in list(_gmail_tokens.items()):
@@ -1171,7 +1196,7 @@ a{color:#ff8088}article{background:#151e2b;padding:16px;margin:12px 0;overflow-w
 {% if connected %}<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}">
 <button>Import latest page</button>
 {% if result and result.next %}<button name="page_token" value="{{ result.next }}">Import next page</button>{% endif %}
-</form>{% else %}<p><a href="/auth/gmail/connect">Connect Gmail read-only</a></p>{% endif %}
+</form>{% else %}<p><a href="/auth/gmail/connect">Connect Gmail read-only</a> · <a href="/hq/gmail-setup">Gmail setup and diagnostics</a></p>{% endif %}
 {% if result %}<p>Imported {{ result.added }} new of {{ result.read }} read.</p>{% endif %}
 {% if result and result.skipped_sensitive %}<p>{{ result.skipped_sensitive }} recognisable sensitive messages left in Gmail, not added to sales enquiries.</p>{% endif %}
 {% if result and result.skipped_label_mismatch %}<p>{{ result.skipped_label_mismatch }} messages excluded because their live Gmail labels no longer qualified as inbox customer enquiries.</p>{% endif %}
