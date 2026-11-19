@@ -42,7 +42,10 @@ def _timestamp(value):
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         if parsed.tzinfo is None or parsed.utcoffset() is None:
             raise ValueError("timezone required")
-        return parsed.astimezone(timezone.utc).isoformat(timespec="seconds")
+        # Preserve fractional seconds: truncation could make a bank posting
+        # appear to follow a later DNA event within the same second, or hide
+        # a conflicting replay under the same provider event ID.
+        return parsed.astimezone(timezone.utc).isoformat(timespec="auto")
     except (ValueError, OverflowError):
         raise ContractError("Timestamp must include an explicit timezone") from None
 
