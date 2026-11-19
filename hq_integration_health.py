@@ -37,25 +37,65 @@ def _db_path():
     return root / "integration_health.sqlite3"
 
 
+_UPSERT_OBSERVATION = """INSERT INTO integration_checks VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(provider) DO UPDATE SET
+    last_success = COALESCE(excluded.last_success, integration_checks.last_success),
+    last_error = COALESCE(excluded.last_error, integration_checks.last_error),
+    last_error_at = COALESCE(excluded.last_error_at, integration_checks.last_error_at),
+    needs_attention = excluded.needs_attention"""
+
+
+def _write_observation(db, provider, now, error):
+    db.execute(_UPSERT_OBSERVATION,
+               (provider, now if error is None else None, error,
+                now if error else None, int(error is not None)))
+
+
+def _open_observation_table(db):
+    db.execute("""CREATE TABLE IF NOT EXISTS integration_checks (
+        provider TEXT PRIMARY KEY, last_success TEXT, last_error TEXT, last_error_at TEXT,
+        needs_attention INTEGER NOT NULL)""")
+
+
 def record_check(provider, error=None):
+    """Retain a single upstream read outcome (or a persistence failure)."""
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     try:
         path = _db_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(path, timeout=2)) as db, db:
-            db.execute("""CREATE TABLE IF NOT EXISTS integration_checks (
-                provider TEXT PRIMARY KEY, last_success TEXT, last_error TEXT, last_error_at TEXT,
-                needs_attention INTEGER NOT NULL)""")
-            db.execute("""INSERT INTO integration_checks VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(provider) DO UPDATE SET
-                last_success = COALESCE(excluded.last_success, integration_checks.last_success),
-                last_error = COALESCE(excluded.last_error, integration_checks.last_error),
-                last_error_at = COALESCE(excluded.last_error_at, integration_checks.last_error_at),
-                needs_attention = excluded.needs_attention""",
-                (provider, now if error is None else None, error, now if error else None,
-                 int(error is not None)))
+            _open_observation_table(db)
+            _write_observation(db, provider, now, error)
     except (OSError, sqlite3.Error):
         log.warning("Integration check history could not be saved")
+
+
+def record_committed_sync(provider):
+    """Atomically record both an upstream read and its committed local snapshot.
+
+    Call ONLY after an owner-initiated Gmail/Square adapter has returned from
+    its successful persistence operation. The two observations share one UTC
+    timestamp and SQLite commit: a failed second write cannot leave a fresh
+    read-success marker with no corresponding sync success. No provider call,
+    reconciliation, or remote permission verification happens here.
+
+    Returns False if observation storage failed. In that case neither success
+    is advanced by this call; the provider snapshot may still have committed.
+    """
+    if provider not in ("gmail", "square", "square_payments"):
+        raise ValueError("Unsupported committed-sync observation")
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    try:
+        path = _db_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(path, timeout=2)) as db, db:
+            _open_observation_table(db)
+            _write_observation(db, provider, now, None)
+            _write_observation(db, provider + "_sync", now, None)
+        return True
+    except (OSError, sqlite3.Error):
+        log.warning("Committed integration observation history could not be saved")
+        return False
 
 
 def integration_status(connections):
