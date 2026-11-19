@@ -226,6 +226,7 @@ Reconciliation with HQ jobs is deliberately disabled until exact matching and ap
 @required
 def payment_page():
     error = None
+    error_status = 502
     if request.method == "POST":
         if (request.content_length is not None and request.content_length > 2000):
             abort(413)
@@ -238,16 +239,22 @@ def payment_page():
         except PersistedSyncError:
             record_check("square_payments_sync", "Square payment snapshot commit failed")
             error = "Unable to store the Square payment snapshot. Check persistent storage."
+            error_status = 503
         except Exception:
             # No response bodies, customer data, URLs containing tokens or secrets logged.
             record_check("square_payments", "Square payment read failed")
             error = "Unable to refresh payment evidence. Check read-only Square access and PAYMENTS_READ permission."
         else:
-            # The payment snapshot has committed, not a bank receipt.
-            record_committed_sync("square_payments")
+            # Snapshot persistence and readiness observation are separate
+            # commits. A missing observation must not look like a clean sync.
+            if not record_committed_sync("square_payments"):
+                error = ("Square payment snapshot was stored, but integration "
+                         "read/sync evidence could not be recorded. Check "
+                         "Integration Health storage; sync remains unverified.")
+                error_status = 503
     try:
         data = read_snapshot()
     except (OSError, sqlite3.Error, ValueError):
         return "Payment evidence storage is unavailable", 503
     return render_template_string(_PAGE, data=data, error=error,
-                                  csrf=session.get("csrf")), (502 if error else 200)
+                                  csrf=session.get("csrf")), (error_status if error else 200)
