@@ -180,5 +180,23 @@ class OfflineSettlementReviewTests(unittest.TestCase):
             OfflineSettlementReviewLedger(self.path, hmac_key=b"short")
 
 
+    def test_candidate_rejects_impossible_payout_posting_but_allows_investigation(self):
+        self.b = normalise_monzo_rows([{
+            "transaction_id": "bank-1", "amount_pence": 9880,
+            "currency": "GBP", "booked_at": "2026-11-18T08:00:00Z",
+        }], account_ref="fixture-bank")
+        with self.assertRaisesRegex(ContractError, "pre-event bank posting"):
+            self.record()
+        self.assertEqual(self.ledger.verify_integrity()["events_checked"], 0)
+        result = self.record(decision="investigate")
+        self.assertEqual(result["revision"], 1)
+        self.assertFalse(result["bank_settlement_verified"])
+        self.assertTrue(self.record(decision="investigate")["idempotent_replay"])
+        with self.assertRaisesRegex(ContractError, "pre-event bank posting"):
+            self.record(decision="candidate", reason="operator_correction",
+                        expected_revision=1, request_id="request-2")
+
+
+
 if __name__ == "__main__":
     unittest.main()

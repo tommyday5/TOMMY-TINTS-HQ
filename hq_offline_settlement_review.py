@@ -159,7 +159,7 @@ class OfflineSettlementReviewLedger:
         pair, bank_claim, batch_claim, source, equal = self._source(
             bank_preview, dna_preview, batch_id, transaction_id)
         if decision == "candidate" and not equal:
-            raise ContractError("A mismatched amount cannot be labelled a candidate")
+            raise ContractError("A mismatched amount or pre-event bank posting cannot be labelled a candidate")
         request = self._h("request", request_id)
         actor = self._h("actor", actor_ref)
         with sqlite3.connect(self._path, timeout=5) as db:
