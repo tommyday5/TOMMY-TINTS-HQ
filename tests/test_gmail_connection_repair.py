@@ -24,6 +24,29 @@ class GmailConnectionRepairTests(unittest.TestCase):
   with self.c.session_transaction() as s:s.pop('gmail_token_key',None)
   r=self.callback(save=False);self.assertEqual(r.status_code,503)
   with self.c.session_transaction() as s:self.assertNotIn('gmail_token_key',s)
+ def test_profile_verification_never_clears_unverified_enquiry_import(self):
+  from hq_integration_health import integration_status, record_check, record_committed_sync
+  # A real Gmail /profile check verifies mailbox identity, NOT labelled enquiry
+  # discovery or persistence. Historical import errors must survive reconnects.
+  self.assertEqual(self.callback().status_code, 302)
+  health = integration_status([("gmail", "Gmail", True)])
+  self.assertIsNone(health["integrations"][0]["last_success"])
+  self.assertTrue(record_check("gmail", "Earlier labelled enquiry import failed"))
+  self.assertEqual(self.callback().status_code, 302)
+  health = integration_status([("gmail", "Gmail", True)])
+  self.assertIsNone(health["integrations"][0]["last_success"])
+  self.assertTrue(health["integrations"][0]["needs_attention"])
+  self.assertEqual(health["integrations"][0]["last_error"], "Earlier labelled enquiry import failed")
+  self.assertTrue(health["history_available"])
+  profile = integration_status([("gmail_profile", "Gmail profile", True)])
+  self.assertTrue(profile["integrations"][0]["last_success"])
+  self.assertTrue(record_committed_sync("gmail"))
+  after_import = integration_status([("gmail", "Gmail", True)])
+  self.assertTrue(after_import["integrations"][0]["last_success"])
+  self.assertFalse(after_import["integrations"][0]["needs_attention"])
+  self.assertEqual(after_import["sync_successes"]["gmail"],
+                   after_import["integrations"][0]["last_success"])
+
  def test_wrong_scope_account_expiry(self):
   self.assertEqual(self.callback(token={**self.token,'scope':'openid'}).status_code,403)
   self.assertEqual(self.callback(verify=ValueError()).status_code,403)
