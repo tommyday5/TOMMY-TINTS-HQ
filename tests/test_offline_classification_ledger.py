@@ -261,6 +261,66 @@ class OfflineClassificationLedgerTests(unittest.TestCase):
                 "SELECT signature_version FROM offline_review_events ORDER BY revision"
             ).fetchall(), [(1,), (2,)])
 
+    def test_detached_anchor_detects_final_event_deletion_without_in_db_gaps(self):
+        self.submit()
+        first = self.ledger.export_anchor()
+        self.assertEqual(first["events_checked"], 1)
+        self.assertEqual(first["format"], "offline-classification-head-v1")
+        self.assertEqual(len(first["head_hmac"]), 64)
+        self.assertNotIn("fixture-txn", str(first))
+        verified = self.ledger.verify_anchor(first)
+        self.assertTrue(verified["anchor_matches"])
+        self.assertFalse(verified["bank_receipt_verified"])
+        self.assertFalse(verified["reconciled"])
+
+        self.submit(category="transfer", request_id="fixture-operation-two",
+                    expected_revision=1, reason="operator_correction")
+        newer = self.ledger.export_anchor()
+        self.assertEqual(newer["events_checked"], 2)
+        with self.assertRaisesRegex(ContractError, "head mismatch"):
+            self.ledger.verify_anchor(first)
+        self.assertTrue(self.ledger.verify_anchor(newer)["anchor_matches"])
+        # The in-DB chain still looks intact when its most recent event is
+        # deleted. Only the independently retained newer anchor catches it.
+        with sqlite3.connect(self.db_path) as db:
+            db.execute("DELETE FROM offline_review_events WHERE revision=2")
+        self.assertEqual(self.ledger.verify_integrity()["events_checked"], 1)
+        with self.assertRaisesRegex(ContractError, "head mismatch"):
+            self.ledger.verify_anchor(newer)
+        self.assertTrue(self.ledger.verify_anchor(first)["anchor_matches"])
+
+    def test_detached_anchor_detects_full_database_rollback_after_valid_restore(self):
+        self.submit()
+        backup = Path(self.temp.name) / "older-synthetic-backup.sqlite3"
+        with sqlite3.connect(self.db_path) as live, sqlite3.connect(backup) as older:
+            live.backup(older)
+        self.submit(category="director_funding", request_id="fixture-operation-two",
+                    expected_revision=1, reason="operator_correction")
+        trusted_head = self.ledger.export_anchor()
+        # Simulate an intact, individually HMAC-valid *old* database.
+        with sqlite3.connect(backup) as older, sqlite3.connect(self.db_path) as live:
+            older.backup(live)
+        self.assertTrue(self.ledger.verify_integrity()["audit_structure_valid"])
+        with self.assertRaisesRegex(ContractError, "head mismatch"):
+            self.ledger.verify_anchor(trusted_head)
+
+    def test_detached_anchor_rejects_untrusted_or_malformed_expected_heads(self):
+        self.submit()
+        trusted = self.ledger.export_anchor()
+        invalid = (
+            None, "", {}, {**trusted, "events_checked": True},
+            {**trusted, "events_checked": -1},
+            {**trusted, "format": "another-format"},
+            {**trusted, "head_hmac": "a" * 64},
+            {**trusted, "head_hmac": "f" * 63},
+            {**trusted, "reconciled": True},
+        )
+        for case in invalid:
+            with self.subTest(case=case), self.assertRaises(ContractError):
+                self.ledger.verify_anchor(case)
+        reopened = OfflineClassificationLedger(self.db_path, hmac_key=self.key)
+        self.assertTrue(reopened.verify_anchor(trusted)["anchor_matches"])
+
     def test_explicit_key_and_file_are_required(self):
         with self.assertRaises(ContractError):
             OfflineClassificationLedger(self.db_path, hmac_key=b"short")
