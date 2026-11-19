@@ -6,64 +6,20 @@ bank ownership remain unverified. The output never includes identifiers or
 monetary totals, and no data is written.
 """
 from hq_reconciliation_contracts import (
-    ContractError, _ref, normalise_dna_rows, normalise_monzo_rows,
+    ContractError, _ref, _validated_dna_events, _validated_monzo_events,
     preview_processor_batches,
 )
 
 _MAX_LINKS = 500
-_MAX_EVENTS = 5000
 
 
 def _canonical_bank(preview):
-    if (not isinstance(preview, dict) or preview.get("provider") != "monzo"
-            or preview.get("source_mapping_verified") is not False):
-        raise ContractError("An unverified canonical Monzo preview is required")
-    events = preview.get("events")
-    if not isinstance(events, tuple) or len(events) > _MAX_EVENTS:
-        raise ContractError("Canonical bank evidence must be a bounded tuple")
-    if not events:
-        return {}
-    try:
-        scope = events[0]["account_ref"]
-        canonical = normalise_monzo_rows([{
-            "transaction_id": event["transaction_id"],
-            "amount_pence": event["amount_pence"],
-            "currency": event["currency"],
-            "booked_at": event["occurred_at"],
-        } for event in events], account_ref=scope)
-    except (KeyError, TypeError, AttributeError, IndexError):
-        raise ContractError("Malformed canonical bank evidence") from None
-    if canonical["events"] != events:
-        raise ContractError("Bank evidence was modified or mixed across accounts")
+    events = _validated_monzo_events(preview)
     return {event["transaction_id"]: event["amount_pence"] for event in events}
 
 
 def _canonical_processor(preview):
-    if (not isinstance(preview, dict) or preview.get("provider") != "dna"
-            or preview.get("source_mapping_verified") is not False):
-        raise ContractError("An unverified canonical DNA preview is required")
-    events = preview.get("events")
-    if not isinstance(events, tuple) or len(events) > _MAX_EVENTS:
-        raise ContractError("Canonical processor evidence must be a bounded tuple")
-    if not events:
-        return {}, 0
-    try:
-        scope = events[0]["merchant_ref"]
-        canonical = normalise_dna_rows([{
-            "event_id": event["event_id"],
-            "payment_id": event["payment_id"],
-            "kind": event["kind"],
-            "gross_pence": event["gross_pence"],
-            "fee_pence": event["fee_pence"],
-            "net_pence": event["net_pence"],
-            "currency": event["currency"],
-            "occurred_at": event["occurred_at"],
-            "batch_id": event["batch_id"],
-        } for event in events], merchant_ref=scope)
-    except (KeyError, TypeError, AttributeError, IndexError):
-        raise ContractError("Malformed canonical processor evidence") from None
-    if canonical["events"] != events:
-        raise ContractError("Processor evidence was modified or mixed across merchants")
+    events = _validated_dna_events(preview)
     batches = preview_processor_batches(preview)["batches"]
     unbatched = sum(event["batch_id"] is None for event in events)
     return {key: batch["net_pence"] for key, batch in batches.items()}, unbatched

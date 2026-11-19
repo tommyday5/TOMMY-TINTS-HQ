@@ -97,6 +97,29 @@ class MonzoContractTests(unittest.TestCase):
         with self.assertRaises(ContractError):
             preview_bank_rollforward({}, opening_pence=0, closing_pence=0)
 
+    def test_rollforward_revalidates_mutable_canonical_bank_preview(self):
+        original = normalise_monzo_rows([
+            bank(), bank(transaction_id="tx-002", amount_pence=-700),
+        ], account_ref="account-A")
+        first, second = original["events"]
+        alterations = (
+            dict(original, source_mapping_verified=True),
+            dict(original, bank_balance_verified=True),
+            dict(original, verified_trading_receipts_pence=11830),
+            dict(original, events=(first, first)),
+            dict(original, events=({**first, "account_ref": "account-B"}, second)),
+            dict(original, events=({**first, "amount_pence": 12531}, second)),
+            dict(original, events=({**first, "classification": "customer_receipt_candidate"}, second)),
+            dict(original, events=({**first, "currency": "EUR"}, second)),
+            dict(original, events=[first, second]),
+            dict(original, events=(first, {"provider": "monzo"})),
+            dict(original, events=(first,) * 5001),
+        )
+        for case, modified in enumerate(alterations):
+            with self.subTest(case=case), self.assertRaises(ContractError):
+                preview_bank_rollforward(modified, opening_pence=100, closing_pence=11930)
+
+
 
 class DnaContractTests(unittest.TestCase):
     def test_refunds_chargebacks_and_fees_remain_signed_provider_events(self):
@@ -146,6 +169,28 @@ class DnaContractTests(unittest.TestCase):
         a = normalise_dna_rows([card()], merchant_ref="merchant-A")
         b = normalise_dna_rows([card()], merchant_ref="merchant-B")
         self.assertNotEqual(a["events"][0]["evidence_id"], b["events"][0]["evidence_id"])
+
+    def test_processor_batch_summary_revalidates_mutable_canonical_preview(self):
+        original = normalise_dna_rows([card()], merchant_ref="merchant-A")
+        event = original["events"][0]
+        alterations = (
+            dict(original, source_mapping_verified=True),
+            dict(original, bank_settlement_verified=True),
+            dict(original, verified_job_receipts_pence=9880),
+            dict(original, events=({**event, "merchant_ref": "merchant-B"},)),
+            dict(original, events=({**event, "gross_pence": 20000},)),
+            dict(original, events=({**event, "fee_pence": 121},)),
+            dict(original, events=({**event, "net_pence": 9881},)),
+            dict(original, events=({**event, "bank_settlement_verified": True},)),
+            dict(original, events=(event, event)),
+            dict(original, events=[event]),
+            dict(original, events=({**event, "event_id": "evt/invalid"},)),
+            dict(original, events=(event,) * 5001),
+        )
+        for case, modified in enumerate(alterations):
+            with self.subTest(case=case), self.assertRaises(ContractError):
+                preview_processor_batches(modified)
+
 
 
 if __name__ == "__main__":

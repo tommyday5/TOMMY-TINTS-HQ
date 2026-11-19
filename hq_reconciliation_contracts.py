@@ -7,6 +7,8 @@ No adapter should use the resulting preview as live financial evidence.
 """
 from collections import defaultdict
 from datetime import datetime, timezone
+import hashlib
+import json
 import re
 
 _REF = re.compile(r"[A-Za-z0-9._-]{1,128}\Z")
@@ -72,6 +74,20 @@ def _gbp(row):
         raise ContractError("Only explicitly GBP-mapped evidence is supported")
 
 
+def _event_digest(events):
+    """Unkeyed in-process mutation guard, NOT trusted provider provenance.
+
+    Both an event and this checksum can be replaced by an actor who controls
+    the preview. Real bank/merchant evidence needs independent authentication.
+    """
+    try:
+        payload = json.dumps(events, sort_keys=True, separators=(",", ":"),
+                             ensure_ascii=True, allow_nan=False)
+    except (TypeError, ValueError, OverflowError):
+        raise ContractError("Malformed canonical event payload") from None
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def normalise_monzo_rows(rows, *, account_ref):
     """Preview already-mapped Monzo bank rows; does NOT read Monzo or a CSV.
 
@@ -100,6 +116,7 @@ def normalise_monzo_rows(rows, *, account_ref):
     events, duplicates = _dedupe(prepared)
     return {
         "provider": "monzo", "events": events, "duplicate_rows": duplicates,
+        "canonical_event_digest": _event_digest(events),
         "source_mapping_verified": False, "bank_balance_verified": False,
         "verified_trading_receipts_pence": None, "reconciled": False,
     }
@@ -153,21 +170,85 @@ def normalise_dna_rows(rows, *, merchant_ref):
     events, duplicates = _dedupe(prepared)
     return {
         "provider": "dna", "events": events, "duplicate_rows": duplicates,
+        "canonical_event_digest": _event_digest(events),
         "source_mapping_verified": False, "bank_settlement_verified": False,
         "verified_job_receipts_pence": None, "reconciled": False,
     }
 
 
+def _validated_monzo_events(preview):
+    """Revalidate an entire canonical preview before downstream arithmetic.
+
+    Preview objects are plain mutable dictionaries. A UI or future staging
+    adapter must not assume they are still canonical merely because an earlier
+    function returned them. This never authenticates actual bank evidence.
+    """
+    if (not isinstance(preview, dict) or preview.get("provider") != "monzo"
+            or preview.get("source_mapping_verified") is not False
+            or preview.get("bank_balance_verified") is not False
+            or preview.get("verified_trading_receipts_pence") is not None
+            or preview.get("reconciled") is not False):
+        raise ContractError("An unverified canonical Monzo preview is required")
+    events = preview.get("events")
+    if not isinstance(events, tuple) or len(events) > _MAX_ROWS:
+        raise ContractError("Canonical bank evidence must be a bounded tuple")
+    if preview.get("canonical_event_digest") != _event_digest(events):
+        raise ContractError("Canonical bank preview was changed after normalisation")
+    if not events:
+        return events
+    try:
+        account = events[0]["account_ref"]
+        rebuilt = normalise_monzo_rows([{
+            "transaction_id": event["transaction_id"],
+            "amount_pence": event["amount_pence"],
+            "currency": event["currency"],
+            "booked_at": event["occurred_at"],
+        } for event in events], account_ref=account)
+    except (KeyError, TypeError, AttributeError, IndexError):
+        raise ContractError("Malformed canonical bank evidence") from None
+    if rebuilt["events"] != events:
+        raise ContractError("Bank evidence was modified, duplicated or mixed across accounts")
+    return events
+
+
+def _validated_dna_events(preview):
+    """Reject forged/mixed processor evidence before batch arithmetic."""
+    if (not isinstance(preview, dict) or preview.get("provider") != "dna"
+            or preview.get("source_mapping_verified") is not False
+            or preview.get("bank_settlement_verified") is not False
+            or preview.get("verified_job_receipts_pence") is not None
+            or preview.get("reconciled") is not False):
+        raise ContractError("An unverified canonical DNA preview is required")
+    events = preview.get("events")
+    if not isinstance(events, tuple) or len(events) > _MAX_ROWS:
+        raise ContractError("Canonical processor evidence must be a bounded tuple")
+    if preview.get("canonical_event_digest") != _event_digest(events):
+        raise ContractError("Canonical processor preview was changed after normalisation")
+    if not events:
+        return events
+    try:
+        merchant = events[0]["merchant_ref"]
+        rebuilt = normalise_dna_rows([{
+            "event_id": event["event_id"],
+            "payment_id": event["payment_id"],
+            "kind": event["kind"],
+            "gross_pence": event["gross_pence"],
+            "fee_pence": event["fee_pence"],
+            "net_pence": event["net_pence"],
+            "currency": event["currency"],
+            "occurred_at": event["occurred_at"],
+            "batch_id": event["batch_id"],
+        } for event in events], merchant_ref=merchant)
+    except (KeyError, TypeError, AttributeError, IndexError):
+        raise ContractError("Malformed canonical processor evidence") from None
+    if rebuilt["events"] != events:
+        raise ContractError("Processor evidence was modified, duplicated or mixed across merchants")
+    return events
+
+
 def preview_bank_rollforward(bank_preview, *, opening_pence=None, closing_pence=None):
     """Arithmetic-only check. Matching totals do not authenticate bank balances."""
-    if not isinstance(bank_preview, dict) or bank_preview.get("provider") != "monzo":
-        raise ContractError("A canonical Monzo preview is required")
-    events = bank_preview.get("events")
-    if not isinstance(events, tuple) or any(
-        not isinstance(item, dict) or item.get("provider") != "monzo"
-        or type(item.get("amount_pence")) is not int for item in events
-    ):
-        raise ContractError("Invalid canonical bank events")
+    events = _validated_monzo_events(bank_preview)
     net = sum(item["amount_pence"] for item in events)
     if opening_pence is None or closing_pence is None:
         return {
@@ -188,16 +269,13 @@ def preview_bank_rollforward(bank_preview, *, opening_pence=None, closing_pence=
 
 def preview_processor_batches(processor_preview):
     """Provider-side net grouping, NEVER evidence of a Monzo bank receipt."""
-    if not isinstance(processor_preview, dict) or processor_preview.get("provider") != "dna":
-        raise ContractError("A canonical DNA preview is required")
+    events = _validated_dna_events(processor_preview)
     batches = defaultdict(lambda: {"event_count": 0, "net_pence": 0})
-    for event in processor_preview.get("events", ()):
-        if not isinstance(event, dict) or event.get("provider") != "dna":
-            raise ContractError("Invalid canonical processor events")
-        if event.get("batch_id") is not None:
-            batch_id = _ref(event["batch_id"], "processor batch ID")
+    for event in events:
+        if event["batch_id"] is not None:
+            batch_id = event["batch_id"]
             batches[batch_id]["event_count"] += 1
-            batches[batch_id]["net_pence"] += _pence(event.get("net_pence"), "net")
+            batches[batch_id]["net_pence"] += event["net_pence"]
     return {
         "batches": {key: batches[key] for key in sorted(batches)},
         "bank_settlement_verified": False, "job_receipts_verified": False,
