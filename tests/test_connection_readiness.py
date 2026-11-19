@@ -96,7 +96,7 @@ class ReadinessUnitTests(unittest.TestCase):
         self.assertFalse(fresh["read_stale"])
         self.assertEqual(fresh["blocker"], profile["reconcile"])
 
-    def test_stale_persisted_sync_needs_own_recheck_despite_fresh_read(self):
+    def test_outdated_sync_marker_without_matching_proof_requires_refresh(self):
         self.assertTrue(record_committed_sync("gmail"))
         old = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
         with sqlite3.connect(os.path.join(os.environ["HQ_DATA_DIR"],
@@ -104,11 +104,11 @@ class ReadinessUnitTests(unittest.TestCase):
             db.execute("UPDATE integration_checks SET last_success=? WHERE provider=?",
                        (old, "gmail_sync"))
         row = self.build({"gmail": {"configured": True, "consent": True}})["gmail"]
-        self.assertTrue(row["sync_tested"])
+        self.assertFalse(row["sync_tested"])
         self.assertFalse(row["read_stale"])
-        self.assertTrue(row["sync_stale"])
-        self.assertIn("persisted sync", row["blocker"])
-        self.assertIn("stale", row["stages"]["sync_tested"].lower())
+        self.assertFalse(row["sync_stale"])
+        self.assertTrue(row["sync_proof_unverified"])
+        self.assertIn("atomic", row["blocker"])
         profile = next(p for p in PROFILES if p["key"] == "gmail")
         self.assertEqual(row["next_safe_action"], profile["read"])
         self.assertFalse(row["reconciled"])
@@ -431,8 +431,7 @@ class ReadinessHttpTests(unittest.TestCase):
     def test_gmail_storage_failure_is_recorded_as_sync_not_provider_read(self):
         with self.client.session_transaction() as session:
             session["csrf"] = "fixture-csrf"
-        record_check("gmail")
-        record_check("gmail_sync")
+        record_committed_sync("gmail")
         with self.client.session_transaction() as session:
             session["gmail_token_key"] = "fixture-gmail-key"
         with patch("app._gmail_tokens", {
@@ -454,8 +453,7 @@ class ReadinessHttpTests(unittest.TestCase):
     def test_square_booking_storage_failure_is_recorded_as_sync(self):
         with self.client.session_transaction() as session:
             session["csrf"] = "fixture-csrf"
-        record_check("square")
-        record_check("square_sync")
+        record_committed_sync("square")
         with patch.dict(os.environ, {
                 "HQ_SQUARE_READ_TOKEN": "fixture-read-only",
                 "HQ_SQUARE_LOCATION_ID": "fixture-location"}), patch(
