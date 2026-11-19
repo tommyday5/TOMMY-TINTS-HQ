@@ -3,11 +3,14 @@ import os
 import sqlite3
 import tempfile
 import time
+from datetime import datetime, timedelta, timezone
 import unittest
 from unittest.mock import patch
 
 from hq_connection_readiness import build_readiness, PROFILES
-from hq_integration_health import PersistedSyncError, integration_status, record_check
+from hq_integration_health import (
+    PersistedSyncError, integration_status, record_check, record_committed_sync,
+)
 
 
 class ReadinessUnitTests(unittest.TestCase):
@@ -67,6 +70,52 @@ class ReadinessUnitTests(unittest.TestCase):
         self.assertIsNone(rows["square_payments"]["sync_last_success"])
         self.assertIsNone(rows["square_payments"]["authorised"])
         self.assertFalse(rows["square_payments"]["reconciled"])
+
+    def test_seven_day_read_recheck_keeps_historical_stage_and_source_specific_action(self):
+        record_check("pricing_sheets")
+        old = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
+        with sqlite3.connect(os.path.join(os.environ["HQ_DATA_DIR"],
+                                          "integration_health.sqlite3")) as db:
+            db.execute("UPDATE integration_checks SET last_success=? WHERE provider=?",
+                       (old, "pricing_sheets"))
+        row = self.build({"sheets": {"configured": True, "consent": True}})["sheets"]
+        self.assertTrue(row["read_tested"])  # historical evidence is retained
+        self.assertTrue(row["read_stale"])
+        self.assertFalse(row["sync_stale"])
+        self.assertTrue(row["authorised"])  # historically read-confirmed only
+        self.assertEqual(row["last_success"], old)
+        self.assertIn("seven days", row["blocker"])
+        self.assertIn("stale", row["stages"]["read_tested"].lower())
+        profile = next(p for p in PROFILES if p["key"] == "sheets")
+        self.assertEqual(row["next_safe_action"], profile["read"])
+        self.assertFalse(row["reconciled"])
+        # A new owner-initiated successful read clears the advisory flag;
+        # neither local observation establishes a finance reconciliation.
+        record_check("pricing_sheets")
+        fresh = self.build({"sheets": {"configured": True, "consent": True}})["sheets"]
+        self.assertFalse(fresh["read_stale"])
+        self.assertEqual(fresh["blocker"], profile["reconcile"])
+
+    def test_stale_persisted_sync_needs_own_recheck_despite_fresh_read(self):
+        self.assertTrue(record_committed_sync("gmail"))
+        old = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
+        with sqlite3.connect(os.path.join(os.environ["HQ_DATA_DIR"],
+                                          "integration_health.sqlite3")) as db:
+            db.execute("UPDATE integration_checks SET last_success=? WHERE provider=?",
+                       (old, "gmail_sync"))
+        row = self.build({"gmail": {"configured": True, "consent": True}})["gmail"]
+        self.assertTrue(row["sync_tested"])
+        self.assertFalse(row["read_stale"])
+        self.assertTrue(row["sync_stale"])
+        self.assertIn("persisted sync", row["blocker"])
+        self.assertIn("stale", row["stages"]["sync_tested"].lower())
+        profile = next(p for p in PROFILES if p["key"] == "gmail")
+        self.assertEqual(row["next_safe_action"], profile["read"])
+        self.assertFalse(row["reconciled"])
+        self.assertTrue(record_committed_sync("gmail"))
+        fresh = self.build({"gmail": {"configured": True, "consent": True}})["gmail"]
+        self.assertFalse(fresh["sync_stale"])
+        self.assertEqual(fresh["blocker"], profile["reconcile"])
 
     def test_last_read_failure_preserves_historical_success_not_current_health(self):
         record_check("square_payments")
