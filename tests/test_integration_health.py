@@ -101,7 +101,9 @@ class IntegrationHealthTests(unittest.TestCase):
             self.assertEqual(observed["sync_successes"][provider],
                              observed["integrations"][0]["last_success"])
             self.assertFalse(observed["sync_failures"][provider]["needs_attention"])
-            self.assertIsNone(observed["sync_failures"][provider]["last_error"])
+            # Preserve the historical error for audit, but clear current attention.
+            self.assertEqual(observed["sync_failures"][provider]["last_error"],
+                             "Earlier storage failure")
         with self.assertRaises(ValueError):
             record_committed_sync("finance")
 
