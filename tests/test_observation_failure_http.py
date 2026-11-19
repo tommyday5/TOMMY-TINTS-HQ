@@ -21,6 +21,8 @@ class ObservationFailureHttpTests(unittest.TestCase):
             "HQ_DATA_DIR": tmp.name,
             "HQ_SESSION_SECRET": "fixture-observation-failure-secret",
             "HQ_ALLOWED_GOOGLE_EMAIL": "owner@example.invalid",
+            "GOOGLE_CLIENT_ID": "fixture-id",
+            "GOOGLE_CLIENT_SECRET": "fixture-secret",
         })
         env.start()
         self.addCleanup(env.stop)
