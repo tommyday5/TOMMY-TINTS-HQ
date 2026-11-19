@@ -19,7 +19,9 @@ class ReadinessUnitTests(unittest.TestCase):
 
     def build(self, signals=None):
         return {r["key"]: r for r in build_readiness(integration_status([
-            ("sheets", "Google Sheets", False), ("finance", "Sheets finance", False),
+            ("pricing_sheets", "Google Sheets", False),
+            ("maintenance_sheets", "Maintenance Sheets", False),
+            ("finance", "Sheets finance", False),
             ("calendar", "Google Calendar", False),
             ("gmail", "Gmail", False), ("square", "Square", False),
             ("square_payments", "Square payments", False),
@@ -49,7 +51,7 @@ class ReadinessUnitTests(unittest.TestCase):
             self.assertFalse(row["reconciled"])
 
     def test_separate_finance_read_evidence_and_persisted_snapshot_stages(self):
-        record_check("sheets")
+        record_check("pricing_sheets")
         record_check("square_payments")
         rows = self.build({
             "sheets": {"configured": True, "consent": True},
@@ -95,11 +97,41 @@ class ReadinessUnitTests(unittest.TestCase):
             self.assertTrue(row["sync_last_success"])
             self.assertFalse(row["reconciled"])
 
+    def test_legacy_shared_sheet_history_is_not_source_specific_evidence(self):
+        # Old history mixed pricing and maintenance and cannot attest either.
+        record_check("sheets")
+        rows = self.build({
+            "sheets": {"configured": True, "consent": True},
+            "maintenance_sheets": {"configured": True, "consent": True},
+        })
+        self.assertFalse(rows["sheets"]["read_tested"])
+        self.assertFalse(rows["maintenance_sheets"]["read_tested"])
+        self.assertFalse(rows["sheets"]["reconciled"])
+
+    def test_maintenance_sheet_observations_never_advance_pricing_or_finance(self):
+        signals = {key: {"configured": True, "consent": True}
+                   for key in ("sheets", "maintenance_sheets", "finance")}
+        record_check("maintenance_sheets")
+        rows = self.build(signals)
+        self.assertTrue(rows["maintenance_sheets"]["read_tested"])
+        self.assertFalse(rows["sheets"]["read_tested"])
+        self.assertFalse(rows["finance"]["read_tested"])
+        self.assertFalse(rows["maintenance_sheets"]["sync_applicable"])
+        record_check("maintenance_sheets", "Fixture maintenance read failed")
+        rows = self.build(signals)
+        self.assertIn("maintenance", rows["maintenance_sheets"]["blocker"])
+        self.assertFalse(rows["sheets"]["read_tested"])
+        record_check("pricing_sheets")
+        rows = self.build(signals)
+        self.assertTrue(rows["sheets"]["read_tested"])
+        self.assertEqual(rows["maintenance_sheets"]["blocker"],
+                         "Fixture maintenance read failed")
+
     def test_source_reads_not_committed_syncs(self):
         for provider in ("sheets", "finance", "calendar", "square_payments"):
             record_check(provider)
         rows = self.build({key: {"configured": True, "consent": True}
-                           for key in ("sheets", "finance", "calendar")})
+                           for key in ("sheets", "maintenance_sheets", "finance", "calendar")})
         for key in ("sheets", "finance", "calendar", "square_payments"):
             self.assertTrue(rows[key]["read_tested"])
             self.assertFalse(rows[key]["sync_tested"])
@@ -135,12 +167,12 @@ class ReadinessUnitTests(unittest.TestCase):
         self.assertFalse(row["reconciled"])
 
     def test_read_only_workflows_do_not_require_nonexistent_sync(self):
-        for key in ("sheets", "finance", "calendar"):
+        for key in ("pricing_sheets", "maintenance_sheets", "finance", "calendar"):
             record_check(key)
         rows = self.build({key: {"configured": True, "consent": True}
-                           for key in ("sheets", "finance", "calendar")})
+                           for key in ("sheets", "maintenance_sheets", "finance", "calendar")})
         for profile in PROFILES:
-            if profile["key"] not in ("sheets", "finance", "calendar"):
+            if profile["key"] not in ("sheets", "maintenance_sheets", "finance", "calendar"):
                 continue
             row = rows[profile["key"]]
             self.assertTrue(row["read_tested"])
@@ -158,7 +190,7 @@ class ReadinessUnitTests(unittest.TestCase):
 
     def test_failed_history_read_is_not_misrepresented_as_no_events(self):
         with patch("hq_integration_health._db_path", side_effect=OSError("unavailable")):
-            health = integration_status([("sheets", "Google Sheets", True)])
+            health = integration_status([("pricing_sheets", "Google Sheets", True)])
         row = build_readiness(health, {"sheets": {"configured": True, "consent": True}})[0]
         self.assertIsNone(row["read_tested"])
         self.assertIsNone(row["sync_tested"])
@@ -290,6 +322,18 @@ class ReadinessHttpTests(unittest.TestCase):
         self.assertTrue(row["sync_tested"])
         self.assertEqual(row["blocker"], "Square booking snapshot commit failed")
         self.assertFalse(row["reconciled"])
+
+    def test_maintenance_http_read_does_not_advance_pricing(self):
+        with patch("app._google_connection", return_value=("fixture-token", time.time() + 60)), \
+             patch("app.maintenance_data", return_value={"visits": []}):
+            response = self.client.get("/api/hq/maintenance")
+        self.assertEqual(response.status_code, 200)
+        rows = {r["key"]: r for r in self.client.get(
+            "/api/hq/integrations").json["readiness"]}
+        self.assertTrue(rows["maintenance_sheets"]["read_tested"])
+        self.assertFalse(rows["sheets"]["read_tested"])
+        self.assertFalse(rows["finance"]["read_tested"])
+        self.assertFalse(rows["maintenance_sheets"]["reconciled"])
 
     def test_finance_read_is_independently_recorded_from_pricing(self):
         with patch.dict(os.environ, {"HQ_GOOGLE_SERVICE_ACCOUNT_JSON": "{}"}):
