@@ -30,7 +30,8 @@ import hq_square_bookings as square
 import hq_square_payments as square_payments
 from hq_payment_review import payment_review
 from hq_transaction_preview import transaction_preview
-from hq_integration_health import PersistedSyncError, integration_status, record_check
+from hq_integration_health import (PersistedSyncError, integration_status, record_check,
+                                   record_committed_sync)
 from hq_connection_readiness import build_readiness
 from hq_workflow_readiness import build_workflow_readiness
 from hq_version import ICON_VERSION, UPDATE_SCRIPT_VERSION, build_version
@@ -1137,9 +1138,8 @@ def hq_gmail_queue():
         except Exception:
             record_check("gmail", "Read-only Gmail import failed")
             return "Gmail import failed. Check Integration Health.", 502
-        record_check("gmail")
         # import_page has committed to the persistent queue before returning.
-        record_check("gmail_sync")
+        record_committed_sync("gmail")
     try:
         count, rows = gmail.queue()
     except (OSError, sqlite3.Error):
@@ -1183,9 +1183,8 @@ def hq_square_snapshot():
         except Exception:
             record_check("square", "Read-only Square booking retrieval failed")
             return "Square booking retrieval failed. Check Integration Health.", 502
-        record_check("square")
         # refresh_bookings commits its versioned snapshot before returning.
-        record_check("square_sync")
+        record_committed_sync("square")
     try:
         rows = square.upcoming_bookings()
     except (OSError, sqlite3.Error):

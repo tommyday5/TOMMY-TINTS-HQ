@@ -88,3 +88,57 @@ class IntegrationHealthTests(unittest.TestCase):
                     "start": "2026-11-18T09:00:00Z", "end": "2026-11-18T10:00:00Z",
                 }).status_code, 200)
                 self.assertEqual(self.providers()["Google Calendar"]["status"], "Last read succeeded")
+
+    def test_committed_provider_reads_and_snapshots_record_atomically(self):
+        from hq_integration_health import record_check, record_committed_sync, integration_status
+        for provider in ("gmail", "square", "square_payments"):
+            record_check(provider, "Earlier upstream failure")
+            record_check(provider + "_sync", "Earlier storage failure")
+            self.assertTrue(record_committed_sync(provider))
+            observed = integration_status([(provider, provider, True)])
+            self.assertTrue(observed["history_available"])
+            self.assertEqual(observed["integrations"][0]["status"], "Last read succeeded")
+            self.assertEqual(observed["sync_successes"][provider],
+                             observed["integrations"][0]["last_success"])
+            self.assertFalse(observed["sync_failures"][provider]["needs_attention"])
+            # Preserve the historical error for audit, but clear current attention.
+            self.assertEqual(observed["sync_failures"][provider]["last_error"],
+                             "Earlier storage failure")
+        with self.assertRaises(ValueError):
+            record_committed_sync("finance")
+
+    def test_failed_second_observation_rolls_back_first_success(self):
+        from hq_integration_health import record_check, record_committed_sync, integration_status
+        record_check("gmail", "Previous upstream failure")
+        record_check("gmail_sync", "Previous snapshot failure")
+        path = self.data_dir / "integration_health.sqlite3"
+        with sqlite3.connect(path) as db:
+            db.execute("""CREATE TRIGGER fail_fixture_sync
+                BEFORE INSERT ON integration_checks
+                WHEN NEW.provider = 'gmail_sync'
+                BEGIN SELECT RAISE(FAIL, 'synthetic second write failure'); END""")
+        self.assertFalse(record_committed_sync("gmail"))
+        with sqlite3.connect(path) as db:
+            states = {r[0]: (r[1], r[2], r[3]) for r in db.execute(
+                "SELECT provider, last_success, last_error, needs_attention "
+                "FROM integration_checks")}
+        for key in ("gmail", "gmail_sync"):
+            self.assertIsNone(states[key][0])
+            self.assertEqual(states[key][2], 1)
+        self.assertEqual(states["gmail"][1], "Previous upstream failure")
+        self.assertEqual(states["gmail_sync"][1], "Previous snapshot failure")
+        health = integration_status([("gmail", "Gmail", True)])
+        self.assertIsNone(health["integrations"][0]["last_success"])
+        self.assertIsNone(health["sync_successes"]["gmail"])
+        self.assertTrue(health["sync_failures"]["gmail"]["needs_attention"])
+
+        # Removing the synthetic fault allows the legitimate subsequent
+        # post-commit observation to recover both stages without erasing data.
+        with sqlite3.connect(path) as db:
+            db.execute("DROP TRIGGER fail_fixture_sync")
+        self.assertTrue(record_committed_sync("gmail"))
+        health = integration_status([("gmail", "Gmail", True)])
+        self.assertTrue(health["integrations"][0]["last_success"])
+        self.assertEqual(health["sync_successes"]["gmail"],
+                         health["integrations"][0]["last_success"])
+        self.assertFalse(health["sync_failures"]["gmail"]["needs_attention"])
