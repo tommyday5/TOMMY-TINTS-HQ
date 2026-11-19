@@ -21,16 +21,19 @@ class GmailTests(unittest.TestCase):
                          HQ_ALLOWED_GOOGLE_EMAIL="owner@example.invalid")
         env.start()
         self.addCleanup(env.stop)
-        self.responses = [{"emailAddress": gmail.MAILBOX}, {"messages": [{"id": "abc"}]},
-                          {"id": "abc", "snippet": "<script>ignored</script>", "payload": {"headers": []}}]
+        self.responses = [{"emailAddress": gmail.MAILBOX},
+                          {"labels": [{"name": "HQ-Enquiries", "id": "Label_Enquiries"}]},
+                          {"messages": [{"id": "abc"}]},
+                          {"id": "abc", "labelIds": ["INBOX", "Label_Enquiries"],
+                           "snippet": "<script>ignored</script>", "payload": {"headers": []}}]
 
     def test_idempotent_retry_and_persistent_review(self):
         with patch.object(gmail, "_get", side_effect=self.responses * 3) as api:
             self.assertEqual(gmail.import_page("token")["added"], 1)
-            self.assertEqual(api.call_args_list[1].kwargs["q"],
+            self.assertEqual(api.call_args_list[2].kwargs["q"],
                              "in:inbox label:HQ-Enquiries -label:HQ-Legal -label:HQ-Debt")
             self.assertEqual(gmail.import_page("token", "cursor")["added"], 0)
-            self.assertEqual(api.call_args_list[4].kwargs["pageToken"], "cursor")
+            self.assertEqual(api.call_args_list[6].kwargs["pageToken"], "cursor")
             self.assertEqual(gmail.queue()[0], 1)
             self.assertTrue(gmail.review("abc"))
             self.assertEqual(gmail.import_page("token")["added"], 0)
@@ -38,7 +41,7 @@ class GmailTests(unittest.TestCase):
 
     def test_wrong_mailbox_or_failed_read_never_writes_a_partial_batch(self):
         for responses in ([{"emailAddress": "wrong@example.invalid"}],
-                          self.responses[:2] + [RuntimeError("provider failed")]):
+                          self.responses[:3] + [RuntimeError("provider failed")]):
             with patch.object(gmail, "_get", side_effect=responses):
                 with self.assertRaises((ValueError, RuntimeError)):
                     gmail.import_page("token")
