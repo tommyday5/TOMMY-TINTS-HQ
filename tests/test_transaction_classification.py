@@ -1,7 +1,9 @@
 """Offline classification tests: synthetic IDs and no real financial data."""
 import unittest
 
-from hq_reconciliation_contracts import ContractError, normalise_monzo_rows, normalise_dna_rows
+from hq_reconciliation_contracts import (
+    ContractError, _event_digest, normalise_monzo_rows, normalise_dna_rows,
+)
 from hq_transaction_classification import CATEGORIES, preview_manual_classifications
 
 
@@ -97,6 +99,53 @@ class ClassificationReviewTests(unittest.TestCase):
                  "evidence_id": "monzo:other-account:tx002"}
         with self.assertRaises(ContractError):
             preview_manual_classifications({**bank, "events": (first, mixed)}, {})
+
+    def test_valid_looking_mutation_cannot_be_classified_as_bank_credit(self):
+        bank = rows()
+        # The debit now looks like a credit, but its original canonical
+        # fingerprint must be checked BEFORE any classification decision.
+        changed = {**bank["events"][1], "amount_pence": 2500}
+        forged = {**bank, "events": (
+            bank["events"][0], changed, bank["events"][2],
+        )}
+        with self.assertRaises(ContractError):
+            preview_manual_classifications(
+                forged, {"tx002": "customer_receipt_candidate"})
+
+        # A different valid timestamp or sequence must not silently alter
+        # which statement evidence is being reviewed.
+        altered_time = {**bank["events"][0],
+                        "occurred_at": "2026-11-18T11:05:00+00:00"}
+        with self.assertRaises(ContractError):
+            preview_manual_classifications({
+                **bank, "events": (altered_time, *bank["events"][1:]),
+            }, {"tx001": "customer_receipt_candidate"})
+        with self.assertRaises(ContractError):
+            preview_manual_classifications({
+                **bank, "events": tuple(reversed(bank["events"])),
+            }, {"tx001": "customer_receipt_candidate"})
+
+    def test_review_rejects_forged_verification_flags_and_rewritten_digest(self):
+        bank = rows()
+        # The local digest alone is not a provider signature. Even if a
+        # caller recomputes it, inconsistent canonical event fields fail.
+        forged_events = ({**bank["events"][0], "bank_receipt_verified": True},
+                         *bank["events"][1:])
+        forged = {**bank, "events": forged_events,
+                  "canonical_event_digest": _event_digest(forged_events)}
+        with self.assertRaises(ContractError):
+            preview_manual_classifications(
+                forged, {"tx001": "customer_receipt_candidate"})
+        for changed in (
+            {**bank, "canonical_event_digest": None},
+            {**bank, "source_mapping_verified": True},
+            {**bank, "bank_balance_verified": True},
+            {**bank, "verified_trading_receipts_pence": 10000},
+            {**bank, "reconciled": True},
+        ):
+            with self.subTest(changed_fields=set(changed) - set(bank) or "flags"), self.assertRaises(ContractError):
+                preview_manual_classifications(
+                    changed, {"tx001": "customer_receipt_candidate"})
 
     def test_dna_events_cannot_be_misclassified_as_bank_credits(self):
         dna = normalise_dna_rows([{
