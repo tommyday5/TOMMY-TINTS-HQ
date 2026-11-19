@@ -128,10 +128,15 @@ def build_readiness(health, signals):
         # Historical upstream reads cannot establish that storage committed.
         # New explicit markers are recorded only after each import/snapshot
         # operation returns successfully; legacy records remain unverified.
-        raw_sync = (health.get("sync_successes", {}).get(key)
+        raw_sync = (health.get("sync_raw_successes", {}).get(key)
                     if history_available and profile["persisted_read"] else None)
-        sync_success = _observation_time(raw_sync)
-        sync_evidence_invalid = raw_sync is not None and sync_success is None
+        paired_sync = (health.get("sync_successes", {}).get(key)
+                       if history_available and profile["persisted_read"] else None)
+        sync_success = _observation_time(paired_sync)
+        sync_evidence_invalid = (raw_sync is not None
+                                 and _observation_time(raw_sync) is None)
+        sync_unpaired = (health.get("sync_unpaired", {}).get(key) is True
+                         if history_available and profile["persisted_read"] else False)
         # Do not erase a historically valid stage solely because it aged.
         # Surface a separate advisory blocker prompting the owner to rerun
         # the exact source-specific read/persisted snapshot.
@@ -170,6 +175,11 @@ def build_readiness(health, signals):
             # recent failed persistence attempt behind that old success.
             blocker = sync_error or "Most recent persisted sync failed; historical success may be stale."
             next_action = profile["read"]
+        elif sync_unpaired:
+            blocker = ("A stored sync success marker has no matching atomic read-and-"
+                       "commit proof. Legacy or independently written markers cannot "
+                       "establish that the provider snapshot was persisted.")
+            next_action = profile["read"]
         elif read_stale or sync_stale:
             stale_stage = ("read and persisted sync" if read_stale and sync_stale
                            else "upstream read" if read_stale else "persisted sync")
@@ -202,6 +212,7 @@ def build_readiness(health, signals):
             "observation_integrity_issue": read_evidence_invalid or sync_evidence_invalid,
             "sync_applicable": profile["persisted_read"],
             "sync_needs_attention": sync_needs_attention,
+            "sync_proof_unverified": sync_unpaired,
             "sync_last_error": sync_error,
             "sync_last_error_at": (sync_observation.get("last_error_at")
                                    if sync_needs_attention else None),

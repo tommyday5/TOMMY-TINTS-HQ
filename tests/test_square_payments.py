@@ -132,10 +132,9 @@ class SquarePaymentEvidenceTests(unittest.TestCase):
         self.assertEqual(square_health["status"], "Last read succeeded")
 
     def test_storage_commit_failure_sets_sync_warning_not_verified_receipt(self):
-        from hq_integration_health import PersistedSyncError, record_check
+        from hq_integration_health import PersistedSyncError, record_committed_sync
         self.owner()
-        record_check("square_payments")
-        record_check("square_payments_sync")
+        self.assertTrue(record_committed_sync("square_payments"))
         with patch.object(square, "refresh_payments",
                           side_effect=PersistedSyncError("Fixture disk full")):
             response = self.client.post("/hq/square-payment-evidence",
