@@ -239,7 +239,6 @@ def payment_page():
         except PersistedSyncError:
             record_check("square_payments_sync", "Square payment snapshot commit failed")
             error = "Unable to store the Square payment snapshot. Check persistent storage."
-            error_status = 503
         except Exception:
             # No response bodies, customer data, URLs containing tokens or secrets logged.
             record_check("square_payments", "Square payment read failed")
