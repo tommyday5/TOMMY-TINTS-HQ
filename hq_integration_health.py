@@ -177,11 +177,13 @@ def integration_status(connections):
     # diagnostic history but can never establish sync-tested readiness.
     sync_successes = {}
     sync_unpaired = {}
+    sync_raw_successes = {}
     if history_available:
         for key in sync_keys:
             read_at = history.get(key, {}).get("last_success")
             sync_at = history.get(key + "_sync", {}).get("last_success")
             proof_at = sync_proofs.get(key)
+            sync_raw_successes[key] = sync_at
             paired = bool(proof_at and read_at == sync_at == proof_at
                           and valid_observation_time(read_at))
             sync_successes[key] = sync_at if paired else None
@@ -197,5 +199,6 @@ def integration_status(connections):
         } for key in sync_keys
     } if history_available else {})
     return {"history_available": history_available, "integrations": entries,
-            "sync_successes": sync_successes, "sync_unpaired": sync_unpaired,
+            "sync_successes": sync_successes, "sync_raw_successes": sync_raw_successes,
+            "sync_unpaired": sync_unpaired,
             "sync_failures": sync_failures}
