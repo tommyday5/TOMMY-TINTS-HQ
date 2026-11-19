@@ -58,7 +58,12 @@ def _open_observation_table(db):
 
 
 def record_check(provider, error=None):
-    """Retain a single upstream read outcome (or a persistence failure)."""
+    """Retain a read outcome. Return False if observation storage failed.
+
+    A successful provider read is not readiness evidence until this local
+    observation commits. Callers serving owner-triggered reads must surface
+    a failure rather than silently claiming a recorded result.
+    """
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     try:
         path = _db_path()
@@ -66,8 +71,10 @@ def record_check(provider, error=None):
         with closing(sqlite3.connect(path, timeout=2)) as db, db:
             _open_observation_table(db)
             _write_observation(db, provider, now, error)
+        return True
     except (OSError, sqlite3.Error):
         log.warning("Integration check history could not be saved")
+        return False
 
 
 def record_committed_sync(provider):

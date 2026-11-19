@@ -79,5 +79,49 @@ class ObservationFailureHttpTests(unittest.TestCase):
         observer.assert_called_once_with("square_payments")
 
 
+    def test_read_only_provider_success_without_recorded_evidence_is_503(self):
+        # Synthetic provider results. If the readiness write fails after the
+        # upstream read, never return a normal success with no audit trace.
+        import time
+        cases = (
+            ("calendar", "/api/hq/maintenance/calendar-live-check",
+             "app.live_conflicts", "post"),
+            ("maintenance_sheets", "/api/hq/maintenance",
+             "app.maintenance_data", "get"),
+            ("finance", "/api/hq/finance",
+             "hq_sheets_live.read_finance", "get"),
+            ("pricing_sheets", "/api/hq/pricing",
+             "app.read_workbook_with_access_token", "get"),
+        )
+        for key, endpoint, adapter, method in cases:
+            with self.subTest(provider=key), \
+                 patch("app._google_connection",
+                       return_value=("fixture-token", time.time() + 3600)), \
+                 patch(adapter, return_value={"private_fixture": "synthetic-only"}) as provider, \
+                 patch("app.record_check", return_value=False) as observer:
+                if method == "post":
+                    response = self.client.post(endpoint, json={
+                        "start": "2026-11-20T10:00:00Z",
+                        "end": "2026-11-20T11:00:00Z",
+                    })
+                else:
+                    response = self.client.get(endpoint)
+                self.assertEqual(response.status_code, 503)
+                self.assertIn(b"could not record", response.data)
+                self.assertIn(b"do not treat this as a verified read", response.data)
+                self.assertNotIn(b"private_fixture", response.data)
+                self.assertEqual(response.headers.get("Cache-Control"), "no-store")
+                provider.assert_called_once()
+                observer.assert_called_once_with(key)
+
+    def test_read_observation_returns_commit_result(self):
+        import sqlite3
+        from hq_integration_health import record_check
+        self.assertTrue(record_check("finance"))
+        with patch("hq_integration_health.sqlite3.connect",
+                   side_effect=sqlite3.OperationalError("synthetic fixture storage failure")):
+            self.assertFalse(record_check("finance"))
+
+
 if __name__ == "__main__":
     unittest.main()
