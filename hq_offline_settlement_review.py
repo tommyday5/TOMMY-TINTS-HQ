@@ -158,8 +158,15 @@ class OfflineSettlementReviewLedger:
                 "audit_structure_valid": True, **_unverified()}
 
     def record(self, bank_preview, dna_preview, *, batch_id, transaction_id,
-               decision, reason, actor_ref, request_id, expected_revision):
-        """Record an owner-*proposed* offline status; no approval/funds action."""
+               decision, reason, actor_ref, request_id, expected_revision,
+               trusted_anchor=None):
+        """Record an offline proposal; optionally enforce a retained audit head.
+
+        A caller-supplied detached head must come from independently protected
+        storage. It is checked under the same SQLite write transaction as the
+        new revision, before even an idempotent replay can be accepted. This
+        fixture cannot itself establish a trusted anchor or provider provenance.
+        """
         if decision not in _DECISIONS or reason not in _REASONS:
             raise ContractError("Unsupported offline review decision or reason")
         if type(expected_revision) is not int or not 0 <= expected_revision < 100000:
@@ -168,6 +175,8 @@ class OfflineSettlementReviewLedger:
             raise ContractError("Review reason is inconsistent with revision")
         _ref(actor_ref, "reviewer reference")
         _ref(request_id, "idempotency reference")
+        if trusted_anchor is not None:
+            _require_detached_anchor(trusted_anchor)
         pair, bank_claim, batch_claim, source, equal = self._source(
             bank_preview, dna_preview, batch_id, transaction_id)
         if decision == "candidate" and not equal:
@@ -177,6 +186,8 @@ class OfflineSettlementReviewLedger:
         with sqlite3.connect(self._path, timeout=5) as db:
             db.execute("BEGIN IMMEDIATE")
             rows, latest, claimed_banks, claimed_batches = self._verify(db)
+            if trusted_anchor is not None:
+                self._check_trusted_prefix(trusted_anchor, rows)
             prior_request = db.execute("""SELECT pair_key, bank_claim_key,
                 batch_claim_key, source_key, revision, decision, reason, actor_key
                 FROM offline_settlement_reviews WHERE request_key=?""", (request,)).fetchone()
@@ -238,23 +249,31 @@ class OfflineSettlementReviewLedger:
             raise ContractError("Settlement audit rollback or modification detected")
         return {"anchor_matches": True, **_unverified()}
 
-    def verify_anchor_prefix(self, previous):
-        """Verify an older trusted head without rejecting legitimate later reviews.
+    def _check_trusted_prefix(self, previous, rows):
+        """Check a detached head against already integrity-checked SQLite rows.
 
-        An independent retained head authenticates the *prefix* of today's
-        complete ledger. Verify all current event seals and sequence integrity
-        before comparing that prefix. This accepts append-only growth but
-        rejects rollback, deletion or modification of anchored history.
-        Neither method stores the head outside the fixture SQLite database.
+        Called by record() *inside* BEGIN IMMEDIATE, avoiding a race between
+        a separate read-side anchor check and the subsequent review write.
         """
         _require_detached_anchor(previous)
-        with sqlite3.connect(self._path, timeout=5) as db:
-            db.execute("BEGIN")
-            rows, _, _, _ = self._verify(db)
         checked = previous["events_checked"]
         if (checked > len(rows)
                 or not hmac.compare_digest(
                     self._h("detached-head-v1", rows[:checked]), previous["head_hmac"])):
             raise ContractError("Settlement audit anchored prefix rollback or modification detected")
+        return len(rows) - checked
+
+    def verify_anchor_prefix(self, previous):
+        """Verify an older retained head while accepting legitimate later reviews.
+
+        All current event seals and revision continuity are checked before the
+        prefix comparison. An independent trusted head is required; this
+        fixture never stores or authenticates external anchor custody.
+        """
+        _require_detached_anchor(previous)
+        with sqlite3.connect(self._path, timeout=5) as db:
+            db.execute("BEGIN")
+            rows, _, _, _ = self._verify(db)
+        new_events = self._check_trusted_prefix(previous, rows)
         return {"anchor_prefix_matches": True,
-                "new_events_since_anchor": len(rows) - checked, **_unverified()}
+                "new_events_since_anchor": new_events, **_unverified()}
