@@ -71,23 +71,65 @@ def verify_mailbox(token):
         raise ValueError("Select the Tommy Tints business mailbox")
 
 
+def _resolve_sales_label_ids(token):
+    """Resolve user-label names to provider IDs for a fresh, per-message check.
+
+    Gmail messages carry opaque label IDs, not label names. The list query
+    alone is insufficient if labels change between search and message fetch.
+    A missing/ambiguous HQ-Enquiries label must fail closed.
+    """
+    response = _get(token, "/labels", fields="labels(id,name)")
+    listing = response.get("labels")
+    if not isinstance(listing, list):
+        raise RuntimeError("Business Gmail label metadata unavailable")
+    names = {}
+    for item in listing:
+        if not isinstance(item, dict):
+            raise RuntimeError("Invalid Gmail label metadata")
+        name = item.get("name")
+        if name not in ("HQ-Enquiries", "HQ-Legal", "HQ-Debt"):
+            continue
+        ref = item.get("id")
+        if name in names or not isinstance(ref, str) or not ID.fullmatch(ref):
+            raise RuntimeError("Business Gmail labels are ambiguous or invalid")
+        names[name] = ref
+    if "HQ-Enquiries" not in names or len(set(names.values())) != len(names):
+        raise RuntimeError("Business Gmail enquiry label is missing or ambiguous")
+    return names
+
+
 def import_page(token, page_token=None):
     if not storage_ready():
         raise PersistedSyncError("Persistent enquiry storage is unavailable")
     verify_mailbox(token)
+    label_ids = _resolve_sales_label_ids(token)
     params = {"q": "in:inbox label:HQ-Enquiries -label:HQ-Legal -label:HQ-Debt", "maxResults": 10}
     if page_token:
         params["pageToken"] = page_token
     page = _get(token, "/messages", **params)
     rows = []
     skipped_sensitive = 0
+    skipped_label_mismatch = 0
     for message in page.get("messages", []):
         ref = message["id"]
         if not ID.fullmatch(ref):
             raise RuntimeError("Invalid Gmail message reference")
-        item = _get(token, "/messages/" + ref, format="full", fields="id,snippet,payload(headers)")
+        item = _get(token, "/messages/" + ref, format="full",
+                    fields="id,labelIds,snippet,payload(headers)")
         if item.get("id") != ref:
             raise RuntimeError("Mismatched Gmail message reference")
+        current_labels = item.get("labelIds")
+        if (not isinstance(current_labels, list)
+                or any(not isinstance(label, str) or not ID.fullmatch(label)
+                       for label in current_labels)):
+            raise RuntimeError("Gmail message labels cannot be verified")
+        current = set(current_labels)
+        if ("INBOX" not in current or label_ids["HQ-Enquiries"] not in current
+                or any(label_ids.get(name) in current
+                       for name in ("HQ-Legal", "HQ-Debt")
+                       if label_ids.get(name))):
+            skipped_label_mismatch += 1
+            continue
         headers = {header["name"].lower(): header["value"] for header in item["payload"]["headers"]}
         sender = parseaddr(headers.get("from", ""))[1]
         subject, snippet = headers.get("subject", ""), item.get("snippet", "")
@@ -108,8 +150,10 @@ def import_page(token, page_token=None):
                 VALUES (?,?,?,?) ON CONFLICT(id) DO NOTHING""", rows).rowcount
     except (OSError, sqlite3.Error) as exc:
         raise PersistedSyncError("Gmail enquiry storage commit failed") from exc
-    return {"added": added, "read": len(rows) + skipped_sensitive,
-            "skipped_sensitive": skipped_sensitive, "next": page.get("nextPageToken")}
+    return {"added": added, "read": len(rows) + skipped_sensitive + skipped_label_mismatch,
+            "skipped_sensitive": skipped_sensitive,
+            "skipped_label_mismatch": skipped_label_mismatch,
+            "next": page.get("nextPageToken")}
 
 
 def queue(limit=50):

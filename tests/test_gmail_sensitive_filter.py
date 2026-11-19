@@ -8,9 +8,10 @@ from unittest.mock import patch
 import hq_gmail_enquiries as gmail
 
 
-def message(ref, sender, subject, snippet):
+def message(ref, sender, subject, snippet, labels=None):
     return {
         "id": ref,
+        "labelIds": ["INBOX", "Label_Enquiries"] if labels is None else labels,
         "snippet": snippet,
         "payload": {"headers": [
             {"name": "From", "value": sender},
@@ -29,14 +30,61 @@ class SensitiveGmailEnquiryTests(unittest.TestCase):
 
     def import_messages(self, messages):
         ids = [{"id": item["id"]} for item in messages]
-        responses = [{"emailAddress": gmail.MAILBOX}, {"messages": ids}, *messages]
+        responses = [
+            {"emailAddress": gmail.MAILBOX},
+            {"labels": [
+                {"name": "HQ-Enquiries", "id": "Label_Enquiries"},
+                {"name": "HQ-Legal", "id": "Label_Legal"},
+                {"name": "HQ-Debt", "id": "Label_Debt"},
+            ]},
+            {"messages": ids}, *messages,
+        ]
         with patch.object(gmail, "_get", side_effect=responses) as api:
             result = gmail.import_page("synthetic-token")
         self.assertEqual(
-            api.call_args_list[1].kwargs["q"],
+            api.call_args_list[2].kwargs["q"],
             "in:inbox label:HQ-Enquiries -label:HQ-Legal -label:HQ-Debt",
         )
+        self.assertIn("labelIds", api.call_args_list[3].kwargs["fields"] if messages else "labelIds")
         return result
+
+    def test_label_changed_after_search_is_excluded_even_with_innocent_subject(self):
+        result = self.import_messages([
+            message("valid", "customer@example.invalid", "Window tint enquiry",
+                    "Can you book me in?"),
+            message("legal", "person@example.invalid", "General message",
+                    "Please see attached.", ["INBOX", "Label_Enquiries", "Label_Legal"]),
+            message("debt", "person@example.invalid", "Hello",
+                    "Just a reminder.", ["INBOX", "Label_Enquiries", "Label_Debt"]),
+            message("unlabelled", "person@example.invalid", "Quote",
+                    "Tint quote", ["INBOX"]),
+            message("archived", "person@example.invalid", "Quote",
+                    "Tint quote", ["Label_Enquiries"]),
+        ])
+        self.assertEqual(result["read"], 5)
+        self.assertEqual(result["added"], 1)
+        self.assertEqual(result["skipped_sensitive"], 0)
+        self.assertEqual(result["skipped_label_mismatch"], 4)
+        self.assertEqual([row["id"] for row in gmail.queue()[1]], ["valid"])
+
+    def test_missing_message_labels_fails_closed_without_partial_queue_write(self):
+        rows = [message("good", "customer@example.invalid", "Tint quote", "Hello"),
+                message("missing", "customer@example.invalid", "Quote", "Hello")]
+        del rows[1]["labelIds"]
+        with self.assertRaisesRegex(RuntimeError, "labels cannot be verified"):
+            self.import_messages(rows)
+        self.assertFalse(gmail._path().exists())
+
+    def test_missing_enquiry_label_fails_closed_before_message_search(self):
+        responses = [
+            {"emailAddress": gmail.MAILBOX},
+            {"labels": [{"name": "HQ-Legal", "id": "Label_Legal"}]},
+        ]
+        with patch.object(gmail, "_get", side_effect=responses) as api:
+            with self.assertRaisesRegex(RuntimeError, "enquiry label"):
+                gmail.import_page("synthetic-token")
+        self.assertEqual(api.call_count, 2)
+        self.assertFalse(gmail._path().exists())
 
     def test_mixed_labelled_batch_keeps_legal_and_debt_out_of_sales_queue(self):
         result = self.import_messages([
