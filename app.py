@@ -1138,8 +1138,13 @@ def hq_gmail_queue():
         except Exception:
             record_check("gmail", "Read-only Gmail import failed")
             return "Gmail import failed. Check Integration Health.", 502
-        # import_page has committed to the persistent queue before returning.
-        record_committed_sync("gmail")
+        # Provider queue commit and readiness evidence are separate writes.
+        # A successful import cannot be presented as a verified sync if its
+        # observation transaction failed; do not replay the provider import.
+        if not record_committed_sync("gmail"):
+            return ("Gmail enquiries were stored, but integration read/sync evidence "
+                    "could not be recorded. Check Integration Health storage; "
+                    "do not treat this import as a verified sync."), 503
     try:
         count, rows = gmail.queue()
     except (OSError, sqlite3.Error):
@@ -1183,8 +1188,12 @@ def hq_square_snapshot():
         except Exception:
             record_check("square", "Read-only Square booking retrieval failed")
             return "Square booking retrieval failed. Check Integration Health.", 502
-        # refresh_bookings commits its versioned snapshot before returning.
-        record_committed_sync("square")
+        # The provider snapshot may have committed while the separate audit
+        # observation failed. Report incomplete readiness rather than success.
+        if not record_committed_sync("square"):
+            return ("Square bookings were stored, but integration read/sync evidence "
+                    "could not be recorded. Check Integration Health storage; "
+                    "do not treat this refresh as a verified sync."), 503
     try:
         rows = square.upcoming_bookings()
     except (OSError, sqlite3.Error):
