@@ -146,7 +146,8 @@ def read_snapshot():
               "window_end": None, "payment_count": None, "payments": [],
               "reconciliation_status": "not_linked",
               "verified_job_receipts_pence": None, "verified_job_outstanding_pence": None,
-              "bank_settlement_verified": False, "automatic_job_matching": False}
+              "bank_settlement_verified": False, "automatic_job_matching": False,
+              "scope_unverified": False}
     if not storage_ready() or not _path().exists():
         return result
     with closing(sqlite3.connect(_path().as_uri() + "?mode=ro", uri=True, timeout=3)) as db:
@@ -154,15 +155,22 @@ def read_snapshot():
         meta = db.execute("SELECT * FROM snapshot WHERE id=1").fetchone()
         if not meta:
             return result
+        # A previously cached seller/location snapshot is not evidence for
+        # the currently configured Square account. Never return its counts,
+        # identifiers or amounts after credentials or location are changed.
+        # Keep the database intact so an owner can restore the prior setup.
+        stored_location = meta["location"]
+        active_location = os.environ.get("HQ_SQUARE_LOCATION_ID", "")
+        if (not configured() or not isinstance(stored_location, str)
+                or not stored_location.isascii() or not active_location.isascii()
+                or not secrets.compare_digest(stored_location, active_location)):
+            result["scope_unverified"] = True
+            return result
         rows = db.execute("""SELECT id,status,total_minor,refunded_minor,currency,
             created_at,updated_at FROM payments ORDER BY created_at DESC,id DESC LIMIT 50""").fetchall()
     refreshed = _timestamp(meta["refreshed_at"])
     age = datetime.now(timezone.utc) - datetime.fromisoformat(refreshed)
-    # A previous location's evidence must never look current after credentials
-    # or the Square location have been switched.
-    same_location = configured() and secrets.compare_digest(
-        meta["location"], os.environ["HQ_SQUARE_LOCATION_ID"])
-    result.update(snapshot_available=True, stale=not same_location or age < timedelta(0)
+    result.update(snapshot_available=True, stale=age < timedelta(0)
                   or age > timedelta(hours=24), last_refreshed_at=refreshed,
                   window_start=meta["window_start"], window_end=meta["window_end"],
                   payment_count=meta["item_count"], payments=[dict(r) for r in rows])
@@ -201,6 +209,10 @@ Refunds and processing fees can affect net proceeds.</p>
 {% if data.snapshot_available %}
 <p>Last refresh: {{ data.last_refreshed_at }} UTC. Source window: {{ data.window_start }} to {{ data.window_end }}.
 {{ data.payment_count }} provider payment records (showing at most 50).</p>
+{% elif data.scope_unverified %}
+<p>Stored historical Square evidence is withheld because the current configured
+location or read access cannot verify its scope. Reconnect/refresh the intended
+location before reviewing payments. This is not evidence of zero receipts.</p>
 {% else %}<p>No provider payment snapshot has been retrieved; this is not evidence of zero receipts.</p>{% endif %}
 {% if data.configured %}
 <form method="post"><input type="hidden" name="csrf" value="{{ csrf }}">

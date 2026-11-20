@@ -169,5 +169,48 @@ class SquarePaymentEvidenceTests(unittest.TestCase):
             self.assertFalse(square._path().exists())
 
 
+    def test_cached_square_evidence_is_hidden_on_location_or_access_change(self):
+        # An existing /data snapshot may belong to a previous configured
+        # seller/location. Do not show its amounts or payment identifiers to
+        # the currently configured owner until the intended scope is restored.
+        with patch.object(square.requests, "get",
+                          return_value=self.page([self.payment(refund=1200)])):
+            self.assertEqual(square.refresh_payments(), 1)
+        self.owner()
+        self.assertEqual(square.read_snapshot()["payment_count"], 1)
+        for overrides in (
+            {"HQ_SQUARE_LOCATION_ID": "another-location"},
+            {"HQ_SQUARE_READ_TOKEN": ""},
+            {"HQ_SQUARE_LOCATION_ID": "locatiön-one"},
+        ):
+            with self.subTest(overrides=overrides), patch.dict(os.environ, overrides):
+                with patch.object(square.requests, "get") as provider:
+                    state = square.read_snapshot()
+                    self.assertFalse(state["snapshot_available"])
+                    self.assertTrue(state["scope_unverified"])
+                    self.assertTrue(state["stale"])
+                    self.assertEqual(state["payments"], [])
+                    for field in ("payment_count", "last_refreshed_at",
+                                  "window_start", "window_end",
+                                  "verified_job_receipts_pence"):
+                        self.assertIsNone(state[field])
+                    api = self.client.get("/api/hq/square-payment-evidence")
+                    page = self.client.get("/hq/square-payment-evidence")
+                    self.assertEqual(api.status_code, 200)
+                    self.assertEqual(page.status_code, 200)
+                    self.assertTrue(api.json["scope_unverified"])
+                    self.assertIn(b"evidence is withheld", page.data)
+                    for response in (api, page):
+                        self.assertNotIn(b"square-pmt-01", response.data)
+                        self.assertNotIn(b"35000", response.data)
+                    provider.assert_not_called()
+        # Scope switches never delete or modify the previous good snapshot.
+        self.assertFalse(square.read_snapshot()["scope_unverified"])
+        self.assertEqual(square.read_snapshot()["payments"][0]["id"],
+                         "square-pmt-01")
+        with sqlite3.connect(square._path()) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM payments").fetchone()[0], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
