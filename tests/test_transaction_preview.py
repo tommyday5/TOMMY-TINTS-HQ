@@ -293,6 +293,56 @@ class OwnerPreviewHttpTests(unittest.TestCase):
                                     json=payload, headers={"X-HQ-CSRF": "valid-csrf"})
         self.assertEqual(response.status_code, 400)
 
+    def test_duplicate_json_keys_rejected_before_financial_review(self):
+        self.owner()
+        before = set(os.listdir(self.tmp.name))
+        for field, value in (
+            ("mapping", '{"transaction_id":"Transaction",'
+                        '"transaction_id":"Private note"}'),
+            ("mapping", '{"transaction_id":"Transaction",'
+                        '"amount_pence":"Minor units","currency":"Currency",'
+                        '"booked_at":"Booked","nested":{"x":1,"x":2}}'),
+            ("classifications", '{"tx001":"transfer",'
+                                '"tx001":"customer_receipt_candidate"}'),
+        ):
+            with self.subTest(field=field, value=value):
+                payload = self.payload()
+                payload[field] = value
+                response = self.client.post(
+                    "/api/hq/transaction-import-preview", json=payload,
+                    headers={"X-HQ-CSRF": "valid-csrf"})
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("Duplicate JSON keys", response.json["error"])
+                self.assertFalse(response.json["imported"])
+                self.assertFalse(response.json["reconciled"])
+                for sensitive in ("Private Customer", "12345", "tx001"):
+                    self.assertNotIn(sensitive, response.get_data(as_text=True))
+
+                # The HTML form passes the same JSON text fields and must
+                # reject rather than silently taking the last duplicate.
+                form = {"csrf": "valid-csrf", **self.payload()}
+                form["mapping"] = json.dumps(MONZO_MAP)
+                form[field] = value
+                html_response = self.client.post(
+                    "/hq/transaction-import-preview", data=form)
+                self.assertEqual(html_response.status_code, 400)
+                self.assertIn(b"Duplicate JSON keys", html_response.data)
+        self.assertEqual(set(os.listdir(self.tmp.name)), before)
+
+    def test_distinct_json_mapping_and_classification_remain_supported(self):
+        self.owner()
+        payload = self.payload()
+        payload["mapping"] = json.dumps(MONZO_MAP)
+        payload["classifications"] = '{"tx001":"customer_receipt_candidate"}'
+        response = self.client.post(
+            "/api/hq/transaction-import-preview", json=payload,
+            headers={"X-HQ-CSRF": "valid-csrf"})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json["canonical_preview_valid"])
+        self.assertEqual(
+            response.json["classification_review"]["customer_receipt_candidates"], 1)
+        self.assertFalse(response.json["bank_settlement_verified"])
+
     def test_invalid_shape_mapping_and_oversize_fail_closed(self):
         self.owner()
         payload = self.payload()
