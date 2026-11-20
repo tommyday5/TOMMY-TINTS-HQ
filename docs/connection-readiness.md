@@ -239,3 +239,10 @@ This is a **confidentiality and wrong-location attribution safeguard**, not a su
 ### Exact Square payment/job review uses the same source scope (20 November 2026)
 
 The owner-only exact-reference Square payment/job review now checks the stored snapshot location **before selecting or displaying the referenced payment**. If the active location has changed or its scope is malformed, both API and HTML views withhold the old provider status, amount and refund evidence, report a refresh blocker, and cannot label the comparison complete. This extends the earlier list/snapshot redaction to the separate review route; simply showing a warning while returning old provider amounts was insufficient. The original database remains intact and is reviewable after restoring the intended configuration. This check is not independent authorisation, a verified receipt, a booking or bank reconciliation.
+
+
+### Square read/sync source-location binding (20 November 2026)
+
+Square booking and payment read/sync readiness now requires a local atomic observation bound by a keyed fingerprint to the exact currently configured Square location. Earlier unscoped observations cannot be assumed to belong to a changed location. The owner-only register withholds `read_tested`, `sync_tested`, and previous success dates for unmatched/legacy Square source observations; `source_scope_unverified` explains the blocker and the next safe action is an owner-initiated read-only refresh of that specific service. This does not erase the existing provider SQLite snapshots or historical health records, and it is not an automatic Square request on GET.
+
+The source seal is stored in a new additive table in the integration-health database. The raw location ID and access token are not recorded there; `HQ_SESSION_SECRET` stability is necessary to compare historical seals. Scope binding is **local evidence**, not a current provider permission check or bank reconciliation. No Square provider is marked authorised or reconciled based on these synthetic checks. Production Square credentials, required scopes and the actual location remain owner-controlled blockers.
