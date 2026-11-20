@@ -180,5 +180,76 @@ class SheetsLinkInspectionTests(unittest.TestCase):
         self.assertEqual(response.headers["Cache-Control"], "no-store")
 
 
+    def test_historical_hq_comparison_requires_strict_review_fields(self):
+        self.sign_in()
+        base = {"job_ref": "J0077", "target_row": 5, "mode": "existing"}
+        cases = (
+            {**base, "work_id": "a" * 32},
+            {**base, "work_id": "bad", "expected_revision": 3},
+            {**base, "work_id": "a" * 32, "expected_revision": True},
+            {**base, "work_id": "a" * 32, "expected_revision": 3, "mode": "new"},
+        )
+        with patch("app._google_connection",
+                   side_effect=AssertionError("no provider access")):
+            for candidate in cases:
+                with self.subTest(candidate=candidate):
+                    self.assertEqual(self.post(candidate).status_code, 400)
+
+    def test_historical_hq_review_no_identity_or_customer_values_leak(self):
+        self.sign_in()
+        snap = fixture()
+        row = snap["sheets"][0]["data"][0]["rowData"][1]
+        row["values"] = [{} for _ in range(18)]
+        row["values"][0] = {"userEnteredValue": {"stringValue": "J0077"}}
+        row["values"][2] = {"userEnteredValue": {"stringValue": "Private Fixture Customer"}}
+        row["values"][16] = {"userEnteredValue": {"numberValue": 200.0}}
+        work = {"id": "a" * 32, "revision": 3,
+                "name": "Private Fixture Customer", "price_pence": 20000}
+        payload = {"job_ref": "J0077", "target_row": 5, "mode": "existing",
+                   "work_id": "a" * 32, "expected_revision": 3}
+        with patch("hq_sheets_link_inspection.read_work_record",
+                   side_effect=[work, work]) as internal, \
+             patch("app._google_connection",
+                   return_value=("synthetic-token", time.time() + 300)), \
+             patch("hq_sheets_link_inspection.read_job_link_snapshot",
+                   return_value=snap) as provider, \
+             patch("hq_sheets_link_inspection.record_check", return_value=True):
+            response = self.post(payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(internal.call_count, 2)
+        provider.assert_called_once_with("synthetic-token", selected_row=5)
+        self.assertEqual(response.json["hq_candidate_review"],
+                         "manual_identity_review_required")
+        self.assertFalse(response.json["historical_mapping_verified"])
+        self.assertFalse(response.json["write_authorised"])
+        self.assertNotIn("Private Fixture Customer", response.get_data(as_text=True))
+        self.assertNotIn("20000", response.get_data(as_text=True))
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+
+    def test_historical_hq_revision_change_blocks_before_success_evidence(self):
+        self.sign_in()
+        payload = {"job_ref": "J0077", "target_row": 5, "mode": "existing",
+                   "work_id": "a" * 32, "expected_revision": 3}
+        with patch("hq_sheets_link_inspection.read_work_record",
+                   return_value={"id": "a" * 32, "revision": 4}) as local, \
+             patch("app._google_connection",
+                   side_effect=AssertionError("no upstream call")):
+            response = self.post(payload)
+        self.assertEqual(response.status_code, 409)
+        local.assert_called_once()
+
+        with patch("hq_sheets_link_inspection.read_work_record",
+                   side_effect=[{"id": "a" * 32, "revision": 3},
+                                {"id": "a" * 32, "revision": 4}]), \
+             patch("app._google_connection",
+                   return_value=("synthetic-token", time.time() + 300)), \
+             patch("hq_sheets_link_inspection.read_job_link_snapshot",
+                   return_value=fixture()), \
+             patch("hq_sheets_link_inspection.record_check") as observation:
+            changed = self.post(payload)
+        self.assertEqual(changed.status_code, 409)
+        observation.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

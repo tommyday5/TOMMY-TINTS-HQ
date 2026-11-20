@@ -395,3 +395,8 @@ sync-tested/reconciled stage from synthetic evidence. No real owner workbook
 read or historical HQ mapping is claimed, and no write, allocation or
 financial settlement is activated. Full concurrency-safe write baselines,
 genuine source access and owner approval remain blockers.
+
+
+### Historical HQ-to-J comparison — not a new connection stage (20 November 2026)
+
+The existing owner-only Jobs inspection accepts an optional HQ work ID with an expected saved revision for a **read-only existing-row candidate comparison**. The recorded integration health check still means only that a genuine Sheets upstream read and source preflight were observed. Revision checks and C/Q candidate comparisons create **no** persisted HQ work-to-J mapping, approved baseline, source completeness guarantee beyond the preflight contract, write consent, sync event, reconciled receipt, or bank evidence. They **must not** promote any stage in the register. Comparison responses omit all personal values and money amounts; differences and missing evidence require manual source review. Owner action: sign into HQ, open the private inspection, choose the exact historical row/reference and current internal HQ work revision, then independently verify identity and B:E semantics before requesting a separate approved linking workflow.

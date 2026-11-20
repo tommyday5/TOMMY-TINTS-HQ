@@ -25,6 +25,11 @@
       <input id="row" name="row" type="number" min="5" max="2000" required>
       <label for="mode">Candidate</label>
       <select id="mode" name="mode"><option value="existing">Check an existing J reference</option><option value="new">Check a blank row for a new J reference</option></select>
+      <label for="work_id">Optional: HQ work ID for historical review (32 lowercase hex characters)</label>
+      <input id="work_id" name="work_id" pattern="[0-9a-f]{32}" maxlength="32" autocomplete="off" placeholder="Copy from an existing private HQ job card">
+      <label for="revision">HQ saved work revision (required only with HQ work ID)</label>
+      <input id="revision" name="revision" type="number" min="0" max="9223372036854775806" placeholder="Current saved revision">
+      <p><small>For an existing J reference only. Matching-looking values are a review prompt, not proof of a historical link. No customer values are returned.</small></p>
       <button type="submit">Inspect workbook read-only</button>
     </form>
     <output id="result" role="status" aria-live="polite"></output>
@@ -43,20 +48,37 @@
     result.textContent = 'Inspecting the existing workbook…';
     button.disabled = true;
     try {
+      const payload = {
+        job_ref: document.getElementById('ref').value,
+        target_row: Number(document.getElementById('row').value),
+        mode: document.getElementById('mode').value
+      };
+      const workId = document.getElementById('work_id').value.trim();
+      const revision = document.getElementById('revision').value.trim();
+      if (workId || revision) {
+        if (!workId || !revision || payload.mode !== 'existing') {
+          result.textContent = 'Historical HQ comparison requires an existing J row, the HQ work ID and its saved revision.';
+          return;
+        }
+        payload.work_id = workId;
+        payload.expected_revision = Number(revision);
+      }
       const response = await fetch('/api/hq/sheets/job-link-preflight', {
         method: 'POST',
         credentials: 'same-origin',
         cache: 'no-store',
         headers: {'Content-Type':'application/json', 'X-HQ-CSRF': {{ csrf|tojson }}},
-        body: JSON.stringify({
-          job_ref: document.getElementById('ref').value,
-          target_row: Number(document.getElementById('row').value),
-          mode: document.getElementById('mode').value
-        })
+        body: JSON.stringify(payload)
       });
       const data = await response.json();
       result.textContent = response.ok
-        ? 'Snapshot-only candidate passed. No HQ link or Sheets write made.\nNext: ' + data.next_safe_action
+        ? 'Snapshot-only candidate passed. No HQ link or Sheets write made.'
+          + (data.hq_candidate_review
+            ? '\nHQ revision checked. Customer candidate: ' + data.customer_candidate_comparison
+              + '; quoted-price candidate: ' + data.quoted_price_candidate_comparison
+              + '. Identity NOT verified.'
+            : '')
+          + '\nNext: ' + data.next_safe_action
         : 'Inspection blocked: ' + (data.error || 'Read could not be verified');
     } catch (_) {
       result.textContent = 'Read-only inspection unavailable; no changes were made.';
