@@ -1,5 +1,6 @@
 """Synthetic-only Sheets GridData linkage preflight regression tests."""
 import unittest
+from unittest.mock import Mock, patch
 from hq_job_sync import WORKBOOK
 from hq_sheet_link_preflight import JOBS_SHEET_ID, VERIFIED_HEADERS, preflight_job_link
 
@@ -177,6 +178,75 @@ class SheetLinkPreflightTests(unittest.TestCase):
         for candidate in (True, 4, 8):
             with self.assertRaises(ValueError):
                 self.check(row=candidate)
+
+    def test_trailing_blank_rows_require_independent_formula_range(self):
+        from hq_sheets_live import read_job_link_snapshot
+        snap = fixture()
+        # In this mock, row 7 is genuinely empty but Google's GridData
+        # response stops at row 6 (the candidate is still raw-inspected).
+        snap["sheets"][0]["data"][0]["rowData"].pop()
+        values = {
+            "range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
+            "values": [["Job ID"], ["J0077"]],
+        }
+        first = Mock()
+        first.json.return_value = snap
+        second = Mock()
+        second.json.return_value = values
+        with patch("hq_sheets_live.requests.get", side_effect=[first, second]) as get:
+            completed = read_job_link_snapshot("synthetic-token", selected_row=6)
+        self.assertEqual(get.call_count, 2)
+        self.assertEqual(
+            dict(get.call_args.kwargs["params"])["valueRenderOption"], "FORMULA")
+        self.assertEqual(
+            len(completed["sheets"][0]["data"][0]["rowData"]), 4)
+        self.assertEqual(
+            self.check(completed)["preflight"], "sheet_snapshot_only")
+        # Do not modify the original Google response in memory.
+        self.assertEqual(len(snap["sheets"][0]["data"][0]["rowData"]), 3)
+
+    def test_missing_raw_candidate_row_stays_blocked_without_second_read(self):
+        from hq_sheets_live import read_job_link_snapshot
+        snap = fixture()
+        snap["sheets"][0]["data"][0]["rowData"].pop()
+        response = Mock()
+        response.json.return_value = snap
+        with patch("hq_sheets_live.requests.get", return_value=response) as get:
+            original = read_job_link_snapshot("synthetic-token", selected_row=7)
+        self.assertEqual(get.call_count, 1)
+        with self.assertRaisesRegex(ValueError, "Truncated"):
+            self.check(original, row=7)
+
+    def test_trailing_collision_or_changed_reference_is_not_blank_evidence(self):
+        from hq_sheet_link_preflight import complete_trailing_blank_rows
+        snap = fixture()
+        snap["sheets"][0]["data"][0]["rowData"].pop()
+        cases = (
+            {"range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
+             "values": [["Job ID"], ["J0077"], [], ["J0083"]]},
+            {"range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
+             "values": [["Job ID"], ["J0099"]]},
+            {"range": "Jobs!A4:AJ6", "majorDimension": "ROWS",
+             "values": [["Job ID"], ["J0077"]]},
+            {"range": "Jobs!A4:AJ7", "majorDimension": "COLUMNS",
+             "values": [["Job ID"], ["J0077"]]},
+            {"range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
+             "values": [["Job ID"], ["J0077"], [], ["=NOW()"]]},
+        )
+        for bad in cases:
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                complete_trailing_blank_rows(snap, bad, candidate_row=6)
+
+    def test_trailing_value_request_failure_is_not_silently_accepted(self):
+        from hq_sheets_live import read_job_link_snapshot
+        snap = fixture()
+        snap["sheets"][0]["data"][0]["rowData"].pop()
+        response = Mock()
+        response.json.return_value = snap
+        with patch("hq_sheets_live.requests.get",
+                   side_effect=[response, RuntimeError("synthetic provider error")]):
+            with self.assertRaises(RuntimeError):
+                read_job_link_snapshot("synthetic-token", selected_row=6)
 
     def test_no_personal_values_or_payment_evidence_are_returned(self):
         snap = fixture()
