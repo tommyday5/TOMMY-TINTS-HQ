@@ -151,6 +151,38 @@ class SensitiveGmailEnquiryTests(unittest.TestCase):
                     "An outstanding claim."),
         ])["added"], 0)
 
+    def test_encoded_sensitive_subject_is_filtered_before_sales_storage(self):
+        encoded = message(
+            "encoded-legal", "neutral@example.invalid",
+            "=?utf-8?Q?County_Court_Judgment?=",
+            "Please see the attached documents.")
+        safe = message(
+            "encoded-customer", "customer@example.invalid",
+            "=?utf-8?Q?Hyundai_bonnet_quote?=",
+            "How much for a respray?")
+        result = self.import_messages([encoded, safe])
+        self.assertEqual(result["skipped_sensitive"], 1)
+        self.assertEqual(result["added"], 1)
+        queued = gmail.queue()[1]
+        self.assertEqual([row["id"] for row in queued], ["encoded-customer"])
+        self.assertEqual(queued[0]["subject"], "Hyundai bonnet quote")
+        self.assertNotIn("County Court", str([dict(row) for row in queued]))
+
+    def test_invalid_encoded_subject_aborts_whole_page_atomically(self):
+        safe = message("safe", "customer@example.invalid", "Tint quote", "Quote please")
+        malformed = (
+            "=?utf-8?B?%%%?=",  # invalid base64 silently decodes to empty
+            "=?x-impossible?Q?Court_claim?=",  # unsupported charset
+            "=?utf-8?B?//8=?=",  # undecodable UTF-8 bytes
+            "=?utf-8?B?no-end-marker",  # unresolved encoded-word marker
+        )
+        for subject in malformed:
+            with self.subTest(subject=subject):
+                bad = message("bad", "neutral@example.invalid", subject, "Hello")
+                with self.assertRaisesRegex(RuntimeError, "subject cannot be decoded"):
+                    self.import_messages([safe, bad])
+                self.assertFalse(gmail._path().exists())
+
     def test_ordinary_price_and_booking_enquiries_are_not_suppressed(self):
         result = self.import_messages([
             message("safe", "person@example.invalid", "Hyundai bonnet repair quote",

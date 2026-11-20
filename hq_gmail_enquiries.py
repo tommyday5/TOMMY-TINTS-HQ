@@ -1,5 +1,6 @@
 """Read-only import of owner-labelled business enquiries."""
 from contextlib import closing
+from email.header import decode_header, make_header
 from email.utils import getaddresses
 import os
 from pathlib import Path
@@ -53,6 +54,26 @@ def _excluded_from_sales(sender, subject, snippet):
     ):
         return True
     return bool(_SENSITIVE_TEXT.search(subject + " " + snippet))
+
+
+def _decoded_subject(raw):
+    """Decode RFC 2047 before legal/debt classification and queue storage.
+
+    An encoded subject can hide court/enforcement cues from a plain regex.
+    Malformed, undecodable or empty decoded metadata fails the whole page
+    before any enquiry is written. This does not authenticate the sender.
+    """
+    if not isinstance(raw, str) or len(raw) > 16384:
+        raise RuntimeError("Gmail enquiry subject cannot be decoded")
+    try:
+        decoded = str(make_header(decode_header(raw)))
+    except (UnicodeError, LookupError, ValueError):
+        raise RuntimeError("Gmail enquiry subject cannot be decoded") from None
+    if (len(decoded) > 16384 or "\x00" in decoded or "=?" in decoded):
+        raise RuntimeError("Gmail enquiry subject cannot be decoded")
+    if raw.strip() and not decoded.strip():
+        raise RuntimeError("Gmail enquiry subject cannot be decoded")
+    return decoded
 
 
 def _path():
@@ -177,7 +198,7 @@ def import_page(token, page_token=None):
                     or not all(reply_sender.split("@"))
                     or any(c.isspace() or ord(c) < 33 for c in reply_sender)):
                 raise RuntimeError("Gmail enquiry reply address cannot be verified")
-        subject = subject_values[0] if subject_values else ""
+        subject = _decoded_subject(subject_values[0] if subject_values else "")
         snippet = item.get("snippet", "")
         if not isinstance(snippet, str):
             raise RuntimeError("Invalid Gmail message fields")
