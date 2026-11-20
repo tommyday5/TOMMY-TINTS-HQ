@@ -178,6 +178,46 @@ class SensitiveGmailEnquiryTests(unittest.TestCase):
             "Can you tint four vehicle windows?"
         ))
 
+    def test_sensitive_reply_to_does_not_enter_sales_queue(self):
+        legal = message("legal", "accounts@example.invalid", "Quick question",
+                        "Please see the attachment.")
+        legal["payload"]["headers"].append({
+            "name": "Reply-To", "value": "Collections Team <collections@agency.invalid>"
+        })
+        safe = message("safe", "customer@example.invalid", "Hyundai paint quote",
+                       "Could I have a price?")
+        safe["payload"]["headers"].append({
+            "name": "Reply-To", "value": "Customer <reply@example.invalid>"
+        })
+        result = self.import_messages([legal, safe])
+        self.assertEqual(result["skipped_sensitive"], 1)
+        self.assertEqual(result["added"], 1)
+        self.assertEqual([row["id"] for row in gmail.queue()[1]], ["safe"])
+
+    def test_duplicate_subject_or_ambiguous_reply_to_aborts_whole_page(self):
+        good = message("good", "customer@example.invalid", "Tint quote", "Quote please")
+        duplicate_subject = message("bad", "sender@example.invalid", "Booking", "Hello")
+        duplicate_subject["payload"]["headers"].append({
+            "name": "subject", "value": "County Court Judgment"
+        })
+        with self.assertRaisesRegex(RuntimeError, "subject headers are ambiguous"):
+            self.import_messages([good, duplicate_subject])
+        self.assertFalse(gmail._path().exists())
+        duplicate_reply_to = message("bad", "sender@example.invalid", "Booking", "Hello")
+        duplicate_reply_to["payload"]["headers"].extend([
+            {"name": "Reply-To", "value": "customer@example.invalid"},
+            {"name": "reply-to", "value": "legal@example.invalid"},
+        ])
+        invalid_reply_to = message("bad", "sender@example.invalid", "Booking", "Hello")
+        invalid_reply_to["payload"]["headers"].append({
+            "name": "Reply-To", "value": "customer@example.invalid, legal@example.invalid"
+        })
+        for bad in (duplicate_reply_to, invalid_reply_to):
+            with self.subTest(headers=bad["payload"]["headers"]):
+                with self.assertRaisesRegex(RuntimeError, "reply address cannot be verified"):
+                    self.import_messages([good, bad])
+                self.assertFalse(gmail._path().exists())
+
 
 if __name__ == "__main__":
     unittest.main()
