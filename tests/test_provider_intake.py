@@ -25,7 +25,10 @@ class GmailTests(unittest.TestCase):
                           {"labels": [{"name": "HQ-Enquiries", "id": "Label_Enquiries"}]},
                           {"messages": [{"id": "abc"}]},
                           {"id": "abc", "labelIds": ["INBOX", "Label_Enquiries"],
-                           "snippet": "<script>ignored</script>", "payload": {"headers": []}}]
+                           "snippet": "<script>ignored</script>", "payload": {"headers": [
+                               {"name": "From", "value": "customer@example.invalid"},
+                               {"name": "Subject", "value": "Tint enquiry"},
+                           ]}}]
 
     def test_idempotent_retry_and_persistent_review(self):
         with patch.object(gmail, "_get", side_effect=self.responses * 3) as api:
