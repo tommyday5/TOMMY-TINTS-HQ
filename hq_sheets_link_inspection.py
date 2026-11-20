@@ -3,6 +3,7 @@
 No spreadsheet writes, mapping persistence, automatic sync, receipt evidence
 or customer-data responses. Never invoke a provider merely to render a page.
 """
+import json
 import re
 import secrets
 import time
@@ -29,6 +30,16 @@ def page():
     return render_template("sheets_link_preflight.html", csrf=session.get("csrf", ""))
 
 
+def _unique_json_fields(pairs):
+    """Fail closed on repeated JSON fields, even inside nested objects."""
+    data = {}
+    for key, value in pairs:
+        if key in data:
+            raise ValueError("Duplicate JSON field")
+        data[key] = value
+    return data
+
+
 @sheet_link_inspection.post("/api/hq/sheets/job-link-preflight")
 @required
 def inspect():
@@ -42,7 +53,17 @@ def inspect():
         return jsonify(error="Inspection request too large"), 413
     if not request.is_json:
         return jsonify(error="JSON object required"), 415
-    values = request.get_json(silent=True)
+    # The request body must be bounded even when an HTTP client omits
+    # Content-Length. Flask's default JSON decoder silently accepts repeated
+    # keys; neither conflicting candidates nor malformed UTF-8 may reach a
+    # provider read or become apparently successful preflight evidence.
+    raw = request.stream.read(513)
+    if len(raw) > 512:
+        return jsonify(error="Inspection request too large"), 413
+    try:
+        values = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_json_fields)
+    except (UnicodeDecodeError, ValueError):
+        return jsonify(error="Invalid or ambiguous JSON request"), 400
     if not isinstance(values, dict) or set(values) != {"job_ref", "target_row", "mode"}:
         return jsonify(error="Exact job_ref, target_row and mode are required"), 400
     job_ref, row, mode = values["job_ref"], values["target_row"], values["mode"]
