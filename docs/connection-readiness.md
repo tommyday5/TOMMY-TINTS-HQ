@@ -291,3 +291,8 @@ The owner-only, memory-only CSV schema inspector now rejects visually ambiguous 
 ### Financial preview duplicate JSON safeguards (20 November 2026)
 
 The owner-only memory-only CSV preview refuses conflicting repeated keys in text-encoded JSON column mappings and manual bank-classification proposals, rather than silently keeping a later value. Synthetic HTML and API route tests confirm that ambiguous instructions fail before canonical review and without persistent financial writes or exposing private rows. This is **offline preparation only**. Monzo and DNA remain not implemented as live provider ingestion adapters; actual source formats, authorisation, read/sync evidence, verified bank credits, approved job allocations and reconciliation remain unverified.
+
+
+### Native JSON submission integrity (20 November 2026)
+
+The private transaction export preview API now **rejects repeated member names in native JSON bodies, at every depth**, in addition to duplicate keys in string-encoded mapping/classification fields. A conflicting second `source`, `amount_pence` mapping or `customer_receipt_candidate` proposal cannot silently override the first instruction. The API enforces owner CSRF before parsing native JSON and rejects malformed or non-UTF-8 payloads. Synthetic route tests prove rejection and no persisted finance changes. Live Monzo/DNA implementation and all provider read/sync/reconciled states remain unchanged and unverified; actual source schemas and independent bank evidence are still required.

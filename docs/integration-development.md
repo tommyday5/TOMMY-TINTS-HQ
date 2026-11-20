@@ -348,3 +348,8 @@ The existing owner-only `/hq/transaction-import-preview` rejects duplicate headi
 ### Reject duplicate JSON review instructions (20 November 2026)
 
 The owner-only, non-persistent Monzo/DNA schema preview now rejects repeated keys in **text-encoded JSON** submitted for exact column mapping or Monzo classification proposals (including nested repeated keys). Standard JSON parsers otherwise silently keep the last conflicting mapping or classification, making the owner's intended instruction ambiguous. Both the private form and API route fail closed with a generic error, without echoing IDs, amounts or notes. Distinct JSON keys and explicit offline mappings continue to work. This **does not** validate the original Monzo/DNA export schema, authorise ingestion, persist classification decisions, verify source ownership or establish a receipt/settlement.
+
+
+### Native JSON owner-preview duplicate-member validation (20 November 2026)
+
+The owner-only `POST /api/hq/transaction-import-preview` now decodes native JSON using the same strict duplicate-key rejection already used for text-encoded mapping and classification JSON. This protects top-level fields, nested canonical mappings and Monzo classification proposals from last-write-wins ambiguity when sent by an API client. The CSRF check runs before native JSON parsing; invalid UTF-8 or malformed native JSON fails closed. Fixture tests verify that rejected requests do not save source data or alter financial records. This is still **offline schema/classification preparation**, not verified Monzo/DNA mapping, bank authorisation, provider sync, cash receipt, settlement or reconciliation.
