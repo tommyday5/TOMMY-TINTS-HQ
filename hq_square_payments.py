@@ -95,19 +95,27 @@ def refresh_payments():
         response = requests.get(_API, params=params, headers=headers, timeout=(3, 7))
         response.raise_for_status()
         payload = response.json()
-        if (not isinstance(payload, dict) or payload.get("errors")
-                or not isinstance(payload.get("payments", []), list)):
+        if not isinstance(payload, dict) or payload.get("errors"):
             raise ValueError("Square returned invalid payment results")
-        for item in payload.get("payments", []):
+        # Square's requested limit is 100 records per page. A larger or
+        # malformed page cannot be treated as complete provider evidence.
+        payments = payload.get("payments", [])
+        if not isinstance(payments, list) or len(payments) > 100:
+            raise ValueError("Square payment page cannot be verified")
+        for item in payments:
             row = _payment(item, location)
             if row[0] in seen_ids:
                 raise ValueError("Square returned duplicate payment identifiers")
             seen_ids.add(row[0])
             rows.append(row)
+        # Only an absent cursor signals completion. An empty, whitespace,
+        # malformed or replayed cursor could silently truncate this snapshot.
         cursor = payload.get("cursor")
-        if not cursor:
+        if cursor is None:
             break
-        if not isinstance(cursor, str) or len(cursor) > 2000 or cursor in cursors:
+        if (not isinstance(cursor, str) or not 1 <= len(cursor) <= 2000
+                or not cursor.isascii() or not cursor.isprintable()
+                or any(ch.isspace() for ch in cursor) or cursor in cursors):
             raise ValueError("Square returned an invalid pagination cursor")
         cursors.add(cursor)
         params["cursor"] = cursor

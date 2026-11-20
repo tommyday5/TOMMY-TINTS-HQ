@@ -106,6 +106,49 @@ class SquarePaymentEvidenceTests(unittest.TestCase):
                         square.refresh_payments()
                 self.assertFalse(square._path().exists())
 
+    def test_payment_pagination_rejects_oversized_pages_and_ambiguous_cursors(self):
+        # Never replace a previously complete, source-scoped snapshot merely
+        # because the provider responds with an ambiguous second-page token.
+        with patch.object(square.requests, "get",
+                          return_value=self.page([self.payment()])):
+            self.assertEqual(square.refresh_payments(), 1)
+        bad_pages = [
+            {"payments": [self.payment(ref=f"p-{i}") for i in range(101)]},
+            {"payments": [self.payment(ref="replacement")], "cursor": ""},
+            {"payments": [self.payment(ref="replacement")], "cursor": " "},
+            {"payments": [self.payment(ref="replacement")], "cursor": "next page"},
+            {"payments": [self.payment(ref="replacement")], "cursor": chr(10)},
+            {"payments": [self.payment(ref="replacement")], "cursor": chr(9731)},
+            {"payments": [self.payment(ref="replacement")], "cursor": "a" * 2001},
+            {"payments": [self.payment(ref="replacement")], "cursor": 123},
+        ]
+        for bad_page in bad_pages:
+            with self.subTest(cursor=repr(bad_page.get("cursor")),
+                              count=len(bad_page["payments"])):
+                with patch.object(square.requests, "get", side_effect=[
+                        Mock(json=Mock(return_value=bad_page)),
+                        self.page([self.payment(ref="unexpected")])]) as provider:
+                    with self.assertRaises(ValueError):
+                        square.refresh_payments()
+                    self.assertEqual(provider.call_count, 1)
+                snapshot = square.read_snapshot()
+                self.assertEqual(snapshot["payment_count"], 1)
+                self.assertEqual(snapshot["payments"][0]["id"], "square-pmt-01")
+                self.assertFalse(snapshot["bank_settlement_verified"])
+
+    def test_valid_two_page_payment_refresh_is_bounded_and_not_reconciled(self):
+        with patch.object(square.requests, "get", side_effect=[
+                self.page([self.payment(ref="first")], cursor="next_123"),
+                self.page([self.payment(ref="second")])]) as provider:
+            self.assertEqual(square.refresh_payments(), 2)
+        self.assertEqual(provider.call_count, 2)
+        self.assertEqual(provider.call_args.kwargs["params"]["cursor"], "next_123")
+        snapshot = square.read_snapshot()
+        self.assertEqual(snapshot["payment_count"], 2)
+        self.assertEqual({p["id"] for p in snapshot["payments"]}, {"first", "second"})
+        self.assertFalse(snapshot["bank_settlement_verified"])
+        self.assertIsNone(snapshot["verified_job_receipts_pence"])
+
     def test_owner_auth_csrf_and_explicit_refresh_only(self):
         url = "/hq/square-payment-evidence"
         api = "/api/hq/square-payment-evidence"
