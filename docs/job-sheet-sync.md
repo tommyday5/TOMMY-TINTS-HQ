@@ -138,3 +138,12 @@ lock, proof of an unchanged workbook, approved HQ-to-J identity, baseline or
 permission to write. A sheet can still change after the last read. Historical
 link creation and all spreadsheet writes remain disabled pending an
 owner-reviewed mapping, write baseline and separate authorisation.
+
+
+### Read-only HQ-to-historical-J candidate comparison (20 November 2026)
+
+On the existing owner-only `/hq/sheets/job-link-preflight` screen, an owner may now optionally supply a real internal 32-character HQ work ID and its **saved revision** while checking an **existing** J reference/row. HQ checks the internal record, runs the existing complete read-only workbook preflight, rechecks the HQ revision after Google returns, and reports **only non-identifying candidate agreement / difference / unavailable flags** for the proposed Customer (C) and Quoted Price (Q) mapping. GBP prices are compared using exact pence; empty/malformed or non-penny source numbers never count as agreement. Stale revisions block the review.
+
+This is *not* an automatic job match: B:E header semantics and historical identity have not been independently verified, and customer/price agreement is insufficient evidence even when both appear equal. No customer names, registration numbers, amounts, or job references are returned from the candidate comparison. Neither the HQ-to-J link table nor outbox state is modified. No candidate can become `historical_mapping_verified`, `baseline_verified`, `write_authorised`, `live_sync`, or `reconciled` from this check. The owner must compare original source records, confirm mapping semantics, resolve conflicts and obtain separate link and write approvals before activation.
+
+The inspector UI is now present, so the older description above of the pure helper as “not a live owner UI” applies only to that **helper**, not the later owner-triggered inspection endpoint.
