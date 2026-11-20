@@ -183,6 +183,49 @@ class SensitiveGmailEnquiryTests(unittest.TestCase):
                     self.import_messages([safe, bad])
                 self.assertFalse(gmail._path().exists())
 
+    def test_sensitive_sender_display_name_is_not_queued_from_neutral_address(self):
+        legal_plain = message(
+            "display-legal", '"County Court Judgment Team" <neutral@example.invalid>',
+            "Documents attached", "Please see the attachment.")
+        legal_encoded = message(
+            "display-encoded",
+            "=?utf-8?Q?Debt_Recovery_Department?= <neutral@example.invalid>",
+            "General correspondence", "Please review.")
+        customer = message(
+            "display-customer", '"Hyundai Parts Customer" <buyer@example.invalid>',
+            "Bonnet quote", "Please send a price.")
+        result = self.import_messages([legal_plain, legal_encoded, customer])
+        self.assertEqual(result["skipped_sensitive"], 2)
+        self.assertEqual(result["added"], 1)
+        self.assertEqual([row["id"] for row in gmail.queue()[1]], ["display-customer"])
+        self.assertNotIn("Court", str([dict(row) for row in gmail.queue()[1]]))
+
+    def test_sensitive_reply_to_display_name_is_not_queued(self):
+        legal = message(
+            "reply-display", "customer@example.invalid",
+            "General question", "Please see the attachment.")
+        legal["payload"]["headers"].append({
+            "name": "Reply-To",
+            "value": "=?utf-8?Q?County_Court_Judgment?= <reply@example.invalid>",
+        })
+        ordinary = message(
+            "ordinary", "customer@example.invalid",
+            "Window tint", "I would like a quote.")
+        result = self.import_messages([legal, ordinary])
+        self.assertEqual(result["skipped_sensitive"], 1)
+        self.assertEqual(result["added"], 1)
+        self.assertEqual([row["id"] for row in gmail.queue()[1]], ["ordinary"])
+
+    def test_undecodable_sender_display_name_aborts_page_before_any_write(self):
+        customer = message(
+            "customer", "customer@example.invalid", "Tint quote", "Quote please")
+        malformed = message(
+            "bad", "=?utf-8?B?%%%?= <neutral@example.invalid>",
+            "General enquiry", "Please reply.")
+        with self.assertRaisesRegex(RuntimeError, "subject cannot be decoded"):
+            self.import_messages([customer, malformed])
+        self.assertFalse(gmail._path().exists())
+
     def test_ordinary_price_and_booking_enquiries_are_not_suppressed(self):
         result = self.import_messages([
             message("safe", "person@example.invalid", "Hyundai bonnet repair quote",
