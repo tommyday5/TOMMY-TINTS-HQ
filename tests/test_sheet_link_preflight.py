@@ -57,6 +57,24 @@ class SheetLinkPreflightTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Duplicate"):
             self.check(snap)
 
+    def test_new_job_ref_cannot_reuse_differently_cased_historical_id(self):
+        snap = fixture()
+        snap["sheets"][0]["data"][0]["rowData"][3]["values"][0] = {
+            "userEnteredValue": {"stringValue": "j0083"}}
+        with self.assertRaisesRegex(ValueError, "already exists"):
+            self.check(snap, job_ref="J0083", row=6, mode="new")
+
+    def test_existing_link_must_match_exact_historical_id_case(self):
+        snap = fixture()
+        snap["sheets"][0]["data"][0]["rowData"][1]["values"][0] = {
+            "userEnteredValue": {"stringValue": "j0077"}}
+        with self.assertRaisesRegex(ValueError, "casing"):
+            self.check(snap, job_ref="J0077", row=5, mode="existing")
+        # Exact owner-reviewed original case (uppercase) still succeeds.
+        self.assertEqual(
+            self.check(fixture(), job_ref="J0077", row=5, mode="existing")[
+                "candidate_kind"], "existing")
+
     def test_truncated_scan_never_proves_uniqueness(self):
         snap = fixture()
         snap["sheets"][0]["data"][0]["rowData"].pop()
