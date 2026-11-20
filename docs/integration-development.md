@@ -368,3 +368,8 @@ The operation records its own `sheets_job_preflight` read observation, separatel
 ### Sheets link inspection strict-request boundary (20 November 2026)
 
 The owner-only read-only Jobs-link inspection POST now bounds the request stream to 512 bytes regardless of Content-Length, rejects invalid UTF-8 and malformed JSON, and rejects duplicate JSON object fields (including nested conflicts). CSRF is checked before parsing; all invalid candidate instructions are rejected before contacting Google or recording a successful inspection. Synthetic owner HTTP tests cover these error cases. A valid snapshot remains an unlinked, nonpersistent proposal; no write scope, background worker, job sync, receipt allocation or provider reconciled state is enabled. Real workbook row coverage and historical job identity verification remain necessary.
+
+
+### Jobs J-reference casing guard (20 November 2026)
+
+The existing owner-triggered read-only Jobs preflight now uses the **same case-insensitive comparison** for a manually proposed J reference as for duplicate detection throughout the worksheet. A stored `j0083` blocks allocating a new `J0083` even if the chosen target row is blank. Existing-link inspections require the precise original-case historical reference. Synthetic helper and owner API tests confirm a 409 block without exposing sheet IDs or customer rows, mutating production data, enabling writes or upgrading live provider readiness. The full GridData range/blank-row coverage issue remains fail-closed until a genuine owner read validates its exact response contract.
