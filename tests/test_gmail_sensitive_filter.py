@@ -75,6 +75,35 @@ class SensitiveGmailEnquiryTests(unittest.TestCase):
             self.import_messages(rows)
         self.assertFalse(gmail._path().exists())
 
+    def test_ambiguous_or_missing_sender_aborts_entire_page_without_storing_mail(self):
+        good = message("good", "customer@example.invalid", "Tint quote", "Please quote")
+        no_from = message("bad", "customer@example.invalid", "Quote", "Hello")
+        no_from["payload"]["headers"] = [
+            h for h in no_from["payload"]["headers"] if h["name"] != "From"]
+        duplicate = message("bad", "customer@example.invalid", "Quote", "Hello")
+        duplicate["payload"]["headers"].append(
+            {"name": "from", "value": "legal@example.invalid"})
+        scenarios = [
+            no_from,
+            duplicate,
+            message("bad", "", "Quote", "Hello"),
+            message("bad", "not-an-email", "Quote", "Hello"),
+            message("bad", "customer@example.invalid, legal@example.invalid", "Quote", "Hello"),
+        ]
+        for bad in scenarios:
+            with self.subTest(headers=bad["payload"]["headers"]):
+                with self.assertRaisesRegex(RuntimeError, "sender cannot be verified"):
+                    self.import_messages([good, bad])
+                self.assertFalse(gmail._path().exists())
+
+    def test_bounded_header_metadata_fails_closed(self):
+        good = message("good", "customer@example.invalid", "Tint quote", "Hello")
+        bad = message("bad", "customer@example.invalid", "Quote", "Hello")
+        bad["payload"]["headers"].append({"name": "X-Untrusted", "value": "x" * 16385})
+        with self.assertRaisesRegex(RuntimeError, "headers cannot be verified"):
+            self.import_messages([good, bad])
+        self.assertFalse(gmail._path().exists())
+
     def test_missing_enquiry_label_fails_closed_before_message_search(self):
         responses = [
             {"emailAddress": gmail.MAILBOX},
