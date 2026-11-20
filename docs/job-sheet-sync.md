@@ -107,3 +107,9 @@ concurrent owner edits. This is an ephemeral read-only screening improvement,
 not an HQ-to-J link, historical mapping, write lock, consent, finance evidence,
 successful synchronisation or reconciliation. Real owner OAuth access and
 genuine source behaviour still require an owner-initiated validation.
+
+### Cross-read candidate input integrity (20 November 2026)
+
+The trailing-row completion preflight now checks the owner-selected row's **mapped input cells** across both read-only Google responses. If raw GridData showed a candidate input cell empty but the independent FORMULA-rendered Values read sees a new literal, number or formula in that cell, the inspection blocks even if the Job ID itself is unchanged. Synthetic tests cover a blank proposed new row and a historical row with a newly filled customer field. Already populated numeric/date cells are deliberately not compared by displayed value because the Values API can format them differently. This is a one-way inconsistency guard, **not** an atomic source snapshot, a lock, a verified HQ-to-J mapping, a trusted remote baseline or an approved write.
+
+Sheets writes, automatic job sync and financial reconciliation remain disabled. The owner still needs an actual authenticated workbook inspection, verified mapping, separate write consent and conflict-coordination policy.

@@ -412,3 +412,7 @@ The two reads are non-atomic; concurrent workbook edits, verified historical
 HQ-to-J identity, remote-edit baseline, owner-specific write consent and
 independent finance evidence remain hard blockers. Synthetic tests cover the
 safe completion and blocked cases. Do not classify this as live Sheets sync.
+
+### Sheets follow-up read candidate-input race guard (20 November 2026)
+
+A bounded read-only GridData + FORMULA Values scan now compares the manually selected candidate row's mapped input cells, not just Job IDs, when the raw response omits a trailing row. Any follow-up value in a cell that was blank in the original raw candidate causes a fixed, customer-data-free conflict. Tests cover a newly inserted customer field, formula and numeric value in a proposed blank row, and a changed historical candidate input. Pre-existing numbers/dates are not naively compared to formatted Values output. This improves detection of inconsistent snapshots but does not create atomicity, prove all existing cells unchanged, validate genuine owner access, implement Sheets writes, or verify a payment, job identity, bank receipt or settlement. All connection-readiness stages remain evidence-gated and live writes disabled.
