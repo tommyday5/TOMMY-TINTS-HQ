@@ -372,3 +372,7 @@ configured, authorised, read-tested, sync-tested or reconciled status; the
 live register remains owner-only. The next owner action remains a genuine
 manual read with Sheets OAuth; actual historical HQ-to-J mappings and
 conflict-safe write approval remain independent blockers.
+
+### Sheets cross-read candidate-input consistency (20 November 2026)
+
+When omitted trailing rows require two independent, read-only Google Sheets calls, the Jobs link inspector now rejects a selected row if any mapped input cell was blank in raw GridData but has become non-empty in the FORMULA-rendered follow-up. A changed customer field or formula cannot be overlooked merely because the Job ID stayed the same. Only the owner-selected row is compared, without returning its values. Existing numeric/date values may render differently, so this does not prove unchanged populated cells, an atomic read, a lock, or an approved remote baseline. Fixture tests establish this fail-closed behaviour, **not** live Google read success. No configuration, authorisation, sync, reconciled status, bank receipt or spreadsheet write state is advanced. Next action remains owner-initiated genuine Sheets inspection and individually approved historical HQ-to-J identity review.
