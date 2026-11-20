@@ -141,11 +141,36 @@ class PaymentReviewTests(unittest.TestCase):
                        ((datetime.now(timezone.utc)-timedelta(days=2)).isoformat(),))
         self.assertFalse(compare_references(job_id, "square-01")["snapshot_current"])
         self.seed()
-        with patch.dict(os.environ, {"HQ_SQUARE_LOCATION_ID": "another-location"}):
-            data = compare_references(job_id, "square-01")
-            self.assertFalse(data["snapshot_current"])
-            self.assertFalse(data["candidate_evidence_complete"])
-            self.assertIn("location has changed", " ".join(data["warnings"]))
+        self.owner()
+        for current_location in ("another-location", "locatiön-one"):
+            with self.subTest(location=current_location), patch.dict(
+                    os.environ, {"HQ_SQUARE_LOCATION_ID": current_location}):
+                data = compare_references(job_id, "square-01")
+                self.assertFalse(data["snapshot_current"])
+                self.assertFalse(data["candidate_evidence_complete"])
+                self.assertFalse(data["payment_evidence_found"])
+                self.assertIsNone(data["provider_amount_pence"])
+                self.assertIsNone(data["reported_refund_pence"])
+                self.assertIsNone(data["provider_status"])
+                self.assertFalse(data["matches_planned_deposit"])
+                self.assertIn("location has changed", " ".join(data["warnings"]))
+                # Both owner-only review entrypoints must withhold the old
+                # provider evidence, not merely show a wrong-location warning.
+                response = self.api(job_id)
+                self.assertEqual(response.status_code, 200)
+                self.assertFalse(response.json["payment_evidence_found"])
+                self.assertIsNone(response.json["provider_amount_pence"])
+                html = self.client.post("/hq/square-payment-review", data={
+                    "csrf": "csrf", "work_id": job_id, "payment_id": "square-01",
+                })
+                self.assertEqual(html.status_code, 200)
+                self.assertIn(b"location has changed", html.data)
+                self.assertNotIn(b"<dd>COMPLETED</dd>", html.data)
+        # The original snapshot is preserved and remains reviewable once
+        # the owner restores the same configured location.
+        restored = compare_references(job_id, "square-01")
+        self.assertTrue(restored["payment_evidence_found"])
+        self.assertEqual(restored["provider_amount_pence"], 7600)
 
     def test_auth_csrf_reference_validation_and_error_handling(self):
         job_id = self.job()
