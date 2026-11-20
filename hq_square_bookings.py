@@ -34,6 +34,7 @@ def refresh_bookings():
                "Square-Version": "2026-09-16"}
     rows = []
     cursors = set()
+    seen_ids = set()
     for _ in range(10):
         response = requests.get("https://connect.squareup.com/v2/bookings",
                                 headers=headers, params=params, timeout=(3, 5))
@@ -41,19 +42,39 @@ def refresh_bookings():
         payload = response.json()
         if not isinstance(payload, dict) or payload.get("errors"):
             raise RuntimeError("Square did not return booking data")
-        for item in payload.get("bookings", []):
-            ref, version, status = item["id"], item["version"], item["status"]
-            if (item["location_id"] != location or not isinstance(ref, str) or not ref
-                    or type(version) is not int or version < 0
-                    or not isinstance(status, str) or not status):
+        # The requested provider page is limited to 100 bookings. A malformed
+        # list or an ambiguous repeated ID is not a complete, reliable source
+        # snapshot, even if individual booking versions look plausible.
+        bookings = payload.get("bookings", [])
+        if not isinstance(bookings, list) or len(bookings) > 100:
+            raise RuntimeError("Square booking page cannot be verified")
+        for item in bookings:
+            if not isinstance(item, dict):
                 raise RuntimeError("Square returned an invalid booking")
-            start = timestamp(item["start_at"]).astimezone(timezone.utc)
+            ref, version, status = (item.get("id"), item.get("version"),
+                                    item.get("status"))
+            if (item.get("location_id") != location or not isinstance(ref, str)
+                    or not 1 <= len(ref) <= 192 or not ref.isascii()
+                    or not ref.isprintable() or any(ch.isspace() for ch in ref)
+                    or type(version) is not int or version < 0
+                    or not isinstance(status, str) or not 1 <= len(status) <= 64
+                    or not status.isascii() or not status.isprintable()):
+                raise RuntimeError("Square returned an invalid booking")
+            if ref in seen_ids:
+                raise RuntimeError("Square returned duplicate booking identifiers")
+            seen_ids.add(ref)
+            start = timestamp(item.get("start_at")).astimezone(timezone.utc)
             rows.append((location, ref, version, status, start.isoformat()))
+        # An omitted cursor is the only unambiguous end-of-pages signal.
+        # Empty, non-string and repeated cursors must not be mistaken for
+        # a successfully complete read-and-persist operation.
         cursor = payload.get("cursor")
-        if not cursor:
+        if cursor is None:
             break
-        if cursor in cursors:
-            raise RuntimeError("Square returned a repeated cursor")
+        if (not isinstance(cursor, str) or not 1 <= len(cursor) <= 2000
+                or not cursor.isascii() or not cursor.isprintable()
+                or any(ch.isspace() for ch in cursor) or cursor in cursors):
+            raise RuntimeError("Square returned an invalid pagination cursor")
         cursors.add(cursor)
         params["cursor"] = cursor
     else:

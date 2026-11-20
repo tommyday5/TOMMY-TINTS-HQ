@@ -272,3 +272,9 @@ The manually labelled Gmail enquiry importer now screens both ordinary and RFC 2
 ### Gmail page-list validation — 20 November 2026
 
 Gmail's owner-initiated sales import now validates the bounded message-list envelope, unique message IDs and opaque continuation token before any local enquiry rows are committed. Missing `messages` denotes a legitimate empty page; malformed or duplicate list evidence rejects the page. Synthetic regression tests are not live Gmail read/sync or permission evidence. Current authorisation, mailbox coverage and sales/legal isolation must still be confirmed through a genuine owner-authorised enquiry import. No Monzo/DNA provider, settled cash, job payment or bank reconciliation status advances.
+
+### 20 November 2026 — Square bookings: malformed page rejection
+
+The read-only Square bookings adapter now validates every page before committing snapshots: maximum 100 items/page, unique bounded provider IDs across pages, exact configured location, safe version/status metadata and valid bounded, non-repeated pagination cursors. Invalid/empty cursor values no longer masquerade as the end of a successfully complete refresh. Any page failure leaves the existing SQLite booking snapshot intact and prevents a new recorded successful read/sync observation. Added fixture-based regressions; **no provider or customer record was accessed** as part of testing.
+
+**Readiness unchanged:** implementation hardening is not Square configuration, consent, verified read, persisted live sync, appointment reconciliation or payment settlement. The owner still must configure a legitimate production read token and location, explicitly refresh, and independently verify canonical appointments before any approved outbound action. Monzo and DNA also remain offline/unverified without actual export provenance and verified bank evidence.

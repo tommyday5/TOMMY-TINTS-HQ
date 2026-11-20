@@ -58,6 +58,56 @@ class SquareSnapshotTests(unittest.TestCase):
         with sqlite3.connect(square._path()) as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM bookings").fetchone()[0], 1)
 
+    def test_invalid_provider_pages_are_rejected_before_any_snapshot(self):
+        valid_booking = self.response(1, "ACCEPTED").json()["bookings"][0]
+        invalid_pages = (
+            {"bookings": None},
+            {"bookings": "booking"},
+            {"bookings": {"id": "booking"}},
+            {"bookings": [None]},
+            {"bookings": [dict(valid_booking, id="bad id")]},
+            {"bookings": [dict(valid_booking, status="")]},
+            {"bookings": [dict(valid_booking, version=True)]},
+            {"bookings": [valid_booking] * 101},
+            {"bookings": [], "cursor": ""},
+            {"bookings": [], "cursor": []},
+            {"bookings": [], "cursor": "next\\npage"},
+            {"bookings": [], "cursor": "x" * 2001},
+        )
+        for payload in invalid_pages:
+            with self.subTest(payload=repr(payload)[:100]):
+                with patch.object(square.requests, "get", return_value=Mock(
+                        json=Mock(return_value=payload))):
+                    with self.assertRaises(RuntimeError):
+                        square.refresh_bookings()
+                self.assertFalse(square._path().exists())
+
+    def test_duplicate_booking_across_pages_cannot_create_snapshot(self):
+        item = self.response(3, "ACCEPTED").json()["bookings"][0]
+        pages = (
+            {"bookings": [item], "cursor": "next-page"},
+            {"bookings": [dict(item, version=4)]},
+        )
+        with patch.object(square.requests, "get", side_effect=[
+                Mock(json=Mock(return_value=p)) for p in pages]):
+            with self.assertRaisesRegex(RuntimeError, "duplicate booking"):
+                square.refresh_bookings()
+        self.assertFalse(square._path().exists())
+
+    def test_ambiguous_refresh_preserves_previous_booking_snapshot(self):
+        with patch.object(square.requests, "get",
+                          return_value=self.response(3, "ACCEPTED")):
+            self.assertEqual(square.refresh_bookings(), 1)
+        ambiguous = {"bookings": [], "cursor": []}
+        with patch.object(square.requests, "get", return_value=Mock(
+                json=Mock(return_value=ambiguous))):
+            with self.assertRaisesRegex(RuntimeError, "pagination cursor"):
+                square.refresh_bookings()
+        with sqlite3.connect(square._path()) as db:
+            self.assertEqual(db.execute(
+                "SELECT id,version,status FROM bookings").fetchall(),
+                [("booking", 3, "ACCEPTED")])
+
     def test_owner_refresh_requires_csrf_and_success_updates_health(self):
         path = "/hq/square-bookings"
         with app.test_client() as client:
