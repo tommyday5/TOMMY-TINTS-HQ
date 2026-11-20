@@ -68,3 +68,17 @@ The HQ owner can open `/hq/sheets/job-link-preflight`, supply one manually revie
 ### Case-insensitive historical reference reuse guard (20 November 2026)
 
 An owner-selected proposed new `J` reference now compares against **all** existing raw Jobs IDs case-insensitively, using the same canonical comparison as the duplicate-ID scan. An existing `j0083` therefore blocks allocating `J0083` on a different row; for an existing-link inspection, the original casing must also match the owner-entered reference exactly. Synthetic tests cover both cases. No historical row is modified or auto-normalised, and passing this inspection does not verify an HQ-to-J identity, write consent or a live sync. Trailing blank GridData coverage and real workbook inspection remain outstanding.
+
+### Blank mapped-column heading guard (20 November 2026)
+
+The read-only Jobs row-link inspector now rejects missing or whitespace-only
+literal headings in **all** input columns it might eventually write, including
+B:E (Date, customer, tier and vehicle fields). Previously the known heading
+subset was checked but blank B:E headings could pass. This is a **minimum
+presence/integrity check**, not a claim that the B:E labels or semantics have
+been verified against the owner's genuine workbook. Existing duplicate-heading
+and formula checks still apply. Synthetic tests cover blank, duplicate and
+formula-based headings; no Sheets write is enabled. Historical J mapping,
+full-row GridData coverage (including trailing blank rows), authentic owner
+read, write consent, baseline conflict coordination and bank reconciliation
+remain unresolved.

@@ -8,6 +8,11 @@ def fixture():
     def cell(value):
         return {"userEnteredValue": {"stringValue": value}}
     heading = {"values": [{} for _ in range(36)]}
+    # Synthetic placeholders only: B:E values remain subject to a real
+    # owner-authorised source mapping review, not an assumed exact schema.
+    for index, value in {1: "Date", 2: "Customer",
+                         3: "Customer Type", 4: "Vehicle/Reg"}.items():
+        heading["values"][index] = cell(value)
     for index, value in VERIFIED_HEADERS.items():
         heading["values"][index] = cell(value)
     return {
@@ -90,6 +95,33 @@ class SheetLinkPreflightTests(unittest.TestCase):
         snap = fixture()
         snap["sheets"][0]["data"][0]["rowData"][0]["values"][15] = {
             "userEnteredValue": {"stringValue": "Job ID"}}
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            self.check(snap)
+
+    def test_blank_or_missing_unverified_input_heading_blocks(self):
+        # Presence of B:E headings is a minimum safety check; their exact
+        # semantic mapping to the owner workbook is still unverified.
+        for column in (1, 2, 3, 4):
+            with self.subTest(column=column):
+                snap = fixture()
+                snap["sheets"][0]["data"][0]["rowData"][0]["values"][column] = {}
+                with self.assertRaisesRegex(ValueError, "input heading missing"):
+                    self.check(snap)
+        snap = fixture()
+        snap["sheets"][0]["data"][0]["rowData"][0]["values"][3] = {
+            "userEnteredValue": {"stringValue": "  "}}
+        with self.assertRaisesRegex(ValueError, "input heading missing"):
+            self.check(snap)
+
+    def test_unverified_headings_remain_literal_and_unique(self):
+        snap = fixture()
+        snap["sheets"][0]["data"][0]["rowData"][0]["values"][2] = {
+            "userEnteredValue": {"formulaValue": '="Customer"'}}
+        with self.assertRaisesRegex(ValueError, "literal text"):
+            self.check(snap)
+        snap = fixture()
+        snap["sheets"][0]["data"][0]["rowData"][0]["values"][4] = {
+            "userEnteredValue": {"stringValue": "customer"}}
         with self.assertRaisesRegex(ValueError, "duplicate"):
             self.check(snap)
 
