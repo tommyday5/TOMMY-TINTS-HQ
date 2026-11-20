@@ -174,6 +174,89 @@ def complete_trailing_blank_rows(snapshot, value_range, *, candidate_row):
     }
 
 
+def candidate_has_typed_inputs(snapshot, *, candidate_row):
+    """Whether a complete raw candidate contains numeric/boolean mapped inputs.
+
+    Only call after successful trailing-row completion; this is an internal
+    trigger for a second-format *read*, not approval of an HQ/Shares link.
+    """
+    rows = snapshot["sheets"][0]["data"][0]["rowData"]
+    target = rows[candidate_row - FIRST_HEADER_ROW]
+    return any((entry := _entered(target, index)) is not None and
+               ("numberValue" in entry or "boolValue" in entry)
+               for index in _INPUT_INDEXES)
+
+
+def verify_unformatted_candidate(snapshot, value_range, *, candidate_row):
+    """Check mapped numeric/bool input against independent unformatted read.
+
+    FORMULA-rendered values can present prices as currency or dates as text;
+    comparing them numerically would reject unchanged input. A separate
+    UNFORMATTED_VALUE response reports their underlying numeric/boolean
+    values. This remains non-atomic, never a trusted write baseline.
+    """
+    if not isinstance(snapshot, dict) or snapshot.get("spreadsheetId") != WORKBOOK:
+        raise ValueError("Workbook identity is not verified")
+    sheets = snapshot.get("sheets")
+    if not isinstance(sheets, list) or len(sheets) != 1:
+        raise ValueError("Expected one Jobs sheet for typed comparison")
+    sheet = sheets[0]
+    properties = sheet.get("properties") if isinstance(sheet, dict) else None
+    if (not isinstance(properties, dict) or
+            properties.get("sheetId") != JOBS_SHEET_ID or
+            properties.get("title") != "Jobs"):
+        raise ValueError("Expected Jobs tab identity not confirmed")
+    grid = properties.get("gridProperties")
+    blocks = sheet.get("data")
+    if (not isinstance(grid, dict) or not isinstance(blocks, list) or
+            len(blocks) != 1 or not isinstance(blocks[0], dict)):
+        raise ValueError("Missing Jobs typed source evidence")
+    count = grid.get("rowCount")
+    rows = blocks[0].get("rowData")
+    if (type(count) is not int or not FIRST_DATA_ROW <= count <= MAX_ROWS or
+            not isinstance(rows, list) or
+            not FIRST_DATA_ROW <= candidate_row <= FIRST_HEADER_ROW + len(rows) - 1):
+        raise ValueError("Candidate has no original raw typed evidence")
+    accepted_ranges = {
+        f"Jobs!A{FIRST_HEADER_ROW}:AJ{count}",
+        f"'Jobs'!A{FIRST_HEADER_ROW}:AJ{count}",
+    }
+    if (not isinstance(value_range, dict) or
+            value_range.get("range") not in accepted_ranges or
+            value_range.get("majorDimension") != "ROWS"):
+        raise ValueError("Typed evidence does not cover exact Jobs range")
+    values = value_range.get("values")
+    if (not isinstance(values, list) or
+            len(values) > len(rows) or
+            any(not isinstance(row, list) or len(row) > MIN_COLUMNS
+                for row in values)):
+        raise ValueError("Unexpected typed evidence coverage")
+
+    # A third read must not accept a moved or replaced reference, or allow
+    # an omitted-tail row to become populated after the FORMULA read.
+    for index, row in enumerate(rows):
+        ref = _text(_entered(row, 0), "Job ID")
+        observed = values[index][0] if index < len(values) and values[index] else ""
+        if ref != observed:
+            raise ValueError("Jobs reference changed between source reads")
+
+    target = rows[candidate_row - FIRST_HEADER_ROW]
+    actual = values[candidate_row - FIRST_HEADER_ROW] if candidate_row - FIRST_HEADER_ROW < len(values) else []
+    for column in _INPUT_INDEXES:
+        entry = _entered(target, column)
+        if not entry:
+            continue
+        value = actual[column] if column < len(actual) else None
+        if "numberValue" in entry:
+            raw = entry["numberValue"]
+            if (type(raw) not in (int, float) or
+                    type(value) not in (int, float) or value != raw):
+                raise ValueError("Candidate numeric input changed between source reads")
+        elif "boolValue" in entry:
+            if type(entry["boolValue"]) is not bool or type(value) is not bool or value is not entry["boolValue"]:
+                raise ValueError("Candidate boolean input changed between source reads")
+
+
 def preflight_job_link(snapshot, *, job_ref, target_row, mode):
     """Check an owner-selected J reference and row, not an HQ-to-Sheets link.
 
