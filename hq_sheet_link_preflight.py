@@ -147,20 +147,25 @@ def complete_trailing_blank_rows(snapshot, value_range, *, candidate_row):
         if reference != observed:
             raise ValueError("Jobs reference changed between source reads")
 
-    # The independent FORMULA-rendered read can also reveal a newly filled
-    # input cell in the selected row, even if its Job ID remains blank. The
-    # original raw GridData is the source of candidate-cell safety, so do not
-    # certify contradictory target evidence. Check only previously blank cells:
-    # Google's FORMULA values can format existing numeric/date input differently.
-    # This is a one-way race guard, not an atomic snapshot or a write lock.
+    # Cross-check selected input cells against the independent FORMULA read.
+    # Previously blank raw inputs must remain blank. Literal strings and
+    # formulas have stable representations and must remain exactly unchanged,
+    # including deletion; numeric/date/bool values can render differently in
+    # the Values API and are intentionally NOT asserted equal here. Neither
+    # read is atomic or a lock, so future writes still need their own baseline.
     target_index = candidate_row - FIRST_HEADER_ROW
     target_raw = rows[target_index]
     target_observed = values[target_index] if target_index < len(values) else []
     for column in _INPUT_INDEXES:
-        if (_entered(target_raw, column) is None
-                and column < len(target_observed)
-                and target_observed[column] != ""):
-            raise ValueError("Candidate input changed between source reads")
+        entered = _entered(target_raw, column)
+        observed = target_observed[column] if column < len(target_observed) else ""
+        if entered is None:
+            if observed != "":
+                raise ValueError("Candidate input changed between source reads")
+        elif "stringValue" in entered or "formulaValue" in entered:
+            raw_literal = entered.get("stringValue", entered.get("formulaValue"))
+            if observed != raw_literal:
+                raise ValueError("Candidate input changed between source reads")
 
     padded = rows + [{"values": []} for _ in range(expected - len(rows))]
     return {
