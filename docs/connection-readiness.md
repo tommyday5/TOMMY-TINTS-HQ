@@ -339,3 +339,18 @@ The fixture-tested, read-only Jobs row preflight no longer accepts a new upperca
 The existing owner-only Jobs inspection now has its own `sheets_job_preflight` readiness entry and timestamp in `/hq/integrations` and `/api/hq/integrations`. It reads only observations explicitly recorded by the owner-triggered, read-only `/hq/sheets/job-link-preflight` POST. Pricing (`pricing_sheets`), maintenance (`maintenance_sheets`) and finance (`finance`) cannot inherit that inspection's success; the reverse is also true. An invalid or conflicting candidate is recorded as a failed *inspection*, not a successful link, and the register retains the prior successful read timestamp separately from the latest error.
 
 The inspection requires owner Google OAuth; a configured service account alone is insufficient. A successful inspection is a **historical, snapshot-only row/reference preflight**, not evidence of actual HQ identity matching, complete externally validated source coverage, ongoing permission, baseline safety, write access, a committed synchronisation or settlement. It remains **read-only** (`sync_applicable=false`, `sync_tested=false`, `reconciled=false`). Google's trailing blank GridData row behaviour has not been validated against the owner's genuine workbook; incomplete row coverage still blocks the inspection. No owner data, job refs or financial amounts are committed to the repository.
+
+### Sheets mapped-heading minimum evidence (20 November 2026)
+
+Owner-only sheets_job_preflight now rejects snapshots whose future writable
+Jobs columns have absent, blank or whitespace-only headings, including B:E.
+Fixture tests also reject formula and duplicate headings. This closes a
+possible false-positive inspection against an altered or incomplete source
+layout. The existing known heading subset is still checked for exact text;
+**B:E heading meanings have not been independently verified**. A passing
+inspection remains ephemeral and does not create an HQ-to-J link, prove full
+GridData coverage or authorise a cell write. No provider configuration,
+authorisation, read-tested, sync-tested, reconciled or verified-receipt stage
+was advanced from code-only tests. Owner actions remain genuine workbook read,
+complete row scan, semantic mapping, reviewed historical links and separate
+write consent.
