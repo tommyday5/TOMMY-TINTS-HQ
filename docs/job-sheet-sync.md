@@ -82,3 +82,28 @@ formula-based headings; no Sheets write is enabled. Historical J mapping,
 full-row GridData coverage (including trailing blank rows), authentic owner
 read, write consent, baseline conflict coordination and bank reconciliation
 remain unresolved.
+
+
+### Independent trailing-blank-row evidence (20 November 2026)
+
+The owner-triggered Sheets Jobs inspection now supports a **limited** Google
+GridData tail-omission case. If Google's raw `A4:AJ` response includes the
+owner-selected row but stops before the reported grid row count, HQ makes a
+second **read-only** `A4:AJ<rowCount>` Values API request with
+`valueRenderOption=FORMULA` and `majorDimension=ROWS`. Google's documented
+Values API omits trailing empty rows; the helper requires an exact echoed range,
+checks that the second read has no values beyond the raw GridData tail, and
+compares all available raw job-reference cells to the second source read.
+Only then can it pad the omitted *trailing* rows as empty for the global
+case-insensitive job-ID uniqueness scan. A mismatch, formula, wrong range,
+provider error or incomplete evidence fails closed.
+
+**Crucial restriction:** The candidate itself must be present in the original
+raw GridData. If the proposed destination is inside the omitted tail, the
+inspection remains blocked: trimmed values are not enough to rule out
+user-entered empty strings or to approve raw target-cell safety. The two API
+reads are not an atomic transaction and cannot guarantee protection against
+concurrent owner edits. This is an ephemeral read-only screening improvement,
+not an HQ-to-J link, historical mapping, write lock, consent, finance evidence,
+successful synchronisation or reconciliation. Real owner OAuth access and
+genuine source behaviour still require an owner-initiated validation.

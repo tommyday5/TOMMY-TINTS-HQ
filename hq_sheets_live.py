@@ -9,6 +9,7 @@ import requests
 from google.auth.transport.requests import Request
 from google.oauth2 import service_account
 from hq_pricing_adapter import settings_from_values, library_from_values, jobs_for_timer
+from hq_sheet_link_preflight import FIRST_HEADER_ROW, MAX_ROWS, complete_trailing_blank_rows
 
 SPREADSHEET_ID="1B0XULUDiMlVuW9u0kUOYem8WelBtOH-Xey_wWVYdb2M"
 SCOPES=["https://www.googleapis.com/auth/spreadsheets.readonly"]
@@ -79,7 +80,7 @@ def read_finance(access_token=None):
     return finance_snapshot(response.json())
 
 
-def read_job_link_snapshot(access_token):
+def read_job_link_snapshot(access_token, *, selected_row):
     """Owner-initiated read of the existing Jobs tab's raw A:AJ GridData.
 
     This must be called only after a verified owner POST and read-only consent.
@@ -104,4 +105,38 @@ def read_job_link_snapshot(access_token):
     snapshot = response.json()
     if not isinstance(snapshot, dict):
         raise ValueError("Malformed Jobs GridData evidence")
-    return snapshot
+    # Sheets GridData can omit trailing blank RowData entries. Only when the
+    # *chosen* candidate already has complete raw cell evidence can a second,
+    # explicit FORMULA-rendered values read prove the missing A:AJ tail has no
+    # data. Never infer blank candidate input cells from trimmed values.
+    sheets = snapshot.get("sheets")
+    if not isinstance(sheets, list) or len(sheets) != 1:
+        return snapshot
+    sheet = sheets[0]
+    if not isinstance(sheet, dict):
+        return snapshot
+    properties = sheet.get("properties")
+    blocks = sheet.get("data")
+    if not isinstance(properties, dict) or not isinstance(blocks, list) or len(blocks) != 1:
+        return snapshot
+    grid = properties.get("gridProperties")
+    if not isinstance(grid, dict) or not isinstance(blocks[0], dict):
+        return snapshot
+    count = grid.get("rowCount")
+    rows = blocks[0].get("rowData")
+    if (type(count) is not int or not FIRST_HEADER_ROW < count <= MAX_ROWS
+            or not isinstance(rows, list) or len(rows) >= count - FIRST_HEADER_ROW + 1):
+        return snapshot
+    if (type(selected_row) is not int or
+            selected_row > FIRST_HEADER_ROW + len(rows) - 1):
+        # Fail closed in the existing preflight without a second provider call.
+        return snapshot
+    tail_response = requests.get(
+        url + "/values/'Jobs'!A4:AJ" + str(count),
+        params=[("majorDimension", "ROWS"), ("valueRenderOption", "FORMULA")],
+        headers={"Authorization": "Bearer " + access_token},
+        timeout=(3, 15),
+    )
+    tail_response.raise_for_status()
+    return complete_trailing_blank_rows(
+        snapshot, tail_response.json(), candidate_row=selected_row)

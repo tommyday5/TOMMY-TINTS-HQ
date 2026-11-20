@@ -81,7 +81,7 @@ def inspect():
     try:
         # The adapter returns Sheets GridData to the server only. Never include
         # snapshots, row text, customer names or tokens in a response/log.
-        snapshot = read_job_link_snapshot(provider[0])
+        snapshot = read_job_link_snapshot(provider[0], selected_row=row)
     except Exception:
         record_check("sheets_job_preflight", "Jobs link inspection provider read failed")
         current_app.logger.warning("Jobs link preflight read failed")

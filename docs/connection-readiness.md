@@ -354,3 +354,21 @@ authorisation, read-tested, sync-tested, reconciled or verified-receipt stage
 was advanced from code-only tests. Owner actions remain genuine workbook read,
 complete row scan, semantic mapping, reviewed historical links and separate
 write consent.
+
+
+### Google Sheets trailing-row evidence update (20 November 2026)
+
+The owner-only Jobs row-link preflight has a narrowly bounded *read-only*
+secondary `FORMULA` Values API scan when GridData omits trailing rows.
+It verifies the complete echoed A4:AJ grid range, compares raw job IDs across
+reads, and will only infer missing *trailing reference rows* to be blank if
+the independent Values response has no entries after the existing raw rows.
+An owner-selected target outside the original raw GridData remains blocked.
+This avoids accidentally treating a trimmed value response as evidence of
+blank raw input cells. Concurrent edits can occur between reads, so no
+write/read-back, permission, reference link, finance settlement or source-backed
+reconciliation is established. Synthetic tests do not upgrade any provider's
+configured, authorised, read-tested, sync-tested or reconciled status; the
+live register remains owner-only. The next owner action remains a genuine
+manual read with Sheets OAuth; actual historical HQ-to-J mappings and
+conflict-safe write approval remain independent blockers.

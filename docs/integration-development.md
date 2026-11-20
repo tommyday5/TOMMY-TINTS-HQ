@@ -390,3 +390,25 @@ Cost Library validation, complete actual provider row coverage, historical
 HQ-to-J identity, conflict-safe write coordination and separate approved
 editor consent are **still unresolved**. No external write or finance
 reconciliation is introduced. Readiness stage evidence remains unchanged.
+
+
+### Jobs row-link read-only tail coverage (20 November 2026)
+
+The existing `/api/hq/sheets/job-link-preflight` owner POST now passes the
+selected row to the Sheets adapter. A Google `GridData` response that omits
+trailing blank rows can be supplemented by a second, explicit A4:AJ<rowCount>
+`spreadsheets.values.get` request using `valueRenderOption=FORMULA`.
+The pure completion helper requires exact Jobs range identity, ROWS dimension,
+no populated rows beyond the raw tail, and agreement of existing job IDs across
+the two reads. It fills *only* the omitted trailing rows for reference-uniqueness
+analysis; an owner target absent from the first raw GridData stays blocked.
+Partial or inconsistent responses and provider failures do not advance health
+evidence. No new OAuth scope, Google write request, external transaction,
+persistent mapping, payment allocation or reconciliation is activated.
+
+Google's values API explicitly omits trailing empty rows and returns formulas
+when `FORMULA` is requested (Google Sheets API basic reading documentation).
+The two reads are non-atomic; concurrent workbook edits, verified historical
+HQ-to-J identity, remote-edit baseline, owner-specific write consent and
+independent finance evidence remain hard blockers. Synthetic tests cover the
+safe completion and blocked cases. Do not classify this as live Sheets sync.

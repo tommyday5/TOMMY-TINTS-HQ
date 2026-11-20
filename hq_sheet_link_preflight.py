@@ -75,6 +75,85 @@ def _text(value, label):
     return value["stringValue"]
 
 
+
+def complete_trailing_blank_rows(snapshot, value_range, *, candidate_row):
+    """Pad an omitted GridData tail only with independent, exact-range evidence.
+
+    Google's values API omits trailing empty rows. A second FORMULA-rendered
+    A:AJ read can establish that no non-empty input or job reference occurs
+    after the GridData tail. Never use this to approve a candidate row absent
+    from the original *raw* GridData: an entered empty string could otherwise
+    look blank in the values API. This is an advisory read, not a write lock.
+    """
+    if not isinstance(snapshot, dict) or snapshot.get("spreadsheetId") != WORKBOOK:
+        raise ValueError("Workbook identity is not verified")
+    sheets = snapshot.get("sheets")
+    if not isinstance(sheets, list) or len(sheets) != 1:
+        raise ValueError("Expected one Jobs sheet for trailing coverage")
+    sheet = sheets[0]
+    properties = sheet.get("properties") if isinstance(sheet, dict) else None
+    if (not isinstance(properties, dict) or
+            properties.get("sheetId") != JOBS_SHEET_ID or
+            properties.get("title") != "Jobs"):
+        raise ValueError("Expected Jobs tab identity not confirmed")
+    grid = properties.get("gridProperties")
+    if not isinstance(grid, dict):
+        raise ValueError("Missing worksheet dimensions")
+    count = grid.get("rowCount")
+    width = grid.get("columnCount")
+    if (type(count) is not int or not FIRST_DATA_ROW <= count <= MAX_ROWS or
+            type(width) is not int or not MIN_COLUMNS <= width <= 94):
+        raise ValueError("Unsupported worksheet dimensions")
+    blocks = sheet.get("data")
+    if not isinstance(blocks, list) or len(blocks) != 1:
+        raise ValueError("Expected one Jobs GridData block")
+    block = blocks[0]
+    if (not isinstance(block, dict) or
+            block.get("startRow") != FIRST_HEADER_ROW - 1 or
+            block.get("startColumn", 0) != 0):
+        raise ValueError("Unexpected Jobs GridData origin")
+    rows = block.get("rowData")
+    expected = count - FIRST_HEADER_ROW + 1
+    if not isinstance(rows, list) or not 1 <= len(rows) <= expected:
+        raise ValueError("Invalid Jobs GridData coverage")
+    if len(rows) == expected:
+        return snapshot
+    if (type(candidate_row) is not int or
+            not FIRST_DATA_ROW <= candidate_row <= FIRST_HEADER_ROW + len(rows) - 1):
+        raise ValueError("Candidate row has no raw GridData cell evidence")
+    if not isinstance(value_range, dict):
+        raise ValueError("Missing independent trailing-row evidence")
+    accepted_ranges = {
+        f"Jobs!A{FIRST_HEADER_ROW}:AJ{count}",
+        f"'Jobs'!A{FIRST_HEADER_ROW}:AJ{count}",
+    }
+    if (value_range.get("range") not in accepted_ranges or
+            value_range.get("majorDimension") != "ROWS"):
+        raise ValueError("Trailing-row evidence does not cover exact Jobs range")
+    values = value_range.get("values")
+    if (not isinstance(values, list) or not values or
+            len(values) > len(rows) or
+            any(not isinstance(row, list) or len(row) > MIN_COLUMNS
+                for row in values)):
+        raise ValueError("Trailing rows are not independently confirmed blank")
+    # Fail closed if the second read sees a changed/missing raw reference.
+    # FORMULA render prevents a formula evaluating to "" from masquerading
+    # as an empty tail in the independent scan.
+    for index, row in enumerate(rows):
+        raw = _entered(row, 0)
+        reference = _text(raw, "Job ID")
+        observed = (values[index][0]
+                    if index < len(values) and values[index] else "")
+        if reference != observed:
+            raise ValueError("Jobs reference changed between source reads")
+
+    padded = rows + [{"values": []} for _ in range(expected - len(rows))]
+    return {
+        **snapshot,
+        "sheets": [{**sheet, "data": [{**block, "rowData": padded}]}],
+    }
+
+
 def preflight_job_link(snapshot, *, job_ref, target_row, mode):
     """Check an owner-selected J reference and row, not an HQ-to-Sheets link.
 
