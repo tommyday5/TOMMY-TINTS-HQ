@@ -34,3 +34,25 @@ This release is a transactional foundation, not completion of enter-once job syn
 ### Revision and retry integrity guard (20 November 2026)
 
 The local-only Sheets outbox now rejects invalid, boolean, negative, overflow and **future** work revisions rather than advertising a revision which has not committed to HQ. A delayed call for an older saved revision is ignored; identical revision replays do not reset a failed item's retry history. When an actual newer HQ revision commits, its queue entry coalesces and its retry attempts/error state are reset for the new snapshot. These checks run inside the same local SQLite transaction as the approved internal HQ state change. Synthetic tests cover each case and no external Sheets call or writer is introduced. **Pending** does not mean authorised, linked, dispatched, read-back verified or reconciled.
+
+
+### Formula-safe, read-only Jobs link preflight (20 November 2026)
+
+A new pure helper, hq_sheet_link_preflight.preflight_job_link, accepts only a
+complete owner-obtained Google Sheets GridData snapshot of the verified Jobs tab
+(row 4 through the reported last row, A:AJ). It requires spreadsheet/tab IDs,
+checks the known job/service/pricing/status/cost heading subset, verifies global
+Job ID uniqueness and the selected row's exact ID or blank mapped input cells,
+and rejects target input formulas, ambiguous raw cell evidence and incomplete
+snapshots. Calculated columns outside the mapped inputs are never targeted.
+The module never calls Google, stores customer content, modifies HQ records or
+creates links; tests use synthetic GridData only.
+
+This is an engineering preflight, NOT a live owner UI or proof of current Sheets
+access. It does not prove the B:E headings, an approved HQ-to-J record mapping,
+a trusted baseline, a concurrency-safe edit, customer-specific pricing, consent,
+write permissions, a persisted link, a successful sync or reconciliation.
+No background worker or write endpoint is enabled. Before any activation,
+obtain genuine row evidence via an owner-triggered read, verify all remaining
+headings and existing J links, establish edit-conflict policy and owner-specific
+write approval, then perform an explicitly approved targeted write/read-back.

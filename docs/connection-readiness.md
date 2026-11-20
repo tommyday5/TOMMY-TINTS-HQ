@@ -300,3 +300,19 @@ The private transaction export preview API now **rejects repeated member names i
 ### Revision and retry integrity guard (20 November 2026)
 
 The local-only Sheets outbox now rejects invalid, boolean, negative, overflow and **future** work revisions rather than advertising a revision which has not committed to HQ. A delayed call for an older saved revision is ignored; identical revision replays do not reset a failed item's retry history. When an actual newer HQ revision commits, its queue entry coalesces and its retry attempts/error state are reset for the new snapshot. These checks run inside the same local SQLite transaction as the approved internal HQ state change. Synthetic tests cover each case and no external Sheets call or writer is introduced. **Pending** does not mean authorised, linked, dispatched, read-back verified or reconciled.
+
+
+### Sheets Jobs link preflight (20 November 2026; offline only)
+
+The standalone, read-only hq_sheet_link_preflight helper now detects
+mismatched workbook/tab identity, incomplete row-4-onward reference scans,
+duplicate or formula-generated Job IDs, modified known input headings, and
+occupied or formula-bearing candidate input cells before a proposed manual
+J-reference linkage. Its synthetic regression suite asserts that historical
+HQ-to-J mapping, baseline, owner approval, write authorisation, live sync and
+reconciliation stay **false**. Unmapped formulas are left untouched.
+No owner UI is connected to this helper yet; it makes no provider requests or
+persisted changes. Google Sheets implemented/read-tested stages are **not**
+advanced by offline preflight tests. Owner blockers remain a fresh authorised
+workbook read, verified B:E/Cost Library mappings, unique historical link
+review, formula-safe conflict policy and explicit scoped write consent.
