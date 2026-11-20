@@ -21,6 +21,7 @@ from job_negotiation import evaluate as evaluate_negotiation
 from maintenance_planner import maintenance_data
 from maintenance_economics import travel_charge, route_economics
 from maintenance_maps import driving_matrix
+from hq_maps_usage import reserve_route_request
 from maintenance_suggestions import booking_suggestions
 from maintenance_calendar import check_booking_window
 from maintenance_calendar_google import live_conflicts
@@ -982,14 +983,27 @@ def hq_maintenance_suggestions():
 @app.post("/api/hq/maintenance/driving-matrix")
 @required
 def hq_maintenance_driving_matrix():
+    if not secrets.compare_digest(request.headers.get("X-HQ-CSRF", ""), session.get("csrf", "not-set")):
+        return jsonify(error="Invalid security token"),403
+    if request.content_length is None or request.content_length > 4096:
+        return jsonify(error="Invalid route request"),400
     if not request.is_json:return jsonify(error="JSON body required"),415
     data=request.get_json(silent=True)
     if not isinstance(data,dict):return jsonify(error="Invalid request"),400
-    try:return jsonify(driving_matrix(data.get("addresses")))
+    addresses=data.get("addresses")
+    if (not isinstance(addresses,list) or not 2<=len(addresses)<=10
+            or any(not isinstance(x,str) or not 12<=len(x.strip())<=240 for x in addresses)):
+        return jsonify(error="Supply 2 to 10 full addresses"),400
+    if not os.environ.get("HQ_GOOGLE_MAPS_API_KEY"):
+        return jsonify(error="Google Routes API key is not configured"),503
+    try:
+        if not reserve_route_request():
+            return jsonify(error="Route usage limit reached (20/hour, 100/day). Retry later."),429
+        return jsonify(driving_matrix(addresses))
     except ValueError as exc:return jsonify(error=str(exc)),400
     except RuntimeError as exc:return jsonify(error=str(exc)),503
     except Exception:
-        app.logger.exception("Google Routes matrix failed")
+        app.logger.warning("Google Routes matrix failed; provider details withheld")
         return jsonify(error="Unable to retrieve driving times; verify addresses and API configuration"),502
 
 @app.get("/api/hq/maintenance/travel")
