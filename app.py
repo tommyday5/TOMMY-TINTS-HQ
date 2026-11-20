@@ -1322,13 +1322,21 @@ def _hq_integrations():
         "monzo": {"configured": False, "consent": None},
         "dna": {"configured": False, "consent": None},
         "maps": {"configured": bool(os.environ.get("HQ_GOOGLE_MAPS_BROWSER_KEY")
-                                    and os.environ.get("HQ_GOOGLE_MAPS_API_KEY")), "consent": None},
+                                    and os.environ.get("HQ_GOOGLE_MAPS_API_KEY")
+                                    and os.environ.get("HQ_ROUTE_BASE_ADDRESS")), "consent": None},
     })
     # Internal products use a distinct evidence register: no provider reads,
     # accounts, receipts or booking success inferred from code/storage presence.
     health["workflow_readiness"] = build_workflow_readiness(
         persistent_storage_configured=storage_ready())
     return health
+
+@app.get("/hq/integrations/setup")
+@required
+def hq_integration_setup():
+    from hq_integration_setup import setup_inventory
+    return render_template("integration_setup.html", rows=setup_inventory(_hq_integrations()["readiness"])), 200, {"Cache-Control":"no-store"}
+
 
 @app.get("/api/hq/integrations")
 @required
@@ -1352,7 +1360,7 @@ td,th{border-bottom:1px solid #344355;padding:9px;text-align:left;vertical-align
 th{color:#ced8e4}td:first-child{font-weight:650}small{color:#adbbc9}
 </style>
 </head><body><main><p><a href="/">Back to HQ</a></p><h1>Integration health</h1>
-<p>Last observed reads only. Times are UTC.</p><p><a href="/hq/gmail-enquiries">Gmail enquiry review</a> · <a href="/hq/square-bookings">Square booking snapshot</a> · <a href="/hq/square-payment-evidence">Square payment evidence</a> · <a href="/hq/transaction-import-preview">Transaction export schema preview</a></p>
+<p>Last observed reads only. Times are UTC.</p><p><a href="/hq/integrations/setup">Connection setup and remaining requirements</a></p><p><a href="/hq/gmail-enquiries">Gmail enquiry review</a> · <a href="/hq/square-bookings">Square booking snapshot</a> · <a href="/hq/square-payment-evidence">Square payment evidence</a> · <a href="/hq/transaction-import-preview">Transaction export schema preview</a></p>
 {% if not health.history_available %}<p role="alert">Integration history is unavailable.</p>{% endif %}
 <section>{% for item in health.integrations %}<article>
 <h2>{{ item.name }}</h2><p><strong>{{ item.status }}</strong></p>
