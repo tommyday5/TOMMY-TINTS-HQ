@@ -8,7 +8,7 @@ from unittest.mock import patch
 from app import app
 from hq_auth import issue_session
 from hq_auth_store import auth_db
-from tests.test_sheet_link_preflight import fixture
+from test_sheet_link_preflight import fixture
 
 
 class SheetsLinkInspectionTests(unittest.TestCase):
