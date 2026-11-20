@@ -288,3 +288,41 @@ class SheetLinkPreflightTests(unittest.TestCase):
         result = self.check(snap)
         self.assertNotIn("PERSONAL", str(result))
         self.assertNotIn("J0077", str(result))
+
+    def test_secondary_read_checks_changed_or_deleted_existing_literal(self):
+        from hq_sheet_link_preflight import complete_trailing_blank_rows
+        snap = fixture()
+        rows = snap["sheets"][0]["data"][0]["rowData"]
+        rows.pop()  # Missing trailing blank row makes a second read necessary.
+        original = rows[1]["values"]
+        original.extend({} for _ in range(3 - len(original)))
+        original[2] = {"userEnteredValue": {"stringValue": "Original customer"}}
+        for candidate in ("Changed customer", ""):
+            with self.subTest(candidate=candidate):
+                second = {
+                    "range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
+                    "values": [["Job ID"], ["J0077", "", candidate]],
+                }
+                with self.assertRaisesRegex(ValueError, "Candidate input changed"):
+                    complete_trailing_blank_rows(snap, second, candidate_row=5)
+
+    def test_secondary_read_preserves_unchanged_literal_and_numeric_format(self):
+        from hq_sheet_link_preflight import complete_trailing_blank_rows
+        snap = fixture()
+        rows = snap["sheets"][0]["data"][0]["rowData"]
+        rows.pop()
+        cells = rows[1]["values"]
+        cells.extend({} for _ in range(17 - len(cells)))
+        cells[2] = {"userEnteredValue": {"stringValue": "Original customer"}}
+        cells[16] = {"userEnteredValue": {"numberValue": 100}}
+        # FORMULA-rendered values may format currency numbers differently.
+        # Exact literal customer names, unlike numbers, must still agree.
+        observed = ["J0077", "", "Original customer"] + [""] * 13 + ["£100.00"]
+        second = {
+            "range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
+            "values": [["Job ID"], observed],
+        }
+        completed = complete_trailing_blank_rows(snap, second, candidate_row=5)
+        self.assertEqual(
+            self.check(completed, job_ref="J0077", row=5, mode="existing")[
+                "preflight"], "sheet_snapshot_only")
