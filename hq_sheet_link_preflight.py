@@ -126,6 +126,11 @@ def preflight_job_link(snapshot, *, job_ref, target_row, mode):
             if folded in seen_headers:
                 raise ValueError("Ambiguous duplicate Jobs headings")
             seen_headers.add(folded)
+        # Every future write-target column must at least have a literal,
+        # non-empty heading. B:E have not yet been verified against the
+        # genuine workbook, so presence is not proof of semantic mapping.
+        if index in _INPUT_INDEXES and not name.strip():
+            raise ValueError("Jobs input heading missing; source mapping is unverified")
         if index in VERIFIED_HEADERS and name != VERIFIED_HEADERS[index]:
             raise ValueError("Jobs writable column schema changed")
 
