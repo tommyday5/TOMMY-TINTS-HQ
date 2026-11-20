@@ -73,7 +73,9 @@ class TypedCandidateChecks(unittest.TestCase):
         snap = typed_fixture()
         self.assertRaisesRegex(
             ValueError, "coverage", verify_unformatted_candidate, snap,
-            value_response(["J0077", "", "", "J0088"]), candidate_row=5)
+            {"range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
+             "values": [["Job ID"], ["J0077"] + [""] * 15 + [100, True],
+                        [], ["J0088"]]}, candidate_row=5)
         wrong = value_response(["J0077"] + [""] * 15 + [100, True])
         wrong["range"] = "Jobs!A4:AJ6"
         with self.assertRaisesRegex(ValueError, "exact"):
