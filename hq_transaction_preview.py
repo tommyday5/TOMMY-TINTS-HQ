@@ -64,6 +64,21 @@ class PreviewError(ValueError):
     """An export is malformed or its claimed mapping cannot be validated."""
 
 
+def _unique_json_object(pairs):
+    """Fail closed on repeated JSON keys in owner-supplied review instructions.
+
+    Default json.loads silently retains only the last value, which can hide
+    conflicting financial column mappings or transaction classifications.
+    This applies to nested objects too and never reflects source values.
+    """
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise PreviewError("Duplicate JSON keys are not allowed in review instructions")
+        result[key] = value
+    return result
+
+
 def preview_export(source, csv_text, *, mapping=None, scope_ref=None, classifications=None):
     """Examine headers, then optionally validate explicitly mapped rows in memory.
 
@@ -187,7 +202,9 @@ def _submitted_data():
             raise PreviewError("Column mapping is too large")
         if mapping.strip():
             try:
-                mapping = json.loads(mapping)
+                mapping = json.loads(mapping, object_pairs_hook=_unique_json_object)
+            except PreviewError:
+                raise
             except (ValueError, TypeError):
                 raise PreviewError("Mapping must be valid JSON") from None
         else:
@@ -198,7 +215,9 @@ def _submitted_data():
             raise PreviewError("Classification proposal is too large")
         if classifications.strip():
             try:
-                classifications = json.loads(classifications)
+                classifications = json.loads(classifications, object_pairs_hook=_unique_json_object)
+            except PreviewError:
+                raise
             except (TypeError, ValueError):
                 raise PreviewError("Classification proposal must be valid JSON") from None
         else:
