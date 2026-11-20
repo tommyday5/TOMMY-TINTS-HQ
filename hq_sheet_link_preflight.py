@@ -130,6 +130,7 @@ def preflight_job_link(snapshot, *, job_ref, target_row, mode):
             raise ValueError("Jobs writable column schema changed")
 
     seen_refs, found_rows = set(), []
+    candidate_ref = job_ref.casefold()
     for number, row in enumerate(rows[1:], start=FIRST_DATA_ROW):
         ref = _text(_entered(row, 0), "Job ID")
         if ref:
@@ -140,7 +141,12 @@ def preflight_job_link(snapshot, *, job_ref, target_row, mode):
             if canonical in seen_refs:
                 raise ValueError("Duplicate Job IDs prevent safe linking")
             seen_refs.add(canonical)
-            if ref == job_ref:
+            # Allocation must use the same comparison rule as the global
+            # uniqueness scan.  Otherwise a historical "j0083" can be
+            # silently reused as a new "J0083" on a different row.
+            if canonical == candidate_ref:
+                if ref != job_ref and mode == "existing":
+                    raise ValueError("Historical Job ID casing does not match")
                 found_rows.append(number)
 
     target = rows[target_row - FIRST_HEADER_ROW]
