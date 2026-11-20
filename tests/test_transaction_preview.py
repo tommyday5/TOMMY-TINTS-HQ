@@ -133,6 +133,42 @@ class CsvContractTests(unittest.TestCase):
                 preview_export("monzo", MONZO + monzo_row(),
                                mapping=mapping, scope_ref="business-one")
 
+    def test_header_inspection_refuses_case_and_unicode_confusables(self):
+        # Before owner mapping, visually equivalent columns must not be
+        # presented as separate trusted source fields.
+        ambiguous = (
+            "Transaction,transaction,Currency,Booked\n",
+            "Amount,Ａｍｏｕｎｔ,Currency,Booked\n",
+            "Amount,Amount\u200b,Currency,Booked\n",
+            "Amount,Amount\u202e,Currency,Booked\n",
+            "Amount,Amount\tHidden,Currency,Booked\n",
+            "Amount,Amount\u200e,Currency,Booked\n",
+        )
+        for csv_text in ambiguous:
+            with self.subTest(csv_text=repr(csv_text)), self.assertRaisesRegex(
+                    PreviewError, "unambiguous"):
+                preview_export("monzo", csv_text)
+
+    def test_normal_unicode_header_stays_exact_without_unit_assumptions(self):
+        headers = "Référence,Minor £,Currency,Booked\n"
+        mapping = {"transaction_id": "Référence", "amount_pence": "Minor £",
+                   "currency": "Currency", "booked_at": "Booked"}
+        data = headers + "tx1,420,GBP,2026-11-18T10:00:00Z\n"
+        inspected = preview_export("monzo", data)
+        self.assertEqual(inspected["headers"][0], "Référence")
+        self.assertFalse(inspected["source_mapping_verified"])
+        validated = preview_export("monzo", data, mapping=mapping, scope_ref="fixture")
+        self.assertTrue(validated["canonical_preview_valid"])
+        self.assertFalse(validated["bank_settlement_verified"])
+        self.assertEqual(validated["records_imported"], 0)
+
+    def test_ambiguous_header_does_not_reach_canonical_classification(self):
+        header = "Transaction,Minor units,Currency,Booked,Booked\u200b\n"
+        with self.assertRaisesRegex(PreviewError, "unambiguous"):
+            preview_export("monzo", header + "tx1,100,GBP,2026-11-18T10:00:00Z,x\n",
+                           mapping=MONZO_MAP, scope_ref="fixture",
+                           classifications={"tx1": "customer_receipt_candidate"})
+
     def test_no_pounds_float_silent_unit_conversion(self):
         for amount in ("12.34", "1,234", "1e3", "True", " 123", "01", "£123"):
             with self.subTest(amount=amount), self.assertRaises(PreviewError):
