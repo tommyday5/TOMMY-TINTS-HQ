@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Jobs linking inspection | Tommy Tints HQ</title>
+  <style>
+    body{font:16px system-ui;background:#0b0f16;color:#eef2f8;margin:0}
+    main{max-width:720px;margin:auto;padding:24px}a{color:#ff8189}
+    .panel{background:#151e2b;border:1px solid #354158;border-radius:12px;padding:20px}
+    label{display:block;margin:16px 0 5px}input,select,button{padding:12px;background:#202d40;color:#fff;border:1px solid #52617a;border-radius:8px}
+    input,select{width:100%;box-sizing:border-box}button{cursor:pointer;margin-top:20px}
+    small,p{color:#bbc4d3}output{display:block;white-space:pre-wrap;margin-top:20px;color:#f9d78a}
+  </style>
+</head>
+<body><main>
+  <p><a href="/hq/integrations">Integration Health</a></p>
+  <h1>Google Sheets Jobs: read-only linking inspection</h1>
+  <p>Owner-only. This checks one manually selected J reference and row against the existing Jobs worksheet.
+    Nothing is linked, booked, paid, saved to HQ, or written to Sheets.</p>
+  <div class="panel">
+    <form id="inspection">
+      <label for="ref">Reviewed Jobs reference (e.g. J0083)</label>
+      <input id="ref" name="job_ref" required pattern="J[0-9]{4,8}" maxlength="9" autocomplete="off">
+      <label for="row">Sheet row number (starting at 5)</label>
+      <input id="row" name="row" type="number" min="5" max="2000" required>
+      <label for="mode">Candidate</label>
+      <select id="mode" name="mode"><option value="existing">Check an existing J reference</option><option value="new">Check a blank row for a new J reference</option></select>
+      <button type="submit">Inspect workbook read-only</button>
+    </form>
+    <output id="result" role="status" aria-live="polite"></output>
+  </div>
+  <p><small>Only the selected row/reference eligibility is tested. Header checks cover a verified subset;
+    they do not establish a trusted HQ identity mapping, approved baseline, consent to write, successful sync,
+    payment receipt, or reconciliation. Any source conflict blocks linking.</small></p>
+</main>
+<script>
+(() => {
+  const form = document.getElementById('inspection');
+  const result = document.getElementById('result');
+  const button = form.querySelector('button');
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    result.textContent = 'Inspecting the existing workbook…';
+    button.disabled = true;
+    try {
+      const response = await fetch('/api/hq/sheets/job-link-preflight', {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: {'Content-Type':'application/json', 'X-HQ-CSRF': {{ csrf|tojson }}},
+        body: JSON.stringify({
+          job_ref: document.getElementById('ref').value,
+          target_row: Number(document.getElementById('row').value),
+          mode: document.getElementById('mode').value
+        })
+      });
+      const data = await response.json();
+      result.textContent = response.ok
+        ? 'Snapshot-only candidate passed. No HQ link or Sheets write made.\nNext: ' + data.next_safe_action
+        : 'Inspection blocked: ' + (data.error || 'Read could not be verified');
+    } catch (_) {
+      result.textContent = 'Read-only inspection unavailable; no changes were made.';
+    } finally { button.disabled = false; }
+  });
+})();
+</script>
+</body></html>

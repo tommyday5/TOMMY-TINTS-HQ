@@ -56,3 +56,10 @@ No background worker or write endpoint is enabled. Before any activation,
 obtain genuine row evidence via an owner-triggered read, verify all remaining
 headings and existing J links, establish edit-conflict policy and owner-specific
 write approval, then perform an explicitly approved targeted write/read-back.
+
+
+### Owner-triggered read-only row inspection (20 November 2026)
+
+The HQ owner can open `/hq/sheets/job-link-preflight`, supply one manually reviewed J reference and row, and explicitly inspect the existing Jobs worksheet. The new owner/CSRF-protected POST `/api/hq/sheets/job-link-preflight` reads the exact existing workbook with the **already consented Sheets read-only OAuth grant** and passes the server-only raw GridData to `preflight_job_link`. It returns only fixed pass/block metadata, never workbook values, customer names, credentials or source references. Malformed/partial snapshots and row/ID/header conflicts fail closed. The result is an ephemeral proposal; the selected row is not persisted, linked, booked, allocated or written. The standalone read outcome is recorded under `sheets_job_preflight`, never as a finance/pricing read, provider sync or reconciliation. A missing health observation prevents a claimed successful result.
+
+**Important limitation:** Google's GridData may omit trailing blank row data. The conservative complete-row scan currently rejects any snapshot without the documented full row coverage. In that situation it reports a blocked inspection rather than treating omitted rows as proof of uniqueness; an explicit range-coverage contract must be verified against a genuine owner read before relaxing this guard. This feature does not verify unreviewed B:E headings, Service Cost Library selections, existing HQ-to-J identity, a trusted baseline, concurrent-edit safety, owner write authorisation, any bank receipt or full end-to-end job sync. No external Sheet changes occur.

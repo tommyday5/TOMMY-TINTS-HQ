@@ -316,3 +316,8 @@ persisted changes. Google Sheets implemented/read-tested stages are **not**
 advanced by offline preflight tests. Owner blockers remain a fresh authorised
 workbook read, verified B:E/Cost Library mappings, unique historical link
 review, formula-safe conflict policy and explicit scoped write consent.
+
+
+### Owner-triggered Sheets Jobs link inspection (20 November 2026)
+
+A new owner-only form at `/hq/sheets/job-link-preflight` now requests an explicit, CSRF-protected **read-only** scan of the existing Jobs tab via the already scoped Google Sheets OAuth grant. It passes raw GridData only inside the server to the existing formula-safe preflight. Its fixed response is a snapshot-only candidate verdict and next manual verification action; no customer/job cell values, monetary amounts or identifiers are returned. Success/failure is recorded under the separate `sheets_job_preflight` observation key (visible on Integration Health) without silently promoting pricing, finance, write sync, verified payments or reconciliation. Truncated/incomplete scans or schema conflicts block the candidate. No call is made on page load. Real owner access, provider response completeness, HQ historical matching, trusted baselines, separate editor consent and independent read-back are still outstanding. Synthetic test success is not evidence of any real owner-authorised source read.
