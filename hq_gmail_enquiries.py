@@ -172,6 +172,10 @@ def import_page(token, page_token=None):
             raise RuntimeError("Gmail enquiry sender cannot be verified")
         addresses = getaddresses(from_values)
         sender = addresses[0][1] if len(addresses) == 1 else ""
+        # The parsed mailbox alone can hide a court/debt sender behind a
+        # neutral address. Decode the display name solely for screening;
+        # never persist it as customer data or trust it as authentication.
+        sender_name = _decoded_subject(addresses[0][0]) if len(addresses) == 1 else ""
         if (not 1 <= len(sender) <= 254 or sender.count("@") != 1
                 or not all(sender.split("@"))
                 or any(c.isspace() or ord(c) < 33 for c in sender)):
@@ -191,9 +195,12 @@ def import_page(token, page_token=None):
         if len(reply_values) > 1:
             raise RuntimeError("Gmail enquiry reply address cannot be verified")
         reply_sender = ""
+        reply_name = ""
         if reply_values:
             reply_addresses = getaddresses(reply_values)
             reply_sender = reply_addresses[0][1] if len(reply_addresses) == 1 else ""
+            reply_name = (_decoded_subject(reply_addresses[0][0])
+                          if len(reply_addresses) == 1 else "")
             if (not 1 <= len(reply_sender) <= 254 or reply_sender.count("@") != 1
                     or not all(reply_sender.split("@"))
                     or any(c.isspace() or ord(c) < 33 for c in reply_sender)):
@@ -203,7 +210,9 @@ def import_page(token, page_token=None):
         if not isinstance(snippet, str):
             raise RuntimeError("Invalid Gmail message fields")
         if (_excluded_from_sales(sender, subject, snippet)
-                or (reply_sender and _excluded_from_sales(reply_sender, subject, snippet))):
+                or (reply_sender and _excluded_from_sales(reply_sender, subject, snippet))
+                or _SENSITIVE_TEXT.search(sender_name)
+                or _SENSITIVE_TEXT.search(reply_name)):
             skipped_sensitive += 1
             continue
         rows.append((ref, sender[:254], subject[:250], snippet[:500]))
