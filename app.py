@@ -184,6 +184,10 @@ async function loadJobCards(){
    line(box,"p",(approved?"Approved price ":"Recorded price ")+(job.price_pence===null?"not recorded":currency(job.price_pence)));
    line(box,"p","Planned deposit (not verified as received) "+currency(job.deposit_pence));
    if(job.price_pence!==null)line(box,"p","Price less planned deposit "+currency(job.price_pence-job.deposit_pence)+" · illustrative only, not verified amount owed");
+   const syncDetail=document.createElement("p");syncDetail.textContent="Sheets: not yet verified";
+   const syncButton=document.createElement("button");syncButton.type="button";syncButton.textContent="Check Sheets sync";
+   syncButton.addEventListener("click",async()=>{try{const info=await assistantTaskApi("/api/hq/work-records/"+encodeURIComponent(job.id)+"/sheet-sync");syncDetail.textContent="Sheets: "+info.state.replaceAll("_"," ")+" · write access and verified mapping required";}catch(error){syncDetail.textContent=error.message;}});
+   box.append(syncDetail,syncButton);
    const transition={approved:["Start job","in_progress"],in_progress:["Complete job","completed"]}[job.status];
    if(transition){
     const action=document.createElement("button");action.type="button";action.textContent=transition[0];
@@ -1622,6 +1626,19 @@ def hq_customer_request_draft(request_id):
 def hq_work_records():
     return jsonify(records=list_work_records())
 
+
+@app.get("/api/hq/work-records/<record_id>/sheet-sync")
+@required
+def hq_work_record_sheet_sync(record_id):
+    from hq_job_sync import status
+    try:
+        from hq_core_records import read_work_record
+        read_work_record(record_id)
+        return jsonify(status(record_id)), 200, {"Cache-Control":"no-store"}
+    except ValueError:
+        return jsonify(error="Invalid work record"),400
+    except LookupError:
+        return jsonify(error="Work record not found"),404
 
 @app.get("/api/hq/work-records/<record_id>/history")
 @required
