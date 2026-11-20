@@ -57,10 +57,19 @@ class OfflineSettlementReviewTests(unittest.TestCase):
         self.assertFalse(event["trading_revenue_verified"])
         self.assertFalse(event["reconciled"])
         with sqlite3.connect(self.path) as db:
-            stored = repr(db.execute("SELECT * FROM offline_settlement_reviews").fetchall())
+            rows = db.execute("SELECT * FROM offline_settlement_reviews").fetchall()
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        # A secret amount can coincidentally occur as four digits inside an
+        # unrelated 64-character HMAC. Assert the indexed references are
+        # pseudonymous SHA256 HMACs, not raw values, and check the remaining
+        # plaintext fields separately to avoid random false positives.
+        for index in (1, 2, 3, 4, 5, 9, 11):
+            self.assertRegex(row[index], r"^[0-9a-f]{64}$")
+        plaintext_fields = repr(tuple(row[i] for i in (0, 6, 7, 8, 10)))
         for forbidden in ("bank-1", "batch-A", "fixture-bank", "fixture-merchant",
                           "9880", "10000", "owner-1", "request-1", "payment-1"):
-            self.assertNotIn(forbidden, stored)
+            self.assertNotIn(forbidden, plaintext_fields)
         self.assertEqual(self.ledger.verify_integrity()["events_checked"], 1)
         history = self.ledger.history(self.b, self.d, batch_id="batch-A",
                                      transaction_id="bank-1")
