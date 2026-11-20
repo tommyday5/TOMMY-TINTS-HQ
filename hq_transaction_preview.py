@@ -187,8 +187,19 @@ def _submitted_data():
     if request.content_length is not None and request.content_length > 128_000:
         abort(413)
     if request.is_json:
-        data = request.get_json(silent=True)
+        # Flask's default JSON parser silently keeps the final occurrence of
+        # duplicate keys. Review instructions must fail closed for native
+        # JSON objects as well as JSON strings inside form fields.
         token = request.headers.get("X-HQ-CSRF", "")
+        if not secrets.compare_digest(token, session.get("csrf", "not-set")):
+            abort(403)
+        try:
+            data = json.loads(request.get_data().decode("utf-8"),
+                              object_pairs_hook=_unique_json_object)
+        except PreviewError:
+            raise
+        except (UnicodeError, ValueError, TypeError):
+            raise PreviewError("Request must contain valid UTF-8 JSON") from None
     else:
         data = request.form
         token = data.get("csrf", "")
