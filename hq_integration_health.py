@@ -1,4 +1,6 @@
 """Record outcomes of owner-initiated integration reads without storing payloads."""
+import hashlib
+import hmac
 import logging
 import os
 import sqlite3
@@ -68,6 +70,26 @@ def _open_committed_sync_proofs(db):
         provider TEXT PRIMARY KEY, observed_at TEXT NOT NULL)""")
 
 
+def _square_location_seal(location):
+    """Pseudonymise an exact Square location without storing its raw ID.
+
+    The stable owner session secret is a local integrity key, not proof of
+    Square authorisation. Key rotation intentionally invalidates old seals.
+    """
+    key = os.environ.get("HQ_SESSION_SECRET")
+    if (not key or not isinstance(location, str) or not 1 <= len(location) <= 192
+            or not location.isascii() or not location.isprintable()):
+        return None
+    return hmac.new(key.encode("utf-8"), ("square-location:" + location).encode("ascii"),
+                    hashlib.sha256).hexdigest()
+
+
+def _open_scoped_sync_proofs(db):
+    db.execute("""CREATE TABLE IF NOT EXISTS scoped_sync_proofs (
+        provider TEXT PRIMARY KEY, observed_at TEXT NOT NULL,
+        location_seal TEXT NOT NULL)""")
+
+
 def record_check(provider, error=None):
     """Retain a read outcome. Return False if observation storage failed.
 
@@ -88,7 +110,7 @@ def record_check(provider, error=None):
         return False
 
 
-def record_committed_sync(provider):
+def record_committed_sync(provider, *, source_location=None):
     """Atomically record both an upstream read and its committed local snapshot.
 
     Call ONLY after an owner-initiated Gmail/Square adapter has returned from
@@ -102,6 +124,11 @@ def record_committed_sync(provider):
     """
     if provider not in ("gmail", "square", "square_payments"):
         raise ValueError("Unsupported committed-sync observation")
+    if source_location is not None and provider == "gmail":
+        raise ValueError("Gmail does not accept a Square source location")
+    seal = _square_location_seal(source_location) if source_location is not None else None
+    if source_location is not None and seal is None:
+        return False  # Fail closed: do not assert evidence without a stable seal.
     now = datetime.now(timezone.utc).isoformat(timespec="microseconds")
     try:
         path = _db_path()
@@ -109,20 +136,30 @@ def record_committed_sync(provider):
         with closing(sqlite3.connect(path, timeout=2)) as db, db:
             _open_observation_table(db)
             _open_committed_sync_proofs(db)
+            _open_scoped_sync_proofs(db)
             _write_observation(db, provider, now, None)
             _write_observation(db, provider + "_sync", now, None)
             db.execute("""INSERT INTO committed_sync_proofs(provider, observed_at)
                 VALUES (?, ?) ON CONFLICT(provider) DO UPDATE SET
                 observed_at=excluded.observed_at""", (provider, now))
+            # A subsequent unscoped legacy observation must never inherit the
+            # old location's seal. All changes share the same SQLite commit.
+            db.execute("DELETE FROM scoped_sync_proofs WHERE provider=?", (provider,))
+            if seal is not None:
+                db.execute("""INSERT INTO scoped_sync_proofs
+                    (provider, observed_at, location_seal) VALUES (?,?,?)""",
+                    (provider, now, seal))
         return True
     except (OSError, sqlite3.Error):
         log.warning("Committed integration observation history could not be saved")
         return False
 
 
-def integration_status(connections):
+def integration_status(connections, source_locations=None):
     history = {}
     sync_proofs = {}
+    scoped_proofs = {}
+    source_locations = source_locations or {}
     history_available = True
     try:
         path = _db_path().resolve()
@@ -139,8 +176,29 @@ def integration_status(connections):
                     sync_proofs = {row["provider"]: row["observed_at"]
                                    for row in db.execute(
                                        "SELECT provider, observed_at FROM committed_sync_proofs")}
+                scoped_exists = db.execute("""SELECT 1 FROM sqlite_master
+                    WHERE type='table' AND name='scoped_sync_proofs'""").fetchone()
+                if scoped_exists:
+                    scoped_proofs = {row["provider"]: (row["observed_at"], row["location_seal"])
+                                     for row in db.execute(
+                                         "SELECT provider, observed_at, location_seal FROM scoped_sync_proofs")}
     except (OSError, sqlite3.Error):
         history_available = False
+
+    scope_unverified = {}
+    # A legacy success marker has no source/location provenance. Do not
+    # present it as a read for a newly configured Square seller location.
+    for key in ("square", "square_payments"):
+        if key not in source_locations:
+            continue
+        read_at = history.get(key, {}).get("last_success")
+        sync_at = history.get(key + "_sync", {}).get("last_success")
+        bound = scoped_proofs.get(key)
+        seal = _square_location_seal(source_locations[key])
+        verified = bool(seal and bound and bound == (read_at, seal)
+                        and sync_at == read_at == sync_proofs.get(key)
+                        and valid_observation_time(read_at))
+        scope_unverified[key] = bool(read_at or sync_at) and not verified
 
     entries = []
     for key, name, connected in connections:
@@ -148,12 +206,16 @@ def integration_status(connections):
         raw_success = previous.get("last_success")
         checked_success = valid_observation_time(raw_success)
         observation_invalid = raw_success is not None and checked_success is None
+        if scope_unverified.get(key):
+            checked_success = None
         if connected is None:
             state = "Not implemented"
         elif not connected:
             state = "Consent required in this session"
         elif observation_invalid:
             state = "Stored read observation invalid"
+        elif scope_unverified.get(key):
+            state = "Source-specific Square read/sync evidence unverified"
         elif previous.get("needs_attention"):
             state = "Last read failed"
         elif checked_success:
@@ -167,6 +229,7 @@ def integration_status(connections):
             "pending_records": None,
             "needs_attention": bool(previous.get("needs_attention")),
             "intervention_required": (connected is not True or observation_invalid
+                                      or bool(scope_unverified.get(key))
                                       or bool(previous.get("needs_attention"))),
         })
     # A successful read is not evidence of a committed import/snapshot. Only
@@ -185,9 +248,11 @@ def integration_status(connections):
             proof_at = sync_proofs.get(key)
             sync_raw_successes[key] = sync_at
             paired = bool(proof_at and read_at == sync_at == proof_at
-                          and valid_observation_time(read_at))
+                          and valid_observation_time(read_at)
+                          and not scope_unverified.get(key))
             sync_successes[key] = sync_at if paired else None
-            sync_unpaired[key] = bool(sync_at and not paired)
+            sync_unpaired[key] = bool(sync_at and not paired
+                                      and not scope_unverified.get(key))
     # A historical post-commit success does not erase a later failed sync.
     # Report failures separately from upstream read failures, without losing
     # the old success timestamp. These observations remain owner-only.
@@ -201,4 +266,5 @@ def integration_status(connections):
     return {"history_available": history_available, "integrations": entries,
             "sync_successes": sync_successes, "sync_raw_successes": sync_raw_successes,
             "sync_unpaired": sync_unpaired,
+            "scope_unverified": scope_unverified,
             "sync_failures": sync_failures}
