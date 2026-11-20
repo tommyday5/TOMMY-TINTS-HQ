@@ -77,3 +77,31 @@ def read_finance(access_token=None):
         headers={'Authorization':'Bearer '+access_token}, timeout=15)
     response.raise_for_status()
     return finance_snapshot(response.json())
+
+
+def read_job_link_snapshot(access_token):
+    """Owner-initiated read of the existing Jobs tab's raw A:AJ GridData.
+
+    This must be called only after a verified owner POST and read-only consent.
+    The unredacted Google response stays server-side; callers must return
+    only hq_sheet_link_preflight's fixed, aggregate result and no row values.
+    No spreadsheet writes, local storage or provider status changes occur here.
+    """
+    if not isinstance(access_token, str) or not access_token:
+        raise ValueError("Missing authorised read-only Google token")
+    url = "https://sheets.googleapis.com/v4/spreadsheets/" + SPREADSHEET_ID
+    response = requests.get(
+        url,
+        params=[
+            ("ranges", "'Jobs'!A4:AJ"),
+            ("includeGridData", "true"),
+            ("fields", "spreadsheetId,sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),data(startRow,startColumn,rowData(values(userEnteredValue,formattedValue,effectiveValue))))"),
+        ],
+        headers={"Authorization": "Bearer " + access_token},
+        timeout=(3, 15),
+    )
+    response.raise_for_status()
+    snapshot = response.json()
+    if not isinstance(snapshot, dict):
+        raise ValueError("Malformed Jobs GridData evidence")
+    return snapshot
