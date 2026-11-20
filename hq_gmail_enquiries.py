@@ -123,22 +123,54 @@ def _resolve_sales_label_ids(token):
     return names
 
 
+def _valid_page_token(token):
+    """Bound opaque Gmail pagination tokens; never interpret their contents."""
+    return (isinstance(token, str) and 1 <= len(token) <= 4096
+            and token.isascii() and token.isprintable()
+            and not any(char.isspace() for char in token))
+
+
+def _validated_message_page(page):
+    """Fail closed on partial/ambiguous Gmail list evidence before any writes.
+
+    Gmail omits 'messages' on a valid empty result. When supplied it must be a
+    bounded list of distinct provider IDs, never a string, object or null.
+    """
+    if not isinstance(page, dict):
+        raise RuntimeError("Gmail message list cannot be verified")
+    entries = page.get("messages", [])
+    if not isinstance(entries, list) or len(entries) > 10:
+        raise RuntimeError("Gmail message list cannot be verified")
+    refs = []
+    for item in entries:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            raise RuntimeError("Gmail message list cannot be verified")
+        ref = item["id"]
+        if not ID.fullmatch(ref) or ref in refs:
+            raise RuntimeError("Gmail message list cannot be verified")
+        refs.append(ref)
+    next_token = page.get("nextPageToken")
+    if next_token is not None and not _valid_page_token(next_token):
+        raise RuntimeError("Gmail pagination token cannot be verified")
+    return refs, next_token
+
+
 def import_page(token, page_token=None):
     if not storage_ready():
         raise PersistedSyncError("Persistent enquiry storage is unavailable")
     verify_mailbox(token)
     label_ids = _resolve_sales_label_ids(token)
     params = {"q": "in:inbox label:HQ-Enquiries -label:HQ-Legal -label:HQ-Debt", "maxResults": 10}
-    if page_token:
+    if page_token is not None:
+        if not _valid_page_token(page_token):
+            raise RuntimeError("Gmail pagination token cannot be verified")
         params["pageToken"] = page_token
     page = _get(token, "/messages", **params)
+    message_refs, next_page_token = _validated_message_page(page)
     rows = []
     skipped_sensitive = 0
     skipped_label_mismatch = 0
-    for message in page.get("messages", []):
-        ref = message["id"]
-        if not ID.fullmatch(ref):
-            raise RuntimeError("Invalid Gmail message reference")
+    for ref in message_refs:
         item = _get(token, "/messages/" + ref, format="full",
                     fields="id,labelIds,snippet,payload(headers)")
         if item.get("id") != ref:
@@ -230,7 +262,7 @@ def import_page(token, page_token=None):
     return {"added": added, "read": len(rows) + skipped_sensitive + skipped_label_mismatch,
             "skipped_sensitive": skipped_sensitive,
             "skipped_label_mismatch": skipped_label_mismatch,
-            "next": page.get("nextPageToken")}
+            "next": next_page_token}
 
 
 def queue(limit=50):
