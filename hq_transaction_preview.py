@@ -10,6 +10,7 @@ import io
 import json
 import re
 import secrets
+import unicodedata
 
 from flask import Blueprint, abort, jsonify, render_template_string, request, session
 
@@ -33,6 +34,30 @@ _MONEY = {
     "dna": ("gross_pence", "fee_pence", "net_pence"),
 }
 _MONEY_INT = re.compile(r"-?(?:0|[1-9][0-9]{0,12})\Z")
+
+
+
+def _unambiguous_headers(headers):
+    """Reject hidden/visually duplicated CSV column identities before mapping.
+
+    Exact source headings are still returned for owner inspection; this
+    check does not infer provider formats or whether money is GBP/pence.
+    """
+    if not headers or len(headers) > MAX_COLUMNS:
+        return False
+    seen = set()
+    for header in headers:
+        if (not header or len(header) > 80 or header.strip() != header
+                or any(unicodedata.category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                       for ch in header)):
+            return False
+        # Case- and compatibility-equivalent headings can look identical
+        # while pointing to different values/units in an explicit mapping.
+        identity = unicodedata.normalize("NFKC", header).casefold()
+        if identity in seen:
+            return False
+        seen.add(identity)
+    return True
 
 
 class PreviewError(ValueError):
@@ -62,11 +87,9 @@ def preview_export(source, csv_text, *, mapping=None, scope_ref=None, classifica
     try:
         reader = csv.reader(io.StringIO(csv_text, newline=""), strict=True)
         headers = next(reader, None)
-        if (not headers or len(headers) > MAX_COLUMNS
-                or len(set(headers)) != len(headers)
-                or any(not h or len(h) > 80 or h.strip() != h
-                       or "\n" in h or "\r" in h for h in headers)):
-            raise PreviewError("CSV headers must be unique, nonempty and at most 32 columns")
+        if not _unambiguous_headers(headers):
+            raise PreviewError(
+                "CSV headers must be distinct, visible, unambiguous and at most 32 columns")
         output = {
             "source": source, "headers": headers,
             "required_canonical_fields": list(_REQUIRED[source]),
