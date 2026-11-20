@@ -12,6 +12,8 @@ from flask import Blueprint, current_app, jsonify, render_template, request, ses
 from hq_auth import required
 from hq_integration_health import record_check
 from hq_sheet_link_preflight import MAX_ROWS, preflight_job_link
+from hq_sheet_identity_review import review_historical_work
+from hq_core_records import read_work_record
 from hq_sheets_live import read_job_link_snapshot
 
 sheet_link_inspection = Blueprint("sheet_link_inspection", __name__)
@@ -64,13 +66,39 @@ def inspect():
         values = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_json_fields)
     except (UnicodeDecodeError, ValueError):
         return jsonify(error="Invalid or ambiguous JSON request"), 400
-    if not isinstance(values, dict) or set(values) != {"job_ref", "target_row", "mode"}:
-        return jsonify(error="Exact job_ref, target_row and mode are required"), 400
+    base_fields = {"job_ref", "target_row", "mode"}
+    review_fields = base_fields | {"work_id", "expected_revision"}
+    if not isinstance(values, dict) or set(values) not in (base_fields, review_fields):
+        return jsonify(error="Exact inspection fields are required"), 400
     job_ref, row, mode = values["job_ref"], values["target_row"], values["mode"]
+    review_requested = set(values) == review_fields
     if (type(job_ref) is not str or not re.fullmatch(r"J[0-9]{4,8}", job_ref)
             or type(row) is not int or not 5 <= row <= MAX_ROWS
             or type(mode) is not str or mode not in ("new", "existing")):
         return jsonify(error="Invalid manually reviewed job reference, row or mode"), 400
+    if review_requested and (
+        mode != "existing"
+        or type(values["work_id"]) is not str
+        or not re.fullmatch(r"[0-9a-f]{32}", values["work_id"])
+        or type(values["expected_revision"]) is not int
+        or not 0 <= values["expected_revision"] < 2**63 - 1
+    ):
+        return jsonify(error="Historical review requires a valid HQ work ID and saved revision"), 400
+
+    # An owner-triggered review uses a current internal work record but cannot
+    # create links, amend a job or promote a provider to reconciled. An invalid
+    # record/revision must block BEFORE making an upstream Google request.
+    work = None
+    if review_requested:
+        try:
+            work = read_work_record(values["work_id"])
+        except (ValueError, LookupError):
+            return jsonify(error="Reviewed HQ work record is unavailable"), 409
+        except Exception:
+            current_app.logger.warning("HQ historical review local read unavailable")
+            return jsonify(error="Read-only HQ work review is unavailable"), 503
+        if work.get("revision") != values["expected_revision"]:
+            return jsonify(error="HQ work revision changed; refresh and retry"), 409
 
     provider = current_app.extensions["hq_sheets_connection"]()
     if not provider or provider[1] <= time.time():
@@ -93,6 +121,21 @@ def inspect():
         # The pure preflight supplies fixed, non-customer exception messages.
         record_check("sheets_job_preflight", "Jobs link inspection source or candidate conflict")
         return jsonify(error=str(exc), preflight="blocked", live_sync=False), 409
+    if review_requested:
+        try:
+            # A local job edit during the Google reads invalidates this review.
+            # The comparison emits flags only, never personal/financial values.
+            latest = read_work_record(values["work_id"])
+            if latest.get("revision") != values["expected_revision"]:
+                return jsonify(error="HQ work revision changed during inspection"), 409
+            safe.update(review_historical_work(
+                snapshot, work=latest,
+                expected_revision=values["expected_revision"], target_row=row))
+        except (ValueError, LookupError):
+            return jsonify(error="Historical HQ work comparison could not be verified"), 409
+        except Exception:
+            current_app.logger.warning("HQ historical review comparison unavailable")
+            return jsonify(error="Read-only HQ work comparison unavailable"), 503
     if not record_check("sheets_job_preflight"):
         return jsonify(error=(
             "Preflight evaluated but observation storage failed; "
