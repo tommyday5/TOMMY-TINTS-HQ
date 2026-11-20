@@ -70,21 +70,28 @@ def compare_references(work_id, payment_id, now=None):
         db.row_factory = sqlite3.Row
         db.execute("BEGIN")
         meta = db.execute("SELECT location,refreshed_at,window_start,window_end FROM snapshot WHERE id=1").fetchone()
+        if not meta:
+            warnings.append("No complete Square snapshot available.")
+            return result
+        # The payment review must enforce the SAME scope isolation as the
+        # Square evidence list. A warning alone is insufficient: returning
+        # an old seller's status/amount could misattribute it to an HQ job.
+        stored_location = meta["location"]
+        active_location = os.environ.get("HQ_SQUARE_LOCATION_ID", "")
+        if (not isinstance(stored_location, str)
+                or not stored_location.isascii() or not active_location.isascii()
+                or not secrets.compare_digest(stored_location, active_location)):
+            warnings.append("Square location has changed since this snapshot; refresh before reviewing.")
+            return result
         evidence = db.execute(
             "SELECT id,status,total_minor,refunded_minor,currency FROM payments WHERE id=?",
             (payment_id,),
         ).fetchone()
-    if not meta:
-        warnings.append("No complete Square snapshot available.")
-        return result
 
     observed_at = datetime.fromisoformat(_timestamp(meta["refreshed_at"]))
     age = (now or datetime.now(timezone.utc)) - observed_at
-    valid_location = secrets.compare_digest(meta["location"], os.environ["HQ_SQUARE_LOCATION_ID"])
-    result["snapshot_current"] = (valid_location and timedelta(0) <= age <= timedelta(hours=24))
-    if not valid_location:
-        warnings.append("Square location has changed since this snapshot; refresh before reviewing.")
-    elif not result["snapshot_current"]:
+    result["snapshot_current"] = timedelta(0) <= age <= timedelta(hours=24)
+    if not result["snapshot_current"]:
         warnings.append("Square snapshot is stale; refresh before reviewing.")
 
     if evidence is None:
