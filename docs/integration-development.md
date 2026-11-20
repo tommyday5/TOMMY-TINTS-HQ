@@ -434,3 +434,10 @@ is compared instead. This is fixture-tested, non-atomic evidence screening,
 not a verified production provider read, historical mapping, secure write
 baseline, authorised Sheets write, live job sync, bank receipt or
 reconciliation. No connection-readiness stage is automatically advanced.
+
+
+### Read-only historical Jobs identity review (20 November 2026)
+
+Added `hq_sheet_identity_review.py` and synthetic regression tests alongside the existing Sheets job-link preflight. Owner-entered optional `work_id`/`expected_revision` fields in `/api/hq/sheets/job-link-preflight` are accepted **only** for `mode=existing`; the server re-reads the internal HQ work record after the owner-authorised Google inspection to reject stale revisions. A PII-free comparison shows provisional agreement/difference/unavailable for Customer C and Quoted Price Q (exact integer pence comparison). The existing read-only owner UI exposes these flags without customer names, registration numbers, source rows, exact prices or tokens. Tests include stale-work races, malformed field combinations, pricing discrepancies and privacy checks.
+
+**Blocker:** The real workbook B:E semantics, historical business identity and current write baseline remain owner-unverified. Two fields with equal-looking values cannot establish identity, let alone bank-reconciled receipts. This review never creates link rows, updates outbox states, expands Google permissions, calls write APIs or marks provider sync/reconciliation complete. The next safe work is owner-reviewed exact historical identity and a separately approved, auditable link transaction with strict uniqueness/concurrency controls; external Sheets edits still require distinct write authority and collision policy.
