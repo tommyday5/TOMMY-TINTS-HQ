@@ -96,6 +96,23 @@ class SheetsLinkInspectionTests(unittest.TestCase):
         self.assertFalse(response.json["live_sync"])
         self.assertNotIn("J0077", response.get_data(as_text=True))
 
+    def test_case_variant_historical_job_id_blocks_new_reference(self):
+        self.sign_in()
+        snap = fixture()
+        snap["sheets"][0]["data"][0]["rowData"][3]["values"][0] = {
+            "userEnteredValue": {"stringValue": "j0083"}}
+        with patch("app._google_connection",
+                   return_value=("synthetic-token", time.time() + 300)), \
+             patch("hq_sheets_link_inspection.read_job_link_snapshot",
+                   return_value=snap), \
+             patch("hq_sheets_link_inspection.record_check",
+                   return_value=True):
+            response = self.post({"job_ref":"J0083", "target_row":6, "mode":"new"})
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(response.json["live_sync"])
+        self.assertNotIn("J0083", response.get_data(as_text=True))
+        self.assertNotIn("j0083", response.get_data(as_text=True))
+
     def test_read_error_and_observation_failure_never_claim_success(self):
         self.sign_in()
         with patch("app._google_connection", return_value=("synthetic-token", time.time() + 300)), \
