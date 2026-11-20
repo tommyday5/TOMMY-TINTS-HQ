@@ -32,6 +32,32 @@ class JobSyncTests(unittest.TestCase):
   ref=create_test_job();set_draft_financials(ref,20000,5000,0)
   self.assertEqual(status(ref)['state'],'not_linked')
   with self.assertRaises(ValueError):status('J0077')
+ def test_new_revision_resets_only_superseded_retry_attempts(self):
+  ref=self.work();set_draft_financials(ref,20000,5000,0)
+  with connect() as db:
+   db.execute("UPDATE hq_job_sync_outbox SET state='failed',attempts=7,last_error='safe failure' WHERE work_id=?",(ref,))
+   enqueue(db,ref,1) # same revision replay must not erase failure evidence
+  self.assertEqual(status(ref)['state'],'failed')
+  self.assertEqual(status(ref)['attempts'],7)
+  change_work_status(ref,'ready_for_review',1)
+  state=status(ref)
+  self.assertEqual(state['desired_revision'],2)
+  self.assertEqual(state['state'],'pending')
+  self.assertEqual(state['attempts'],0)
+  self.assertIsNone(state['last_error'])
+
+ def test_future_invalid_and_stale_revisions_do_not_corrupt_queue(self):
+  ref=self.work();set_draft_financials(ref,20000,5000,0)
+  with connect() as db:
+   for value in (-1,True,1.0,2,2**63):
+    with self.assertRaises(ValueError):enqueue(db,ref,value)
+   with self.assertRaises(ValueError):enqueue(db,'not-a-uuid',1)
+  self.assertEqual(status(ref)['desired_revision'],1)
+  change_work_status(ref,'ready_for_review',1)
+  with connect() as db:
+   enqueue(db,ref,1) # stale delayed delivery is ignored
+  self.assertEqual(status(ref)['desired_revision'],2)
+
  def test_owner_only_status_no_remote_calls(self):
   ref=self.work();c=app.test_client();url='/api/hq/work-records/'+ref+'/sheet-sync'
   self.assertEqual(c.get(url).status_code,302)

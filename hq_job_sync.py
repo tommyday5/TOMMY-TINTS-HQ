@@ -21,15 +21,30 @@ def schema(db):
 
 
 def enqueue(db, work_id, revision):
-    """Caller owns transaction: an outbox failure rolls back the HQ change."""
+    """Queue only an actual saved HQ revision, within the caller's transaction.
+
+    Reject future/invalid revisions, ignore superseded delayed calls, and
+    restart retry bookkeeping only when a genuinely newer revision is queued.
+    No Google/Sheets write is performed here.
+    """
+    if not isinstance(work_id, str) or not re.fullmatch(r'[0-9a-f]{32}', work_id):
+        raise ValueError('Invalid work record for Sheets outbox')
+    if type(revision) is not int or not 0 <= revision < 2**63 - 1:
+        raise ValueError('Invalid work revision for Sheets outbox')
     schema(db)
-    row=db.execute('SELECT source_request_id FROM hq_work_records WHERE id=?',(work_id,)).fetchone()
+    row=db.execute('SELECT source_request_id,revision FROM hq_work_records WHERE id=?',
+                   (work_id,)).fetchone()
     if not row or row['source_request_id'].startswith('TEST-'):
+        return
+    if revision > row['revision']:
+        raise ValueError('Cannot queue a Sheets revision that has not been saved')
+    if revision < row['revision']:
         return
     db.execute('''INSERT INTO hq_job_sync_outbox(work_id,desired_revision,state,updated_at)
         VALUES (?,?,'pending',?) ON CONFLICT(work_id) DO UPDATE SET
-        desired_revision=excluded.desired_revision,state='pending',last_error=NULL,
-        updated_at=excluded.updated_at WHERE excluded.desired_revision > desired_revision''',
+        desired_revision=excluded.desired_revision,state='pending',attempts=0,
+        last_error=NULL,updated_at=excluded.updated_at
+        WHERE excluded.desired_revision > hq_job_sync_outbox.desired_revision''',
         (work_id,revision,datetime.now(timezone.utc).isoformat()))
 
 

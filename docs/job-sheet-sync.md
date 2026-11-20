@@ -30,3 +30,7 @@ O is an Apps Script driving-miles formula. S:AF and many later columns contain p
 8. Owner approval of a specific genuine record and destination before the first live write and end-to-end demonstration. No fake production test jobs.
 
 This release is a transactional foundation, not completion of enter-once job synchronisation. There are no external write credentials, live writes, historical links, automatic retries or two-way sync claims.
+
+### Revision and retry integrity guard (20 November 2026)
+
+The local-only Sheets outbox now rejects invalid, boolean, negative, overflow and **future** work revisions rather than advertising a revision which has not committed to HQ. A delayed call for an older saved revision is ignored; identical revision replays do not reset a failed item's retry history. When an actual newer HQ revision commits, its queue entry coalesces and its retry attempts/error state are reset for the new snapshot. These checks run inside the same local SQLite transaction as the approved internal HQ state change. Synthetic tests cover each case and no external Sheets call or writer is introduced. **Pending** does not mean authorised, linked, dispatched, read-back verified or reconciled.
