@@ -420,3 +420,17 @@ A bounded read-only GridData + FORMULA Values scan now compares the manually sel
 ### Sheets candidate existing text stability (20 November 2026)
 
 The two-read, owner-triggered Jobs link preflight now rejects an existing literal string input being changed **or deleted** between its raw GridData snapshot and FORMULA-rendered trailing-row check; it still rejects additions to previously blank input cells. This protects against one class of concurrent workbook edits without mistaking differently formatted numeric/date values for changes. It is only a best-effort read-only race check: the reads are not atomic, existing numeric/date/boolean input changes are not fully checked, and future owner-approved writes must separately verify a protected baseline and conflict/rollback policy. Fixture tests are not Google authorisation, real read evidence, sync, job payment, or reconciliation.
+
+
+### Typed read consistency for Sheets job-link inspection (20 November 2026)
+
+The read-only Jobs preflight now cross-checks occupied numeric/boolean mapped
+input cells against an exact-range `UNFORMATTED_VALUE` read when Google
+GridData omits trailing rows. Its earlier `FORMULA` check still detects
+added formulas and literal-text changes; a typed mismatch or third-read
+failure blocks the inspection. An unchanged formatted currency/date may
+legitimately differ from the raw underlying number, so the unformatted read
+is compared instead. This is fixture-tested, non-atomic evidence screening,
+not a verified production provider read, historical mapping, secure write
+baseline, authorised Sheets write, live job sync, bank receipt or
+reconciliation. No connection-readiness stage is automatically advanced.

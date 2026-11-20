@@ -9,7 +9,8 @@ import requests
 from google.auth.transport.requests import Request
 from google.oauth2 import service_account
 from hq_pricing_adapter import settings_from_values, library_from_values, jobs_for_timer
-from hq_sheet_link_preflight import FIRST_HEADER_ROW, MAX_ROWS, complete_trailing_blank_rows
+from hq_sheet_link_preflight import (FIRST_HEADER_ROW, MAX_ROWS,
+    candidate_has_typed_inputs, complete_trailing_blank_rows, verify_unformatted_candidate)
 
 SPREADSHEET_ID="1B0XULUDiMlVuW9u0kUOYem8WelBtOH-Xey_wWVYdb2M"
 SCOPES=["https://www.googleapis.com/auth/spreadsheets.readonly"]
@@ -138,5 +139,22 @@ def read_job_link_snapshot(access_token, *, selected_row):
         timeout=(3, 15),
     )
     tail_response.raise_for_status()
-    return complete_trailing_blank_rows(
+    completed = complete_trailing_blank_rows(
         snapshot, tail_response.json(), candidate_row=selected_row)
+    # FORMULA-rendered cells may display dates/prices as formatted strings,
+    # so they cannot establish that a *previously occupied* numeric/boolean
+    # input stayed unchanged. Only when needed, make a separate unformatted
+    # read and compare exact raw values without modifying the source.
+    if candidate_has_typed_inputs(snapshot, candidate_row=selected_row):
+        typed_response = requests.get(
+            url + "/values/'Jobs'!A4:AJ" + str(count),
+            params=[("majorDimension", "ROWS"),
+                    ("valueRenderOption", "UNFORMATTED_VALUE"),
+                    ("dateTimeRenderOption", "SERIAL_NUMBER")],
+            headers={"Authorization": "Bearer " + access_token},
+            timeout=(3, 15),
+        )
+        typed_response.raise_for_status()
+        verify_unformatted_candidate(
+            snapshot, typed_response.json(), candidate_row=selected_row)
+    return completed

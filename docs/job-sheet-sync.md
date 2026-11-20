@@ -117,3 +117,24 @@ Sheets writes, automatic job sync and financial reconciliation remain disabled. 
 ### Existing literal input consistency during two-read inspection (20 November 2026)
 
 When a second FORMULA-rendered Values read is needed to verify a trailing blank reference range, the selected row's previously populated literal text fields must still match the original raw GridData exactly. Text deletion or replacement now blocks the candidate as a concurrent change; previously blank input cells also remain guarded. The check cannot establish unchanged numeric/date/boolean values, an atomic snapshot or a safe write baseline. This enhancement is synthetic-tested only, with Google Sheets writing and historical HQ job linking still disabled.
+
+
+### Typed input verification during trailing-row reads (20 November 2026)
+
+When Google's raw Jobs GridData omits trailing rows and the owner-selected
+candidate has already-entered numeric or boolean mapped inputs, the adapter
+now makes one additional **read-only** Values request with
+`UNFORMATTED_VALUE` and `SERIAL_NUMBER`. The preflight compares these
+raw numeric/boolean cell values to the original GridData, rejects changes
+or incompatible types, and rechecks job references and returned range
+coverage. This avoids treating currency/date display formatting as a numeric
+change while also avoiding a false pass when a price changes between the
+initial GridData and the secondary FORMULA read. Requests fail closed on
+missing/changed evidence. No extra read is made for an entirely blank/new
+candidate or when no GridData tail-completion request is necessary.
+
+This is an **additional non-atomic inconsistency guard**, not a transaction
+lock, proof of an unchanged workbook, approved HQ-to-J identity, baseline or
+permission to write. A sheet can still change after the last read. Historical
+link creation and all spreadsheet writes remain disabled pending an
+owner-reviewed mapping, write baseline and separate authorisation.

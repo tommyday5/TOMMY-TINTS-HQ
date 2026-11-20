@@ -380,3 +380,18 @@ When omitted trailing rows require two independent, read-only Google Sheets call
 ### Sheets existing literal-value cross-read safeguard (20 November 2026)
 
 The owner-only Jobs link inspection now rejects an existing literal mapped input that **changes or disappears** between the raw GridData read and the independent FORMULA-rendered trailing-row coverage read. Previously this secondary check caught new values in blank candidate cells, but not a changed customer/vehicle literal in an already populated input. The check compares exact string/formula representations only; numeric, date and boolean values can render differently and are **not** independently revalidated by this safeguard. No atomic read or write lock is provided. Regression tests use synthetic worksheet responses only. No actual workbook was read, no external cell was modified, no historical HQ-to-J identity or baseline was approved, and no read/sync/reconciled connection stage was advanced. Owner actions remain a genuine read-only inspection and individually reviewed source/job mapping; separate write consent and read-back are required before linking or sync.
+
+
+### Typed Sheets input cross-read guard (20 November 2026)
+
+The owner-only Jobs link inspector can compare previously occupied numeric
+and boolean mapped fields through an additional independent,
+unformatted **read-only** Google Sheets request when trailing GridData rows
+need verification. An altered price, date serial or boolean fails closed;
+currency/date formatting alone does not establish a change. Synthetic tests
+cover stable values, mismatches, reference changes and failed provider reads.
+This does **not** alter any implemented/configured/authorised/read-tested/
+sync-tested/reconciled stage from synthetic evidence. No real owner workbook
+read or historical HQ mapping is claimed, and no write, allocation or
+financial settlement is activated. Full concurrency-safe write baselines,
+genuine source access and owner approval remain blockers.
