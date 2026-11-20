@@ -36,7 +36,7 @@ class GmailPageEvidenceTests(unittest.TestCase):
             {"messages": [{"id": str(n)} for n in range(11)]},
             {"messages": [], "nextPageToken": []},
             {"messages": [], "nextPageToken": ""},
-            {"messages": [], "nextPageToken": "next\\nline"},
+            {"messages": [], "nextPageToken": "next\nline"},
         )
         for page in malformed:
             with self.subTest(page=page), self.assertRaises(RuntimeError):
@@ -44,7 +44,7 @@ class GmailPageEvidenceTests(unittest.TestCase):
             self.assertFalse(self.db_path.exists())
 
     def test_invalid_inbound_page_token_never_reaches_provider(self):
-        for token in ("", "bad\\nvalue", "x" * 4097, [], 23):
+        for token in ("", "bad\nvalue", "x" * 4097, [], 23):
             with self.subTest(token=token):
                 with (patch.object(gmail, "verify_mailbox"),
                       patch.object(gmail, "_resolve_sales_label_ids",
