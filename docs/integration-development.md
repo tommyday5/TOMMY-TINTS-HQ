@@ -378,3 +378,15 @@ The existing owner-triggered read-only Jobs preflight now uses the **same case-i
 ### Distinct owner Jobs preflight observation (20 November 2026)
 
 The Integration Health readiness register now displays a separate `sheets_job_preflight` workstream for the previously implemented, owner-triggered read-only Jobs row inspection. This is distinct from `pricing_sheets`, `maintenance_sheets` and `finance`; no observed inspection can advance those sources or vice versa. The setup step explicitly requires the owner OAuth flow used by `read_job_link_snapshot`, not merely the service account. Failed candidate checks remain inspection failures and never count as successful row links. A historical successful inspection cannot demonstrate present provider permission or verified HQ-to-J identity; sync and financial reconciliation remain disabled and unverified. The outstanding engineering blocker is genuine, complete Google GridData coverage including trailing blank rows; do not relax the strict full scan based solely on fabricated fixture data.
+
+### Sheets job-link candidate: required writable headings (20 November 2026)
+
+The owner-triggered read-only row preflight now requires nonempty literal
+headings for every potential writable Jobs input column (A:E, F:J, Q:R,
+AG:AJ); previously the unverified B:E headings could be missing while a
+candidate was labelled snapshot-safe. Synthetic cases exercise absent,
+whitespace, formula and duplicate B:E headings. Exact B:E semantic mapping,
+Cost Library validation, complete actual provider row coverage, historical
+HQ-to-J identity, conflict-safe write coordination and separate approved
+editor consent are **still unresolved**. No external write or finance
+reconciliation is introduced. Readiness stage evidence remains unchanged.
