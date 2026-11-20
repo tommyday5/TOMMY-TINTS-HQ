@@ -9,6 +9,7 @@ from flask import Blueprint, current_app, abort, jsonify, redirect, render_templ
 import requests
 import secrets
 
+from hq_maps_usage import reserve_route_request
 from hq_auth import required
 from customer_edits import (CONFLICT_MESSAGE, StaleCustomerEdit, edit_page, form_values,
                             maintenance_edit_snapshot, maintenance_edits, posted_revision,
@@ -67,6 +68,9 @@ def calculate_route(customers, ids, optimise, base, key):
         raise ValueError("Each stop must have its own recorded full address and postcode")
     if type(optimise) is not bool:
         raise ValueError("Invalid route mode")
+    rate = decimal(os.environ.get("HQ_ROUTE_MILEAGE_RATE", "0.56"), "Mileage rate")
+    if rate < 0 or rate > 100:
+        raise ValueError("Mileage rate must be between 0 and 100 pounds per mile")
     response = requests.post("https://routes.googleapis.com/directions/v2:computeRoutes",
         headers={"X-Goog-Api-Key": key, "X-Goog-FieldMask":
                  "routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline,routes.optimizedIntermediateWaypointIndex"},
@@ -88,7 +92,6 @@ def calculate_route(customers, ids, optimise, base, key):
     if seconds <= 0:
         raise RuntimeError("Incomplete routing duration")
     miles = Decimal(meters) / Decimal("1609.344")
-    rate = decimal(os.environ.get("HQ_ROUTE_MILEAGE_RATE", "0.56"), "Mileage rate")
     mileage = miles * rate
     prices = [customers[i]["price"] for i in ids]
     revenue = sum(map(Decimal, prices)) if all(p is not None for p in prices) else None
@@ -138,6 +141,15 @@ def data():
     if request.method == "GET":
         return jsonify(customers=list(customers.values()))
     try:
+        ids = payload.get("ids")
+        if (not isinstance(ids, list) or not 1 <= len(ids) <= 10
+                or any(not isinstance(i, str) for i in ids)
+                or len(set(ids)) != len(ids)
+                or any(i not in customers or not customers[i]["address"] for i in ids)
+                or type(payload.get("optimise")) is not bool):
+            return jsonify(error="Select 1 to 10 distinct customers with full addresses and a valid route mode"), 400
+        if not reserve_route_request():
+            return jsonify(error="Route usage limit reached (20/hour, 100/day). Retry later."), 429
         return jsonify(calculate_route(customers, payload.get("ids"), payload.get("optimise"), base, key))
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
