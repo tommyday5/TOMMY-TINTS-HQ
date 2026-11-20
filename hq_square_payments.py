@@ -258,7 +258,8 @@ def payment_page():
         else:
             # Snapshot persistence and readiness observation are separate
             # commits. A missing observation must not look like a clean sync.
-            if not record_committed_sync("square_payments"):
+            if not record_committed_sync(
+                    "square_payments", source_location=os.environ.get("HQ_SQUARE_LOCATION_ID")):
                 error = ("Square payment snapshot was stored, but integration "
                          "read/sync evidence could not be recorded. Check "
                          "Integration Health storage; sync remains unverified.")
