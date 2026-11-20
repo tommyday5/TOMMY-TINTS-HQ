@@ -1323,6 +1323,7 @@ def _hq_integrations():
         os.environ.get("GOOGLE_CLIENT_ID") and os.environ.get("GOOGLE_CLIENT_SECRET"))
     health["readiness"] = build_readiness(health, {
         "sheets": {"configured": google_configured, "consent": sheets if google_oauth_configured else None},
+        "sheets_job_preflight": {"configured": google_oauth_configured, "consent": sheets},
         "maintenance_sheets": {"configured": google_configured, "consent": sheets if google_oauth_configured else None},
         "finance": {"configured": google_configured, "consent": sheets if google_oauth_configured else None},
         "calendar": {"configured": google_oauth_configured, "consent": calendar},

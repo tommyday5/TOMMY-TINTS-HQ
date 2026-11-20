@@ -24,6 +24,7 @@ class ReadinessUnitTests(unittest.TestCase):
     def build(self, signals=None):
         return {r["key"]: r for r in build_readiness(integration_status([
             ("pricing_sheets", "Google Sheets", False),
+            ("sheets_job_preflight", "Jobs link inspection (read-only)", False),
             ("maintenance_sheets", "Maintenance Sheets", False),
             ("finance", "Sheets finance", False),
             ("calendar", "Google Calendar", False),
@@ -40,6 +41,35 @@ class ReadinessUnitTests(unittest.TestCase):
             self.assertTrue(row["blocker"])
             self.assertTrue(row["next_safe_action"])
             self.assertTrue(row["owner_only"])
+
+    def test_owner_job_link_inspection_is_a_separate_read_only_stage(self):
+        signals = {
+            "sheets": {"configured": True, "consent": True},
+            "sheets_job_preflight": {"configured": True, "consent": True},
+        }
+        record_check("pricing_sheets")
+        rows = self.build(signals)
+        self.assertTrue(rows["sheets"]["read_tested"])
+        self.assertFalse(rows["sheets_job_preflight"]["read_tested"])
+        self.assertFalse(rows["sheets_job_preflight"]["sync_applicable"])
+        self.assertFalse(rows["sheets_job_preflight"]["reconciled"])
+        record_check("sheets_job_preflight")
+        rows = self.build(signals)
+        inspected = rows["sheets_job_preflight"]
+        self.assertTrue(inspected["read_tested"])
+        self.assertFalse(inspected["sync_tested"])
+        self.assertEqual(inspected["stages"]["sync_tested"], "Not applicable (read-only)")
+        self.assertIn("HQ-to-J identity", inspected["blocker"])
+        self.assertFalse(inspected["reconciled"])
+        # A failed subsequent candidate does not erase a prior successful
+        # inspection or change the separate pricing source observation.
+        record_check("sheets_job_preflight", "Jobs link inspection source or candidate conflict")
+        rows = self.build(signals)
+        self.assertTrue(rows["sheets_job_preflight"]["read_tested"])
+        self.assertEqual(rows["sheets_job_preflight"]["blocker"],
+                         "Jobs link inspection source or candidate conflict")
+        self.assertTrue(rows["sheets"]["read_tested"])
+        self.assertIsNone(rows["sheets"]["last_error"])
 
     def test_env_presence_never_establishes_square_authorisation_or_a_receipt(self):
         rows = self.build({
@@ -336,6 +366,9 @@ class ReadinessHttpTests(unittest.TestCase):
         rows = {x["key"]: x for x in response.json["readiness"]}
         self.assertIn("monzo", rows)
         self.assertIn("dna", rows)
+        self.assertIn("sheets_job_preflight", rows)
+        self.assertFalse(rows["sheets_job_preflight"]["sync_applicable"])
+        self.assertFalse(rows["sheets_job_preflight"]["reconciled"])
         self.assertFalse(rows["monzo"]["implemented"])
         self.assertFalse(rows["square_payments"]["reconciled"])
         self.assertIsNone(rows["square_payments"]["last_success"])
