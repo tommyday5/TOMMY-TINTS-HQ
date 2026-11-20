@@ -1,6 +1,6 @@
 """Read-only import of owner-labelled business enquiries."""
 from contextlib import closing
-from email.utils import parseaddr
+from email.utils import getaddresses
 import os
 from pathlib import Path
 import re
@@ -134,10 +134,30 @@ def import_page(token, page_token=None):
                        if label_ids.get(name))):
             skipped_label_mismatch += 1
             continue
-        headers = {header["name"].lower(): header["value"] for header in item["payload"]["headers"]}
-        sender = parseaddr(headers.get("from", ""))[1]
+        # A sales enquiry must contain one usable reply-to identity. A
+        # missing, duplicated or multi-address From header is ambiguous; do
+        # not queue any part of the page before the owner resolves it in Gmail.
+        # This validates metadata shape, NOT the sender's authenticity.
+        payload = item.get("payload")
+        raw_headers = payload.get("headers") if isinstance(payload, dict) else None
+        if (not isinstance(raw_headers, list) or len(raw_headers) > 128
+                or any(not isinstance(h, dict)
+                       or not isinstance(h.get("name"), str)
+                       or not isinstance(h.get("value"), str)
+                       or len(h["value"]) > 16384 for h in raw_headers)):
+            raise RuntimeError("Gmail message headers cannot be verified")
+        from_values = [h["value"] for h in raw_headers if h["name"].lower() == "from"]
+        if len(from_values) != 1 or not 1 <= len(from_values[0]) <= 2048:
+            raise RuntimeError("Gmail enquiry sender cannot be verified")
+        addresses = getaddresses(from_values)
+        sender = addresses[0][1] if len(addresses) == 1 else ""
+        if (not 1 <= len(sender) <= 254 or sender.count("@") != 1
+                or not all(sender.split("@"))
+                or any(c.isspace() or ord(c) < 33 for c in sender)):
+            raise RuntimeError("Gmail enquiry sender cannot be verified")
+        headers = {h["name"].lower(): h["value"] for h in raw_headers}
         subject, snippet = headers.get("subject", ""), item.get("snippet", "")
-        if not all(isinstance(value, str) for value in (sender, subject, snippet)):
+        if not all(isinstance(value, str) for value in (subject, snippet)):
             raise RuntimeError("Invalid Gmail message fields")
         if _excluded_from_sales(sender, subject, snippet):
             skipped_sensitive += 1
