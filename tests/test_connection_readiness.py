@@ -453,7 +453,7 @@ class ReadinessHttpTests(unittest.TestCase):
     def test_square_booking_storage_failure_is_recorded_as_sync(self):
         with self.client.session_transaction() as session:
             session["csrf"] = "fixture-csrf"
-        record_committed_sync("square")
+        record_committed_sync("square", source_location="fixture-location")
         with patch.dict(os.environ, {
                 "HQ_SQUARE_READ_TOKEN": "fixture-read-only",
                 "HQ_SQUARE_LOCATION_ID": "fixture-location"}), patch(

@@ -57,7 +57,7 @@ class ObservationFailureHttpTests(unittest.TestCase):
         self.assertIn(b"stored, but integration read/sync evidence", response.data)
         self.assertIn(b"do not treat this refresh as a verified sync", response.data)
         refresh.assert_called_once_with()
-        observer.assert_called_once_with("square")
+        observer.assert_called_once_with("square", source_location=None)
 
     def test_square_payment_snapshot_observation_error_is_visible(self):
         fixture_snapshot = {
@@ -76,7 +76,7 @@ class ObservationFailureHttpTests(unittest.TestCase):
         self.assertIn(b"snapshot was stored, but integration", response.data)
         self.assertIn(b"sync remains unverified", response.data)
         refresh.assert_called_once_with()
-        observer.assert_called_once_with("square_payments")
+        observer.assert_called_once_with("square_payments", source_location=None)
 
 
     def test_read_only_provider_success_without_recorded_evidence_is_503(self):

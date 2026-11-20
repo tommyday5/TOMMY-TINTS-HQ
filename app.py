@@ -1242,7 +1242,7 @@ def hq_square_snapshot():
             return "Square booking retrieval failed. Check Integration Health.", 502
         # The provider snapshot may have committed while the separate audit
         # observation failed. Report incomplete readiness rather than success.
-        if not record_committed_sync("square"):
+        if not record_committed_sync("square", source_location=os.environ.get("HQ_SQUARE_LOCATION_ID")):
             return ("Square bookings were stored, but integration read/sync evidence "
                     "could not be recorded. Check Integration Health storage; "
                     "do not treat this refresh as a verified sync."), 503
@@ -1296,7 +1296,10 @@ def _hq_integrations():
         ("gmail", "Gmail", gmail_consent),
         ("monzo", "Monzo", None),
         ("dna", "DNA Payments", None),
-    ])
+    ], source_locations={
+        "square": os.environ.get("HQ_SQUARE_LOCATION_ID"),
+        "square_payments": os.environ.get("HQ_SQUARE_LOCATION_ID"),
+    })
     try:
         count, _ = gmail.queue(limit=0)
     except (OSError, sqlite3.Error):
