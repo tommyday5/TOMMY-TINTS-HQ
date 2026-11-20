@@ -27,6 +27,11 @@ PROFILES = (
      "setup": "Configure Google read-only OAuth or HQ_GOOGLE_SERVICE_ACCOUNT_JSON on Railway; grant workbook access.",
      "read": "Connect Google Sheets in HQ, then open Jobs and load the workbook read-only.",
      "reconcile": "Verify job and cost-library mappings against the actual workbook; do not assume its values are bank receipts."},
+    {"key": "sheets_job_preflight", "name": "Google Sheets Jobs row-link inspection",
+     "implemented": True, "persisted_read": False,
+     "setup": "Configure owner Sheets read-only OAuth; service-account-only access does not enable this inspection.",
+     "read": "Open /hq/sheets/job-link-preflight as owner and inspect one manually reviewed J reference and row.",
+     "reconcile": "Verify complete source coverage, HQ-to-J identity and baseline separately; obtain separate write consent before any linking or sync. No spreadsheet changes are enabled."},
     {"key": "maintenance_sheets", "name": "Google Sheets maintenance data", "implemented": True,
      "persisted_read": False,
      "setup": "Configure owner Google Sheets read-only access and verify maintenance workbook permissions.",
@@ -92,7 +97,8 @@ def build_readiness(health, signals):
     """
     by_name = {entry["name"]: entry for entry in health.get("integrations", [])}
     old_names = {
-        "sheets": "Google Sheets", "maintenance_sheets": "Maintenance Sheets",
+        "sheets": "Google Sheets", "sheets_job_preflight": "Jobs link inspection (read-only)",
+        "maintenance_sheets": "Maintenance Sheets",
         "finance": "Sheets finance",
         "gmail": "Gmail", "calendar": "Google Calendar",
         "square": "Square", "square_payments": "Square payments",

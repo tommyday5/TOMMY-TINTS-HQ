@@ -332,3 +332,10 @@ Current owner blockers are unchanged: actual owner-authorised workbook read and 
 ### Sheets reference casing collision guard (20 November 2026)
 
 The fixture-tested, read-only Jobs row preflight no longer accepts a new uppercase J reference if the same historical reference appears on another row with different letter case. Existing-link proposals still require an exact owner-reviewed reference, including its case. This fixes a potential duplicate job ID allocation without saving job links or enabling a Sheets writer. This is **code validation only**, not a fresh Google read, mapping verification, authorisation, sync, receipt or reconciliation. Full-row coverage of real Google GridData remains a separate fail-closed requirement.
+
+
+### Separate Jobs row-link inspection status (20 November 2026)
+
+The existing owner-only Jobs inspection now has its own `sheets_job_preflight` readiness entry and timestamp in `/hq/integrations` and `/api/hq/integrations`. It reads only observations explicitly recorded by the owner-triggered, read-only `/hq/sheets/job-link-preflight` POST. Pricing (`pricing_sheets`), maintenance (`maintenance_sheets`) and finance (`finance`) cannot inherit that inspection's success; the reverse is also true. An invalid or conflicting candidate is recorded as a failed *inspection*, not a successful link, and the register retains the prior successful read timestamp separately from the latest error.
+
+The inspection requires owner Google OAuth; a configured service account alone is insufficient. A successful inspection is a **historical, snapshot-only row/reference preflight**, not evidence of actual HQ identity matching, complete externally validated source coverage, ongoing permission, baseline safety, write access, a committed synchronisation or settlement. It remains **read-only** (`sync_applicable=false`, `sync_tested=false`, `reconciled=false`). Google's trailing blank GridData row behaviour has not been validated against the owner's genuine workbook; incomplete row coverage still blocks the inspection. No owner data, job refs or financial amounts are committed to the repository.
