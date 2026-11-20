@@ -117,8 +117,8 @@ class SquarePaymentEvidenceTests(unittest.TestCase):
             {"payments": [self.payment(ref="replacement")], "cursor": ""},
             {"payments": [self.payment(ref="replacement")], "cursor": " "},
             {"payments": [self.payment(ref="replacement")], "cursor": "next page"},
-            {"payments": [self.payment(ref="replacement")], "cursor": "\\n"},
-            {"payments": [self.payment(ref="replacement")], "cursor": "\\u2603"},
+            {"payments": [self.payment(ref="replacement")], "cursor": chr(10)},
+            {"payments": [self.payment(ref="replacement")], "cursor": chr(9731)},
             {"payments": [self.payment(ref="replacement")], "cursor": "a" * 2001},
             {"payments": [self.payment(ref="replacement")], "cursor": 123},
         ]
