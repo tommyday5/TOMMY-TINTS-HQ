@@ -320,7 +320,9 @@ class OwnerPreviewHttpTests(unittest.TestCase):
 
                 # The HTML form passes the same JSON text fields and must
                 # reject rather than silently taking the last duplicate.
-                form = {"csrf": "valid-csrf", **self.payload(), field: value}
+                form = {"csrf": "valid-csrf", **self.payload()}
+                form["mapping"] = json.dumps(MONZO_MAP)
+                form[field] = value
                 html_response = self.client.post(
                     "/hq/transaction-import-preview", data=form)
                 self.assertEqual(html_response.status_code, 400)
