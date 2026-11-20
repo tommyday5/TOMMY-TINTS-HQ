@@ -2,6 +2,7 @@
 import json
 import sqlite3
 import uuid
+from hq_job_sync import enqueue as enqueue_sheet_sync
 from datetime import datetime, timezone
 from customer_request_store import connect
 
@@ -82,6 +83,7 @@ def create_internal_work_record(request_id):
           VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
           (work_id,request_id,customer_id,vehicle_id,draft["draft_type"],row["service"],row["notes"],
            row["preferred_date"],row["preferred_time"],"draft",now))
+        enqueue_sheet_sync(db,work_id,0)
         return work_id
 
 def list_work_records(limit=100):
@@ -221,6 +223,8 @@ def set_draft_financials(record_id, price_pence, deposit_pence, expected_revisio
             _audit_work(db, record_id, revision, "financials",
                 {"price_pence": row["price_pence"], "deposit_pence": row["deposit_pence"]},
                 {"price_pence": price_pence, "deposit_pence": deposit_pence})
+        if not unchanged:
+            enqueue_sheet_sync(db,record_id,revision)
     return {"id": record_id, "price_pence": price_pence,
             "deposit_pence": deposit_pence, "balance_pence": price_pence - deposit_pence,
             "revision": revision}
@@ -267,6 +271,7 @@ def change_work_status(record_id, new_status, expected_revision=None):
                 raise StaleWorkRecordError("This work record changed. Refresh it before updating status.")
             _audit_work(db, record_id, row["revision"] + 1, "status",
                 {"status": old, "kind": row["kind"]}, {"status": new_status, "kind": kind})
+            enqueue_sheet_sync(db,record_id,row["revision"] + 1)
     return new_status
 
 def work_summary():
