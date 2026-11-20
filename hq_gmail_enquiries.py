@@ -155,11 +155,34 @@ def import_page(token, page_token=None):
                 or not all(sender.split("@"))
                 or any(c.isspace() or ord(c) < 33 for c in sender)):
             raise RuntimeError("Gmail enquiry sender cannot be verified")
-        headers = {h["name"].lower(): h["value"] for h in raw_headers}
-        subject, snippet = headers.get("subject", ""), item.get("snippet", "")
-        if not all(isinstance(value, str) for value in (subject, snippet)):
+        # A second Subject can conceal an earlier legal/debt cue if a
+        # dictionary silently retains only the final header value.
+        subject_values = [h["value"] for h in raw_headers
+                          if h["name"].lower() == "subject"]
+        if len(subject_values) > 1:
+            raise RuntimeError("Gmail enquiry subject headers are ambiguous")
+        # From alone is insufficient to keep sensitive correspondence out:
+        # legal/debt agents may send through a neutral mailbox with a
+        # recognisable collections/legal Reply-To address. Do not use this
+        # address for an outbound reply or treat it as authentication.
+        reply_values = [h["value"] for h in raw_headers
+                        if h["name"].lower() == "reply-to"]
+        if len(reply_values) > 1:
+            raise RuntimeError("Gmail enquiry reply address cannot be verified")
+        reply_sender = ""
+        if reply_values:
+            reply_addresses = getaddresses(reply_values)
+            reply_sender = reply_addresses[0][1] if len(reply_addresses) == 1 else ""
+            if (not 1 <= len(reply_sender) <= 254 or reply_sender.count("@") != 1
+                    or not all(reply_sender.split("@"))
+                    or any(c.isspace() or ord(c) < 33 for c in reply_sender)):
+                raise RuntimeError("Gmail enquiry reply address cannot be verified")
+        subject = subject_values[0] if subject_values else ""
+        snippet = item.get("snippet", "")
+        if not isinstance(snippet, str):
             raise RuntimeError("Invalid Gmail message fields")
-        if _excluded_from_sales(sender, subject, snippet):
+        if (_excluded_from_sales(sender, subject, snippet)
+                or (reply_sender and _excluded_from_sales(reply_sender, subject, snippet))):
             skipped_sensitive += 1
             continue
         rows.append((ref, sender[:254], subject[:250], snippet[:500]))
