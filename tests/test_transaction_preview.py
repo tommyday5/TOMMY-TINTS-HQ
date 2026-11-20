@@ -329,6 +329,60 @@ class OwnerPreviewHttpTests(unittest.TestCase):
                 self.assertIn(b"Duplicate JSON keys", html_response.data)
         self.assertEqual(set(os.listdir(self.tmp.name)), before)
 
+    def test_native_json_duplicate_keys_reject_entire_financial_preview(self):
+        # The preceding text-encoded JSON checks are insufficient if an API
+        # client submits duplicate members in a native JSON object: default
+        # Flask parsing silently accepts the final member.
+        self.owner()
+        before = set(os.listdir(self.tmp.name))
+        prefix = json.dumps({
+            "source": "monzo", "csv_text": MONZO + monzo_row(),
+            "scope_ref": "business-one",
+        })[:-1]
+        cases = (
+            # Duplicate top-level source could switch the provider.
+            prefix + ',"mapping":' + json.dumps(MONZO_MAP) + ',"source":"dna"}',
+            # Duplicate canonical amount mapping could choose another column.
+            prefix + ',"mapping":{"transaction_id":"Transaction",'
+            '"amount_pence":"Minor units","amount_pence":"Private note",'
+            '"currency":"Currency","booked_at":"Booked"}}',
+            # Nested duplicate category may turn an unverified transfer into a
+            # customer receipt candidate without an explicit owner decision.
+            prefix + ',"mapping":' + json.dumps(MONZO_MAP)
+            + ',"classifications":{"tx001":"transfer",'
+            '"tx001":"customer_receipt_candidate"}}',
+        )
+        for raw in cases:
+            with self.subTest(raw=raw[-90:]):
+                response = self.client.post(
+                    "/api/hq/transaction-import-preview",
+                    data=raw, content_type="application/json",
+                    headers={"X-HQ-CSRF": "valid-csrf"})
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("Duplicate JSON keys", response.json["error"])
+                self.assertFalse(response.json["imported"])
+                self.assertFalse(response.json["reconciled"])
+                for sensitive in ("Private Customer", "12345", "tx001"):
+                    self.assertNotIn(sensitive, response.get_data(as_text=True))
+        self.assertEqual(set(os.listdir(self.tmp.name)), before)
+
+    def test_native_json_malformed_utf8_and_missing_csrf_fail_closed(self):
+        self.owner()
+        before = set(os.listdir(self.tmp.name))
+        for payload in (b'{"source":', b'{"source":"monzo","bad":"\\xff"}' + b'\xff'):
+            response = self.client.post(
+                "/api/hq/transaction-import-preview", data=payload,
+                content_type="application/json",
+                headers={"X-HQ-CSRF": "valid-csrf"})
+            self.assertEqual(response.status_code, 400)
+            self.assertFalse(response.json["reconciled"])
+        response = self.client.post(
+            "/api/hq/transaction-import-preview",
+            data=b'{"source":"monzo","source":"dna"}',
+            content_type="application/json")
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(set(os.listdir(self.tmp.name)), before)
+
     def test_distinct_json_mapping_and_classification_remain_supported(self):
         self.owner()
         payload = self.payload()
