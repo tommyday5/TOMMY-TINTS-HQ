@@ -237,6 +237,39 @@ class SheetLinkPreflightTests(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 complete_trailing_blank_rows(snap, bad, candidate_row=6)
 
+    def test_secondary_read_rejects_new_target_input_without_new_job_id(self):
+        from hq_sheet_link_preflight import complete_trailing_blank_rows
+        snap = fixture()
+        snap["sheets"][0]["data"][0]["rowData"].pop()
+        # Row 6 is blank in the raw read, but changed during the second
+        # read. The ref in column A stays empty, so ID-only checks miss it.
+        changed_rows = (
+            ["", "", "New customer"],
+            ["", "=NOW()"],
+            ["", 0],
+        )
+        for candidate_values in changed_rows:
+            with self.subTest(candidate_values=candidate_values):
+                second = {
+                    "range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
+                    "values": [["Job ID"], ["J0077"], candidate_values],
+                }
+                with self.assertRaisesRegex(ValueError, "Candidate input changed"):
+                    complete_trailing_blank_rows(snap, second, candidate_row=6)
+
+    def test_secondary_read_rejects_new_input_in_existing_link_candidate(self):
+        from hq_sheet_link_preflight import complete_trailing_blank_rows
+        snap = fixture()
+        snap["sheets"][0]["data"][0]["rowData"].pop()
+        # The existing J0077 reference matches, but its previously empty
+        # customer field has changed between the two provider reads.
+        second = {
+            "range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
+            "values": [["Job ID"], ["J0077", "", "Private customer"]],
+        }
+        with self.assertRaisesRegex(ValueError, "Candidate input changed"):
+            complete_trailing_blank_rows(snap, second, candidate_row=5)
+
     def test_trailing_value_request_failure_is_not_silently_accepted(self):
         from hq_sheets_live import read_job_link_snapshot
         snap = fixture()
