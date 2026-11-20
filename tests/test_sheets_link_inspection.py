@@ -82,7 +82,7 @@ class SheetsLinkInspectionTests(unittest.TestCase):
             self.assertFalse(response.json[name])
         self.assertEqual(response.headers["Cache-Control"], "no-store")
         self.assertNotIn("J0077", response.get_data(as_text=True))
-        read.assert_called_once_with("synthetic-token")
+        read.assert_called_once_with("synthetic-token", selected_row=6)
         observed.assert_called_once_with("sheets_job_preflight")
 
     def test_conflicting_sheet_never_returns_private_rows(self):
