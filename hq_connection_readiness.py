@@ -137,6 +137,8 @@ def build_readiness(health, signals):
                                  and _observation_time(raw_sync) is None)
         sync_unpaired = (health.get("sync_unpaired", {}).get(key) is True
                          if history_available and profile["persisted_read"] else False)
+        scope_unverified = (health.get("scope_unverified", {}).get(key) is True
+                            if history_available and key in ("square", "square_payments") else False)
         # Do not erase a historically valid stage solely because it aged.
         # Surface a separate advisory blocker prompting the owner to rerun
         # the exact source-specific read/persisted snapshot.
@@ -162,6 +164,11 @@ def build_readiness(health, signals):
         elif not history_available:
             blocker = "Integration observation storage is unavailable; previous reads and syncs cannot be verified."
             next_action = "Restore read-only access to the persistent integration health database without resetting history."
+        elif scope_unverified:
+            blocker = ("Historical Square read/sync evidence is not bound to the currently "
+                       "configured location. An earlier or legacy snapshot must not "
+                       "establish read-tested or sync-tested status for this source.")
+            next_action = profile["read"]
         elif read_evidence_invalid or sync_evidence_invalid:
             blocker = ("Stored integration read or sync success timestamp is invalid or future-dated; "
                        "this evidence cannot establish readiness.")
@@ -213,6 +220,7 @@ def build_readiness(health, signals):
             "sync_applicable": profile["persisted_read"],
             "sync_needs_attention": sync_needs_attention,
             "sync_proof_unverified": sync_unpaired,
+            "source_scope_unverified": scope_unverified,
             "sync_last_error": sync_error,
             "sync_last_error_at": (sync_observation.get("last_error_at")
                                    if sync_needs_attention else None),
