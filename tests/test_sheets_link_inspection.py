@@ -113,5 +113,55 @@ class SheetsLinkInspectionTests(unittest.TestCase):
         self.assertIn(b"observation storage failed", missing_audit.data)
 
 
+    def test_repeated_json_fields_block_before_provider_read(self):
+        self.sign_in()
+        samples = (
+            b'{"job_ref":"J0083","job_ref":"J0082","target_row":6,"mode":"new"}',
+            b'{"job_ref":"J0083","target_row":6,"mode":"new","mode":"existing"}',
+            b'{"job_ref":"J0083","target_row":6,"mode":"new","ignored":{"x":1,"x":2}}',
+        )
+        with patch("app._google_connection",
+                   side_effect=AssertionError("must not request consent")):
+            for payload in samples:
+                with self.subTest(payload=payload):
+                    response = self.client.post(
+                        "/api/hq/sheets/job-link-preflight",
+                        data=payload, content_type="application/json",
+                        headers={"X-HQ-CSRF": "fixture-csrf"})
+                    self.assertEqual(response.status_code, 400)
+                    self.assertEqual(response.headers["Cache-Control"], "no-store")
+                    self.assertNotIn("J0083", response.get_data(as_text=True))
+
+    def test_malformed_and_oversized_json_fail_without_provider_reads(self):
+        self.sign_in()
+        samples = (
+            (b'{"job_ref":"J0083",', 400),
+            (b'{"job_ref":"J0083","target_row":6,"mode":"new"}\xff', 400),
+            (b'{"job_ref":"J0083","target_row":6,"mode":"new","padding":"' +
+             b"x" * 520 + b'"}', 413),
+        )
+        with patch("app._google_connection",
+                   side_effect=AssertionError("must not request consent")):
+            for payload, expected in samples:
+                with self.subTest(expected=expected):
+                    response = self.client.post(
+                        "/api/hq/sheets/job-link-preflight",
+                        data=payload, content_type="application/json",
+                        headers={"X-HQ-CSRF": "fixture-csrf"})
+                    self.assertEqual(response.status_code, expected)
+                    self.assertEqual(response.headers["Cache-Control"], "no-store")
+
+    def test_csrf_guard_precedes_json_parsing(self):
+        self.sign_in()
+        with patch("app._google_connection",
+                   side_effect=AssertionError("must not request consent")):
+            response = self.client.post(
+                "/api/hq/sheets/job-link-preflight",
+                data=b'{"job_ref":', content_type="application/json",
+                headers={"X-HQ-CSRF": "incorrect"})
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+
+
 if __name__ == "__main__":
     unittest.main()
