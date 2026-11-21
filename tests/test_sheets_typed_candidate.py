@@ -57,6 +57,48 @@ class TypedCandidateChecks(unittest.TestCase):
                     verify_unformatted_candidate(
                         snap, value_response(candidate), candidate_row=5)
 
+    def test_final_unformatted_read_rejects_new_values_in_originally_blank_inputs(self):
+        # A third provider response can observe an edit that neither the raw
+        # snapshot nor the intermediate FORMULA-rendered response observed.
+        for inserted in ("Changed customer", 25, True):
+            with self.subTest(inserted=inserted):
+                snap = typed_fixture()
+                candidate = ["J0077"] + [""] * 15 + [100, True]
+                candidate[2] = inserted  # Customer column was originally blank.
+                with self.assertRaisesRegex(ValueError, "Candidate input changed"):
+                    verify_unformatted_candidate(
+                        snap, value_response(candidate), candidate_row=5)
+
+    def test_final_unformatted_read_checks_previously_entered_literal_cells(self):
+        for final in ("Changed customer", "", 23):
+            with self.subTest(final=final):
+                snap = typed_fixture()
+                snap["sheets"][0]["data"][0]["rowData"][1]["values"][2] = {
+                    "userEnteredValue": {"stringValue": "Original customer"}}
+                candidate = ["J0077"] + [""] * 15 + [100, True]
+                candidate[2] = final
+                with self.assertRaisesRegex(ValueError, "literal input changed"):
+                    verify_unformatted_candidate(
+                        snap, value_response(candidate), candidate_row=5)
+
+    def test_unchanged_literal_survives_final_unformatted_read(self):
+        snap = typed_fixture()
+        snap["sheets"][0]["data"][0]["rowData"][1]["values"][2] = {
+            "userEnteredValue": {"stringValue": "Original customer"}}
+        candidate = ["J0077"] + [""] * 15 + [100, True]
+        candidate[2] = "Original customer"
+        self.assertIsNone(verify_unformatted_candidate(
+            snap, value_response(candidate), candidate_row=5))
+
+    def test_formula_in_original_mapped_input_is_not_accepted_as_typed_evidence(self):
+        snap = typed_fixture()
+        snap["sheets"][0]["data"][0]["rowData"][1]["values"][2] = {
+            "userEnteredValue": {"formulaValue": "=\"\""}}
+        candidate = ["J0077"] + [""] * 15 + [100, True]
+        with self.assertRaisesRegex(ValueError, "formula"):
+            verify_unformatted_candidate(
+                snap, value_response(candidate), candidate_row=5)
+
     def test_third_read_failure_does_not_return_approved_candidate(self):
         snap = typed_fixture()
         first, second = Mock(), Mock()

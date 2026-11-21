@@ -242,12 +242,27 @@ def verify_unformatted_candidate(snapshot, value_range, *, candidate_row):
 
     target = rows[candidate_row - FIRST_HEADER_ROW]
     actual = values[candidate_row - FIRST_HEADER_ROW] if candidate_row - FIRST_HEADER_ROW < len(values) else []
+    # The third provider read is not just a price/boolean check: a newly
+    # populated customer, service or status cell would otherwise pass even if
+    # it changed AFTER the FORMULA-rendered consistency read. Recheck every
+    # selected mapped input, including previously empty cells and literals.
+    # An UNFORMATTED_VALUE read cannot expose a new formula evaluating to an
+    # empty string; this remains non-atomic screening, never a write lock.
     for column in _INPUT_INDEXES:
         entry = _entered(target, column)
-        if not entry:
-            continue
         value = actual[column] if column < len(actual) else None
-        if "numberValue" in entry:
+        if entry is None:
+            if value not in (None, ""):
+                raise ValueError("Candidate input changed during unformatted source read")
+            continue
+        if "stringValue" in entry:
+            if type(value) is not str or value != entry["stringValue"]:
+                raise ValueError("Candidate literal input changed between source reads")
+        elif "formulaValue" in entry:
+            # Preflight rejects mapped input formulas independently. A formula
+            # result in an unformatted response is not raw formula evidence.
+            raise ValueError("Candidate mapped input contains a formula")
+        elif "numberValue" in entry:
             raw = entry["numberValue"]
             if (type(raw) not in (int, float) or
                     type(value) not in (int, float) or value != raw):
