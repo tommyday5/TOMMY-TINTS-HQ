@@ -216,6 +216,56 @@ class SquarePaymentEvidenceTests(unittest.TestCase):
                 self.assertNotIn(b"square-pmt-01", page.data)
                 self.assertNotIn(b"35000", page.data)
 
+    def test_cached_row_mutation_blocks_all_results_even_when_count_matches(self):
+        # Invalid cached rows must not be presented as provider evidence just
+        # because the snapshot count still matches the number of SQLite rows.
+        changes = (
+            "UPDATE payments SET status='SETTLED'",
+            "UPDATE payments SET total_minor=-1",
+            "UPDATE payments SET refunded_minor=35001",
+            "UPDATE payments SET currency='BAD!'",
+            "UPDATE payments SET id='bad id'",
+            "UPDATE payments SET updated_at='2026-11-17T10:59:00Z'",
+            "UPDATE payments SET updated_at='2099-11-17T11:59:00Z'",
+        )
+        self.owner()
+        for sql in changes:
+            with self.subTest(sql=sql):
+                with patch.object(square.requests, "get",
+                                  return_value=self.page([self.payment()])):
+                    square.refresh_payments()
+                with sqlite3.connect(square._path()) as db:
+                    db.execute(sql)
+                    self.assertEqual(db.execute(
+                        "SELECT COUNT(*) FROM payments").fetchone()[0], 1)
+                with patch.object(square.requests, "get") as upstream:
+                    state = square.read_snapshot()
+                    response = self.client.get("/api/hq/square-payment-evidence")
+                    upstream.assert_not_called()
+                self.assertFalse(state["snapshot_available"])
+                self.assertTrue(state["integrity_issue"])
+                self.assertIsNone(state["payment_count"])
+                self.assertEqual(state["payments"], [])
+                self.assertFalse(state["bank_settlement_verified"])
+                self.assertTrue(response.json["integrity_issue"])
+                self.assertNotIn(b"35000", response.data)
+
+    def test_cached_rows_outside_display_limit_are_still_validated(self):
+        with patch.object(square.requests, "get",
+                          return_value=self.page([
+                              self.payment(ref=f"p-{i:03d}") for i in range(51)
+                          ])):
+            self.assertEqual(square.refresh_payments(), 51)
+        self.assertEqual(square.read_snapshot()["payment_count"], 51)
+        with sqlite3.connect(square._path()) as db:
+            db.execute(
+                "UPDATE payments SET refunded_minor=35001 WHERE id='p-050'")
+        state = square.read_snapshot()
+        self.assertTrue(state["integrity_issue"])
+        self.assertFalse(state["snapshot_available"])
+        self.assertEqual(state["payments"], [])
+        self.assertIsNone(state["payment_count"])
+
     def test_owner_auth_csrf_and_explicit_refresh_only(self):
         url = "/hq/square-payment-evidence"
         api = "/api/hq/square-payment-evidence"
