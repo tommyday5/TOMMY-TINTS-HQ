@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>HQ Customers — Tommy Tints</title>
+<style>
+:root{color-scheme:dark;background:#090b10;color:#f6f7fa;font-family:system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;padding:clamp(12px,3vw,32px)}main{max-width:980px;margin:auto}
+h1{font-size:clamp(24px,4vw,34px)}a{color:#ff727c}p{line-height:1.5;color:#bfc3cf}
+.panel,.customer{border:1px solid #3b3f48;background:#171a21;border-radius:14px;margin:14px 0;padding:clamp(14px,2vw,22px)}
+form{display:flex;flex-wrap:wrap;align-items:end;gap:10px}label{font-weight:650;display:block}
+input{display:block;margin-top:6px;background:#0d1118;color:white;border:1px solid #60636c;border-radius:8px;padding:12px;font:inherit;min-width:220px;max-width:100%;width:350px}
+button,.button{background:#d0142a;border:1px solid #fa3348;border-radius:8px;color:white;padding:12px 16px;cursor:pointer;font:inherit;font-weight:700;text-decoration:none;display:inline-block}
+button.secondary{background:#30343d;border-color:#60636c}button:disabled{opacity:.55}
+.customer{display:flex;justify-content:space-between;gap:15px;align-items:center}.customer strong{display:block;font-size:17px}
+.customer p{margin:6px 0 0;overflow-wrap:anywhere}.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
+:focus-visible{outline:2px solid #f4d129;outline-offset:3px}
+@media(max-width:620px){.customer{display:block}.customer a{display:inline-block;margin-top:12px}input{width:100%}}
+</style></head><body><main>
+<nav><a href="/?page=jobs">← HQ job cards</a> · <a href="/hq/work/new">Create a quote or job</a></nav>
+<h1>Customers in HQ</h1>
+<p>Search saved canonical HQ customers by name, email, telephone or vehicle registration. This directory is private and reads the persistent HQ database, not Google Sheets. Historical customers are not represented as migrated unless verified separately.</p>
+<section class="panel">
+<form method="post" action="/hq/customers">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<div><label for="query">Customer or registration</label><input id="query" name="q" maxlength="80" value="{{ query }}" placeholder="Search existing records" autocomplete="off"></div>
+<button type="submit" name="offset" value="0">Search HQ customers</button>
+</form>
+<p role="status">{{ total }} matching HQ customer{{ '' if total == 1 else 's' }}. {% if total %}Displaying {{ offset + 1 }}–{{ offset + customers|length }}.{% endif %} Searches are submitted privately rather than in a URL.</p>
+</section>
+{% for c in customers %}
+<article class="customer">
+<div><strong>{{ c.name }}</strong><p>{{ c.email or 'Email not recorded' }} · {{ c.phone or 'Phone not recorded' }}</p><p>{{ c.vehicles }} vehicle{{ '' if c.vehicles == 1 else 's' }} · {{ c.works }} HQ work record{{ '' if c.works == 1 else 's' }}</p></div>
+<a class="button" href="/hq/customers/{{ c.id }}">View profile</a>
+</article>
+{% else %}<p>No matching native HQ customer. Historical Sheets contacts have not been imported.</p>{% endfor %}
+<div class="actions">
+{% if offset > 0 %}
+<form method="post" action="/hq/customers"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="q" value="{{ query }}"><button class="secondary" name="offset" value="{{ [0, offset-page_size]|max }}">Previous page</button></form>
+{% endif %}
+{% if offset + customers|length < total %}
+<form method="post" action="/hq/customers"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="q" value="{{ query }}"><button class="secondary" name="offset" value="{{ offset + page_size }}">Next page</button></form>
+{% endif %}
+</div>
+</main></body></html>
