@@ -19,6 +19,7 @@ from hq_core_records import _audit_work, _schema, StaleWorkRecordError
 from hq_work_progress import WORK_STAGES, work_progress_snapshot, record_work_progress
 from hq_work_time import time_ledger_snapshot, append_work_time, void_work_time
 from hq_work_materials import material_ledger_snapshot, append_work_material, void_work_material, UNITS
+from hq_work_expenses import expense_ledger_snapshot, append_work_expense, void_work_expense, EXPENSE_TYPES
 from hq_work_archive import archived_work_snapshot, set_work_archived, list_archived_work
 from hq_work_cost_overview import cost_overview_snapshot
 
@@ -729,3 +730,63 @@ def work_cost_overview(work_id):
         "hq_work_cost_overview.html", work=snapshot))
     response.headers["Cache-Control"] = "no-store"
     return response
+
+
+@native_work.route("/hq/work/<work_id>/expenses", methods=["GET", "POST"])
+@required
+def edit_work_expenses(work_id):
+    """Canonical owner-only job allocations; never a payment, invoice or stock write."""
+    try:
+        current = expense_ledger_snapshot(work_id)
+    except (ValueError, LookupError):
+        abort(404)
+    except (OSError, sqlite3.Error):
+        current_app.logger.exception("Expenses ledger unavailable")
+        abort(503)
+    if request.method == "POST":
+        if request.content_length is None or request.content_length > 8192:
+            abort(413)
+        if not secrets.compare_digest(request.form.get("csrf", ""), session.get("csrf", "not-set")):
+            abort(403)
+        revision = request.form.get("revision", "")
+        if not re.fullmatch(r"[0-9]{1,18}", revision):
+            abort(400)
+        try:
+            append_work_expense(work_id, request.form.to_dict(flat=True), int(revision),
+                                session.get("google_sub"))
+        except (StaleWorkRecordError, ValueError) as exc:
+            latest = expense_ledger_snapshot(work_id)
+            status = 409 if isinstance(exc, StaleWorkRecordError) else 400
+            return render_template("hq_work_expenses.html", work=latest,
+                expense_types=EXPENSE_TYPES, csrf=session["csrf"],
+                operation_id=request.form.get("operation_id", ""), values=request.form,
+                error=str(exc)), status
+        except (OSError, sqlite3.Error, RuntimeError):
+            current_app.logger.exception("Expense allocation unavailable")
+            abort(503)
+        return redirect(url_for(".edit_work_expenses", work_id=work_id, saved="1"), 303)
+    return render_template("hq_work_expenses.html", work=current,
+        expense_types=EXPENSE_TYPES, csrf=session["csrf"],
+        operation_id=uuid.uuid4().hex, values={}, error=None)
+
+
+@native_work.route("/hq/work/<work_id>/expenses/<entry_id>/void", methods=["POST"])
+@required
+def void_work_expense_entry(work_id, entry_id):
+    if request.content_length is None or request.content_length > 2048:
+        abort(413)
+    if not secrets.compare_digest(request.form.get("csrf", ""), session.get("csrf", "not-set")):
+        abort(403)
+    revision = request.form.get("revision", "")
+    if not re.fullmatch(r"[0-9]{1,18}", revision):
+        abort(400)
+    try:
+        void_work_expense(work_id, entry_id, int(revision), session.get("google_sub"))
+    except StaleWorkRecordError:
+        return redirect(url_for(".edit_work_expenses", work_id=work_id, conflict="1"), 303)
+    except (ValueError, LookupError):
+        abort(400)
+    except (OSError, sqlite3.Error, RuntimeError):
+        current_app.logger.exception("Expense reversal unavailable")
+        abort(503)
+    return redirect(url_for(".edit_work_expenses", work_id=work_id, voided="1"), 303)
