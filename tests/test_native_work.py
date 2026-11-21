@@ -4,6 +4,7 @@ import tempfile
 import unittest
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from unittest.mock import patch
 
 from app import app
@@ -17,9 +18,12 @@ from hq_native_work import (StaleWorkRecordError, create_native_work,
                             native_work_record, update_native_work)
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
 class NativeWorkTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(dir=ROOT)
         self.addCleanup(self.tmp.cleanup)
         env = patch.dict(os.environ, {
             "HQ_DATA_DIR": self.tmp.name, "HQ_SESSION_SECRET": "native-test-secret",
