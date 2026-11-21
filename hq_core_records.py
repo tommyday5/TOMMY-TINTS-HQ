@@ -37,6 +37,16 @@ def _schema(db):
         id TEXT PRIMARY KEY, work_id TEXT NOT NULL, revision INTEGER NOT NULL,
         action TEXT NOT NULL, before_value TEXT NOT NULL,
         after_value TEXT NOT NULL, created_at TEXT NOT NULL)""")
+    # Additive archive state: independent of job lifecycle and payment status.
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_work_archive_state (
+        work_id TEXT PRIMARY KEY REFERENCES hq_work_records(id),
+        is_archived INTEGER NOT NULL CHECK(is_archived IN (0,1)),
+        archived_at TEXT, restored_at TEXT)""")
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_work_archive_operations (
+        operation_id TEXT PRIMARY KEY, work_id TEXT NOT NULL,
+        action TEXT NOT NULL CHECK(action IN ('archive','restore')),
+        request_fingerprint TEXT NOT NULL, result_revision INTEGER NOT NULL,
+        created_at TEXT NOT NULL)""")
 
 
 class StaleWorkRecordError(ValueError):
@@ -95,12 +105,14 @@ def list_work_records(limit=100):
             FROM hq_work_records w JOIN hq_customers c ON c.id=w.customer_id
             JOIN hq_vehicles v ON v.id=w.vehicle_id
             LEFT JOIN customer_request_drafts d ON d.request_id=w.source_request_id
+            WHERE NOT EXISTS (SELECT 1 FROM hq_work_archive_state a
+                WHERE a.work_id=w.id AND a.is_archived=1)
             ORDER BY w.created_at DESC LIMIT ?""",(min(100,max(1,int(limit))),)).fetchall()
         return [dict(row) for row in rows]
 
 
 
-def search_work_records(query="", kind="", status="", limit=25, offset=0):
+def search_work_records(query="", kind="", status="", limit=25, offset=0, archived=False):
     """Search all linked internal work records, with bounded stable pagination.
 
     This is read-only and deliberately does not consult external Sheets, Square,
@@ -116,8 +128,12 @@ def search_work_records(query="", kind="", status="", limit=25, offset=0):
         raise ValueError("Page size must be between 1 and 50")
     if type(offset) is not int or not 0 <= offset <= 100000:
         raise ValueError("Invalid page offset")
+    if type(archived) is not bool:
+        raise ValueError("Invalid archive filter")
 
     where, args = [], []
+    where.append(("EXISTS" if archived else "NOT EXISTS") +
+        " (SELECT 1 FROM hq_work_archive_state a WHERE a.work_id=w.id AND a.is_archived=1)")
     term = query.strip()
     if term:
         # instr treats % and _ literally, unlike unescaped SQL LIKE patterns.
@@ -184,6 +200,8 @@ def recent_work_records(kind, limit=5):
         rows = db.execute("""SELECT id,source_request_id,kind,service,status,
             price_pence,deposit_pence,revision
             FROM hq_work_records WHERE kind=?
+              AND NOT EXISTS (SELECT 1 FROM hq_work_archive_state a
+                  WHERE a.work_id=hq_work_records.id AND a.is_archived=1)
             ORDER BY created_at DESC,id DESC LIMIT ?""", (kind, limit)).fetchall()
     return [dict(row) for row in rows]
 
@@ -209,6 +227,9 @@ def set_draft_financials(record_id, price_pence, deposit_pence, expected_revisio
             FROM hq_work_records WHERE id=?""", (record_id,)).fetchone()
         if not row or row["status"] not in ("draft", "ready_for_review"):
             raise LookupError("Editable draft not found")
+        if db.execute("SELECT 1 FROM hq_work_archive_state WHERE work_id=? AND is_archived=1",
+                      (record_id,)).fetchone():
+            raise ValueError("Restore this archived record before changing its price or deposit")
         unchanged = row["price_pence"] == price_pence and row["deposit_pence"] == deposit_pence
         if expected_revision is not None and row["revision"] != expected_revision and not unchanged:
             raise StaleWorkRecordError("This work record changed. Refresh it before saving.")
@@ -254,6 +275,9 @@ def change_work_status(record_id, new_status, expected_revision=None):
             FROM hq_work_records WHERE id=?""", (record_id,)).fetchone()
         if row is None:
             raise LookupError("Work record not found")
+        if db.execute("SELECT 1 FROM hq_work_archive_state WHERE work_id=? AND is_archived=1",
+                      (record_id,)).fetchone():
+            raise ValueError("Restore this archived record before changing its status")
         old = row["status"]
         kind = "job" if row["kind"] == "quote" and new_status in ("approved", "in_progress") else row["kind"]
         unchanged = old == new_status and kind == row["kind"]

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>HQ work archive — Tommy Tints</title>
+<style>
+:root{font-family:system-ui,sans-serif;color-scheme:dark;background:#090a0f;color:#f4f5f7}
+*{box-sizing:border-box}body{margin:0;padding:clamp(12px,4vw,32px)}main{max-width:850px;margin:auto}
+h1{font-size:clamp(22px,4vw,32px)}.panel{background:#181b21;border:1px solid #3b3d43;border-radius:14px;padding:clamp(14px,3vw,25px);margin:16px 0}
+p,li{line-height:1.5}p,.hint{color:#bcc1cd}a{color:#ff737c}li{padding:9px 0}
+button,.button{display:inline-block;background:#da132b;border:1px solid #ff314a;border-radius:8px;color:white;font:inherit;font-weight:700;padding:12px 16px;text-decoration:none;cursor:pointer}
+button:focus-visible,a:focus-visible{outline:2px solid #f2cb24;outline-offset:3px}
+.error{border-left:4px solid #ff5e65;background:#401b23;padding:12px}.success{border-left:4px solid #8cdb9f;background:#1a3227;padding:12px}
+.notice{border-left:4px solid #f2cb24;background:#302719;padding:12px}
+</style></head><body><main>
+<p><a href="/?page=jobs">← HQ job cards</a> · <a href="/hq/work/archived">Archived work</a></p>
+{% if listing is not none %}
+<h1>Archived HQ work</h1>
+<p>Archived items are hidden from active internal job searches, not deleted. Their original job ID, stage history, prices and recorded evidence remain intact.</p>
+<div class="panel">
+{% if listing.records %}
+<ul>{% for work in listing.records %}
+<li><a href="/hq/work/{{ work.id }}/archive">{{ work.name }} · {{ work.service }}</a>
+ · {{ work.kind }} · {{ work.status }} · {{ work.id[:10] }}</li>
+{% endfor %}</ul>
+{% else %}<p>No archived HQ records on this page.</p>{% endif %}
+<p>Showing {{ listing.records|length }} of {{ listing.total }} archived records.</p>
+{% if listing.offset > 0 %}
+<a class="button" href="/hq/work/archived?offset={{ [0, listing.offset - listing.limit]|max }}">Previous</a>
+{% endif %}
+{% if listing.has_more %}
+<a class="button" href="/hq/work/archived?offset={{ listing.offset + listing.limit }}">Next</a>
+{% endif %}
+</div>
+{% else %}
+<h1>{% if current.is_archived %}Archived{% else %}Archive or restore{% endif %} · HQ {{ current.id[:10] }}</h1>
+<div class="panel">
+<p><strong>{{ current.customer_name }}</strong> · {{ current.make }} {{ current.model }} · {{ current.registration }}</p>
+<p>{{ current.service }} · {{ current.kind }} · {{ current.status }} · revision {{ current.revision }}</p>
+<p>Archive state: <strong>{% if current.is_archived %}Archived{% else %}Active{% endif %}</strong>.</p>
+<p><a href="/hq/work/{{ current.id }}/edit">Open original HQ record</a></p>
+<p class="notice">Archive/restore affects your private active-work list only. It does not cancel or book an appointment, change the job lifecycle, approve a price, invoice, update Google Sheets, or record a payment. The original records and audit history remain available.</p>
+</div>
+{% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+{% if request.args.get("saved") == "1" %}<div class="success" role="status">Archive action saved to the persistent HQ record. Reload to verify.</div>{% endif %}
+{% if current.is_archived or current.can_archive %}
+<form class="panel" method="post" action="/hq/work/{{ current.id }}/archive">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="revision" value="{{ current.revision }}">
+<input type="hidden" name="operation_id" value="{{ operation_id }}">
+<input type="hidden" name="action" value="{{ 'restore' if current.is_archived else 'archive' }}">
+{% if current.is_archived %}
+<h2>Restore to active HQ work</h2>
+<p>Restore first if you need to edit its draft, work status or draft price again.</p>
+<button type="submit">Restore HQ work</button>
+{% else %}
+<h2>Archive finished, cancelled or unused draft work</h2>
+<p>Hide this record from active HQ searches without removing its history.</p>
+<button type="submit">Archive HQ work</button>
+{% endif %}
+</form>
+{% else %}
+<div class="panel"><p>Active approved or in-progress work cannot be archived. Finish or cancel the job using the existing owner workflow before archiving it.</p></div>
+{% endif %}
+<div class="panel">
+<h2>Archive history</h2>
+{% if current.events %}<ol>{% for event in current.events %}
+<li>{{ event.action|capitalize }} · revision {{ event.revision }} · <time datetime="{{ event.created_at }}">{{ event.created_at }}</time></li>
+{% endfor %}</ol>{% else %}<p>No archive actions have been recorded.</p>{% endif %}
+<p class="hint">Visibility is separate from work completion, invoicing, receipts, transfers and bank balance.</p>
+</div>
+{% endif %}
+</main></body></html>
