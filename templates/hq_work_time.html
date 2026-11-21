@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>Actual workshop time — Tommy Tints HQ</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#090a0f;color:#f4f5f7}
+*{box-sizing:border-box}body{margin:0;padding:clamp(12px,4vw,32px)}
+main{max-width:850px;margin:auto}h1{font-size:clamp(22px,4vw,32px)}
+.panel{background:#181b21;border:1px solid #3b3d43;border-radius:14px;padding:clamp(14px,3vw,25px);margin:16px 0}
+p,li{line-height:1.5}p,.hint{color:#bcc1cd}a{color:#ff737c}
+.notice{border-left:4px solid #f2cb24;background:#302719;padding:12px}
+.error{border-left:4px solid #ff5e65;background:#401b23;padding:12px}
+.success{border-left:4px solid #8cdb9f;background:#1a3227;padding:12px}
+label{display:block;font-weight:650;margin:14px 0 7px}
+input,select,textarea{background:#0d1118;border:1px solid #555962;border-radius:8px;color:white;padding:12px;font:inherit;width:100%}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+button{background:#da132b;border:1px solid #ff314a;border-radius:8px;color:white;font:inherit;font-weight:700;padding:11px 15px;cursor:pointer}
+button.secondary{background:#262b33;border-color:#666}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,a:focus-visible{outline:2px solid #f2cb24;outline-offset:3px}
+li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
+@media(max-width:600px){.grid{grid-template-columns:1fr}}
+</style></head><body><main>
+<p><a href="/hq/work/{{ work.id }}/progress">← Workshop progress</a> · <a href="/?page=jobs">HQ job cards</a></p>
+<h1>Actual workshop time · {{ work.id[:10] }}</h1>
+<section class="panel">
+<p><strong>{{ work.customer_name }}</strong> · {{ work.make }} {{ work.model }} · {{ work.registration }}</p>
+<p>{{ work.service }} · {{ work.status.replace('_',' ') }} · revision {{ work.revision }}</p>
+<p><strong>{{ work.minutes_total }} minutes</strong> recorded across {{ work.entry_count }} active time entries.</p>
+{% if work.actual_labour_cost_pence is not none %}
+<p>Recorded internal labour cost: <strong>£{{ '%.2f'|format(work.actual_labour_cost_pence/100) }}</strong></p>
+{% elif work.entry_count %}
+<p>Actual labour cost: <strong>unknown</strong> ({{ work.unknown_rate_count }} active entry/entries have no recorded hourly cost).</p>
+{% else %}
+<p>Actual labour cost: <strong>not recorded</strong>.</p>
+{% endif %}
+{% if work.known_cost_subtotal_pence is not none and work.unknown_rate_count %}
+<p>Partial known-rate subtotal only: £{{ '%.2f'|format(work.known_cost_subtotal_pence/100) }}. This is <strong>not</strong> the total job labour cost.</p>
+{% endif %}
+<p class="notice">Actual time is not billable hours, a final job cost, an invoice, an approved price, a receipt or a confirmed booking. Missing labour rates and other costs remain unknown. No Google Sheets, bank, customer messages or appointments are changed here.</p>
+</section>
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+{% if request.args.get("saved") == "1" %}<p class="success" role="status">Time entry saved to HQ. Reload to inspect its history.</p>{% endif %}
+{% if request.args.get("voided") == "1" %}<p class="success" role="status">Time entry reversed and retained in the audit history.</p>{% endif %}
+{% if request.args.get("conflict") == "1" %}<p class="error" role="alert">This job changed. Review the latest revision before reversing an entry.</p>{% endif %}
+{% if work.can_edit_time %}
+<form class="panel" method="post" action="/hq/work/{{ work.id }}/time">
+<h2>Record actual time</h2>
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="revision" value="{{ work.revision }}">
+<input type="hidden" name="operation_id" value="{{ operation_id }}">
+<div class="grid">
+<div><label for="minutes">Actual minutes</label><input id="minutes" name="minutes" type="number" min="1" max="1440" step="1" required value="{{ values.get('minutes','') }}"></div>
+<div><label for="stage">Activity</label><select name="stage" id="stage" required>
+<option value="" disabled {% if not values.get('stage') %}selected{% endif %}>Select workshop activity</option>
+{% for key,label in stages.items() %}<option value="{{ key }}" {% if values.get('stage') == key %}selected{% endif %}>{{ label }}</option>{% endfor %}
+</select></div>
+</div>
+<label for="rate">Actual internal hourly cost, in pence (optional)</label>
+<input name="hourly_cost_pence" id="rate" type="number" min="0" max="1000000" step="1"
+ value="{{ values.get('hourly_cost_pence','') }}" placeholder="Leave blank if unknown">
+<p class="hint">For example, 1800 means £18.00 per hour. This is your verified internal cost, not your customer hourly charge. Blank means unknown, never £0.</p>
+<label for="note">Internal activity note (optional)</label>
+<textarea name="note" id="note" maxlength="160" rows="2">{{ values.get('note','') }}</textarea>
+<p class="hint">Recording a time entry advances the canonical HQ job revision. Replaying the same submitted form cannot duplicate an entry.</p>
+<button type="submit">Save actual time</button>
+</form>
+{% else %}
+<div class="panel"><p>New time entries and corrections are available only for approved or in-progress jobs. Existing records remain visible and cannot be silently erased.</p></div>
+{% endif %}
+<section class="panel"><h2>Time entry history</h2>
+{% if work.entries %}
+<ol>
+{% for entry in work.entries %}
+<li>
+<strong>{{ entry.minutes }} minutes</strong> · {{ stages.get(entry.stage,'Historical activity') }}
+{% if entry.voided_at %}<strong> · VOIDED</strong>{% endif %}
+{% if entry.note %}<p>{{ entry.note }}</p>{% endif %}
+<p><time datetime="{{ entry.created_at }}">{{ entry.created_at }}</time>
+· {% if entry.hourly_cost_pence is none %}internal hourly cost unknown{% else %}£{{ '%.2f'|format(entry.hourly_cost_pence/100) }}/hour recorded{% endif %}</p>
+{% if work.can_edit_time and not entry.voided_at %}
+<form method="post" action="/hq/work/{{ work.id }}/time/{{ entry.entry_id }}/void">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="revision" value="{{ work.revision }}">
+<button class="secondary" type="submit">Reverse mistaken entry</button>
+</form>
+{% endif %}
+</li>
+{% endfor %}
+</ol>
+{% else %}<p>No time entries recorded. Unrecorded work is unknown, not zero.</p>{% endif %}
+<p class="hint">{% if work.history_truncated %}Showing the latest 100 entries; totals include all active entries.{% else %}All recorded entries shown.{% endif %} Reversals retain historical evidence. This page is for the HQ owner only.</p>
+</section>
+</main></body></html>

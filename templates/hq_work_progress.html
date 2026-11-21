@@ -15,7 +15,7 @@ button{background:#da132b;border:1px solid #ff314a;color:white;font:inherit;font
 button:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid #f2cb24;outline-offset:3px}
 li{padding:4px 0}time{color:#b4b9c4}
 </style></head><body><main>
-<p><a href="/?page=jobs">← HQ job cards</a></p>
+<p><a href="/?page=jobs">← HQ job cards</a> · <a href="/hq/work/{{ work.id }}/time">Record actual workshop time</a></p>
 <h1>Work progress · {{ work.id[:10] }}</h1>
 <div class="panel">
 <p><strong>{{ work.customer_name }}</strong> · {{ work.make }} {{ work.model }} · {{ work.registration }}</p>
