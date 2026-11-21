@@ -6,6 +6,7 @@ No links, receipts, paid flags, prices, or external records are written.
 """
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
+import json
 import os
 import re
 import secrets
@@ -126,6 +127,20 @@ def compare_references(work_id, payment_id, now=None):
         if not (result["matches_approved_price"] or result["matches_planned_deposit"]):
             warnings.append("Amount does not equal the approved price or planned deposit; partial payments may exist.")
 
+    # The internal job was read before the Square SQLite snapshot. A price,
+    # planned deposit, approval or revision may change during that comparison.
+    # Re-read the authoritative HQ record before offering even a *candidate*
+    # amount match. Two reads are not an atomic cross-database snapshot; they
+    # only screen revisions that changed during this request.
+    latest_job = read_work_record(work_id)
+    identity_fields = ("revision", "status", "kind", "price_pence",
+                       "deposit_pence", "source_request_id")
+    if any(latest_job.get(field) != job.get(field) for field in identity_fields):
+        warnings.append("HQ work record changed during payment comparison; refresh the job and retry.")
+        result.update(job_status=None, price_pence=None,
+                      planned_deposit_pence=None, matches_approved_price=False,
+                      matches_planned_deposit=False)
+        return result
     result["candidate_evidence_complete"] = (
         not warnings and result["snapshot_current"] and valid_price
         and (result["matches_approved_price"] or result["matches_planned_deposit"])
@@ -138,16 +153,38 @@ def _csrf_ok(value):
     return isinstance(value, str) and secrets.compare_digest(value, session.get("csrf", "not-set"))
 
 
+def _unique_json_fields(pairs):
+    """Reject ambiguous duplicate JSON member names, including nested ones."""
+    parsed = {}
+    for name, value in pairs:
+        if name in parsed:
+            raise ValueError("Duplicate review instruction")
+        parsed[name] = value
+    return parsed
+
+
 def _review_input():
-    if request.content_length is not None and request.content_length > 2048:
-        abort(413)
     if request.is_json:
-        data = request.get_json(silent=True)
-        if not isinstance(data, dict):
-            abort(400)
+        # Authorisation precedes any JSON parsing, including duplicate-key
+        # checks. An absent Content-Length must not permit an unbounded body.
         if not _csrf_ok(request.headers.get("X-HQ-CSRF", "")):
             abort(403)
+        if request.content_length is not None and request.content_length > 2048:
+            abort(413)
+        raw = request.stream.read(2049)
+        if len(raw) > 2048:
+            abort(413)
+        try:
+            data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_json_fields)
+        except (ValueError, UnicodeDecodeError):
+            abort(400)
+        if (not isinstance(data, dict) or set(data) != {"work_id", "payment_id"}
+                or type(data["work_id"]) is not str
+                or type(data["payment_id"]) is not str):
+            abort(400)
     else:
+        if request.content_length is not None and request.content_length > 2048:
+            abort(413)
         if not _csrf_ok(request.form.get("csrf", "")):
             abort(403)
         data = request.form
