@@ -219,7 +219,7 @@ class NativeMaterialLedgerTests(unittest.TestCase):
         self.assertEqual(read_work_record(linked)["source_request_id"], reference)
         self.assertEqual(read_work_record(linked)["kind"], "job")
         self.assertIn(b"Record material usage",
-                      self.client.get("/hq/work/" + linked + "/edit").data)
+                      self.client.get("/hq/work/" + linked + "/progress").data)
         self.assertEqual(app.test_client().get("/hq/work/" + linked + "/materials").status_code, 302)
         self.assertEqual(sheet_sync_status(linked)["state"], "not_linked")
 
