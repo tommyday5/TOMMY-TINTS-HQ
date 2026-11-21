@@ -64,7 +64,7 @@ class SquareHistoricalInspectionTests(unittest.TestCase):
         self.assertEqual(get.call_args.args[0],
                          "https://connect.squareup.com/v2/payments/older-square-payment")
         self.assertNotIn("params", get.call_args.kwargs)
-        self.assertIn("PAYMENTS_READ", self.client.get(
+        self.assertIn("Inspect an older payment", self.client.get(
             "/hq/square-payment-evidence").get_data(as_text=True))
         self.assertFalse(square._path().exists())
         self.assertFalse((Path(os.environ["HQ_DATA_DIR"]) /
