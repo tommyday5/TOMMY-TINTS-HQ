@@ -32,7 +32,7 @@ code{overflow-wrap:anywhere}a:focus-visible{outline:2px solid #f4d129;outline-of
 <strong>{{ w.service }} · {{ w.kind|capitalize }} · {{ w.status|replace('_',' ') }}</strong>
 <p>HQ work ID: <code>{{ w.id }}</code> · revision {{ w.revision }}</p>
 {% if w.preferred_date %}<p>Requested: {{ w.preferred_date }} {{ w.preferred_time }} (unconfirmed)</p>{% endif %}
-{% if w.source_request_id.startswith('HQ-') %}<a href="/hq/work/{{ w.id }}/edit">Open native HQ job card</a>{% else %}<a href="/?page=jobs">Open in HQ job cards</a>{% endif %}
+<a href="/hq/work/{{ w.id }}/customer-document">Customer-safe work document</a> · {% if w.source_request_id.startswith('HQ-') %}<a href="/hq/work/{{ w.id }}/edit">Open native HQ job card</a>{% else %}<a href="/?page=jobs">Open in HQ job cards</a>{% endif %}
 </article>{% else %}<p>No linked HQ quotes or jobs.</p>{% endfor %}
 <p>Customer records and work stay in HQ SQLite. No Google Sheets, Gmail, Calendar, Square, payments or public account access are changed by viewing this page.</p>
 </main></body></html>

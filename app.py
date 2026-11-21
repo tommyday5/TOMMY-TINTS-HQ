@@ -39,6 +39,7 @@ from hq_version import ICON_VERSION, UPDATE_SCRIPT_VERSION, build_version
 from hq_commerce import commerce
 from customer_edits import customer_edits
 from hq_customer_directory import customer_directory
+from hq_customer_documents import customer_documents
 from hq_native_work import native_work
 from maintenance_visual import visual_routes
 from hq_auth import auth, oauth, google, required, configured, active_session
@@ -56,6 +57,7 @@ app.register_blueprint(passkeys)
 app.register_blueprint(visual_routes)
 app.register_blueprint(customer_edits)
 app.register_blueprint(customer_directory)
+app.register_blueprint(customer_documents)
 app.register_blueprint(native_work)
 app.register_blueprint(commerce)
 app.register_blueprint(square_payments.payment_evidence)

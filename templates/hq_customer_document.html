@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>Customer work document — Tommy Tints HQ</title>
+<style>
+:root{color-scheme:dark;background:#090b10;color:#f7f8fa;font-family:system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;padding:clamp(12px,3vw,30px)}
+main{max-width:880px;margin:auto}a{color:#ff727c}
+.panel{background:#181b21;border:1px solid #393c45;padding:clamp(14px,3vw,24px);border-radius:13px;margin:16px 0}
+h1{font-size:clamp(23px,4vw,33px)}h2{font-size:20px}
+p{line-height:1.5}.muted{color:#bbc0ce}.warning{padding:12px;border-left:4px solid #f1cd35;background:#362b16}
+.error{padding:12px;border-left:4px solid #ff6f78;background:#401c24}
+textarea{display:block;width:100%;min-height:125px;background:#0d1016;color:#fff;border:1px solid #666b75;border-radius:8px;font:inherit;padding:12px}
+button{background:#dc112b;border:1px solid #f8324a;color:white;padding:11px 16px;border-radius:8px;font:inherit;font-weight:700;cursor:pointer}
+button:focus-visible,textarea:focus-visible,a:focus-visible{outline:2px solid #f3d226;outline-offset:3px}
+.document{background:#fff;color:#181a21;padding:clamp(18px,4vw,35px);border-radius:9px}
+.document p{color:#252a32}.document .brand{font-weight:900;font-size:22px;letter-spacing:.3px}
+.document .brand b{color:#c91b31}.document small{color:#404550}
+.document .description{white-space:pre-wrap;overflow-wrap:anywhere}
+.document .price{font-size:24px;font-weight:800}
+@media print{
+  :root{color-scheme:light;background:white;color:black}
+  body{padding:0;background:white;color:black}
+  .no-print{display:none!important}
+  .panel.document{border:0;box-shadow:none;padding:0;margin:0;background:#fff;color:#111}
+  .document{break-inside:avoid}
+}
+</style></head><body><main>
+<div class="no-print">
+<p><a href="/hq/customers">← Customers</a> · <a href="/?page=jobs">HQ job cards</a></p>
+<h1>Customer-safe work document</h1>
+<p class="muted">Owner-only editing and print preview. This saves to the canonical HQ job; it does not send a document, book an appointment or create an invoice. Internal notes and costs never appear in the printable section.</p>
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+{% if request.args.get('saved') == '1' %}<p role="status">Customer-facing description saved to HQ.</p>{% endif %}
+<form class="panel" method="post">
+<h2>Edit customer-facing description</h2>
+<p class="muted">Describe only work you are authorised to share. The original internal scope and approved price remain unchanged. Changes after job approval are separately audited.</p>
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="revision" value="{{ record.revision }}">
+<label for="public-description">Description for customer document</label>
+<textarea id="public-description" name="public_description" maxlength="1200" {% if not record.can_edit %}disabled{% endif %}>{{ record.public_description }}</textarea>
+<p class="muted">HQ work reference {{ record.id }} · revision {{ record.revision }}</p>
+{% if record.can_edit %}<button type="submit">Save customer-facing description</button>
+{% else %}<p class="warning">Archived/cancelled work is read-only. Restore eligible work before editing.</p>{% endif %}
+</form>
+{% if record.can_print %}<p><button type="button" onclick="window.print()">Print / Save as PDF</button></p>
+{% else %}<p class="warning">The document is preview-only until the job is approved, its price is recorded and a customer-facing description is saved. No customer document has been sent.</p>{% endif %}
+</div>
+<section class="panel document" aria-label="Customer document preview">
+<div class="brand">TOMMY <b>TINTS</b></div>
+<p><small>Vehicle customisation &amp; repairs · Customer work statement</small></p>
+{% if not record.can_print %}<p><strong>INTERNAL PREVIEW — NOT APPROVED FOR CUSTOMER ISSUE</strong></p>{% endif %}
+<h2>{{ record.service }}</h2>
+<p><strong>Customer:</strong> {{ record.customer_name }}</p>
+<p><strong>Vehicle:</strong> {{ record.make }} {{ record.model }}{% if record.registration %} · {{ record.registration }}{% endif %}</p>
+<p><strong>HQ reference:</strong> {{ record.id }}</p>
+<p><strong>Work status:</strong> {{ record.status|replace('_',' ')|title }}</p>
+<h3>Work description</h3>
+<p class="description">{{ record.public_description or 'Customer-facing work description not recorded.' }}</p>
+{% if record.approved_price %}
+<p class="price">Agreed job price: {{ record.approved_price }}</p>
+{% else %}
+<p><strong>Price:</strong> Not approved — no customer price represented.</p>
+{% endif %}
+{% if record.preferred_date %}<p><strong>Requested date:</strong> {{ record.preferred_date }}{% if record.preferred_time %} at {{ record.preferred_time }}{% endif %} (not a confirmed appointment)</p>{% endif %}
+<hr>
+<p><small>This statement is not an invoice, booking confirmation or proof of payment. A completed job does not mean payment has been received. Contact Tommy Tints for confirmation of appointment or payment terms.</small></p>
+</section>
+</main></body></html>
