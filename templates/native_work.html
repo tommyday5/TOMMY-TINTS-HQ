@@ -43,7 +43,7 @@ button:disabled{opacity:.55;cursor:not-allowed}.secondary{background:#272b33;bor
 <p><strong>{{ record.customer_name }}</strong> · {{ record.email }} · {{ record.phone }}</p>
 <p>{{ record.make }} {{ record.model }} {{ record.model_year }} · {{ record.registration }}</p>
 <p>HQ work ID <code>{{ record.id }}</code> · {{ record.kind }} · {{ record.status }} · revision {{ record.revision }}</p>
-<p><a href="/hq/customers/{{ record.customer_id }}/edit">Edit linked customer/contact/address</a> · <a href="/hq/vehicles/{{ record.vehicle_id }}/edit">Edit linked vehicle</a> · <a href="/?page=jobs">Review price, approval and costing in job cards</a> · <a href="/hq/work/{{ record.id }}/progress">Record or review work stages</a> · <a href="/hq/work/{{ record.id }}/time">Record actual workshop time</a> · <a href="/hq/work/{{ record.id }}/materials">Record material usage</a></p>
+<p><a href="/hq/customers/{{ record.customer_id }}/edit">Edit linked customer/contact/address</a> · <a href="/hq/vehicles/{{ record.vehicle_id }}/edit">Edit linked vehicle</a> · <a href="/?page=jobs">Review price, approval and costing in job cards</a> · <a href="/hq/work/{{ record.id }}/progress">Record or review work stages</a> · <a href="/hq/work/{{ record.id }}/time">Record actual workshop time</a> · <a href="/hq/work/{{ record.id }}/materials">Record material usage</a> · <a href="/hq/work/{{ record.id }}/archive">{% if record.is_archived %}Restore archived work{% else %}Archive / restore{% endif %}</a></p>
 </div>
 {% endif %}
 <form class="panel" method="post" action="{% if new %}/hq/work/new{% else %}/hq/work/{{ record.id }}/edit{% endif %}">
@@ -87,7 +87,7 @@ button:disabled{opacity:.55;cursor:not-allowed}.secondary{background:#272b33;bor
 <input type="hidden" name="revision" value="{{ record.revision }}">
 {% endif %}
 <h2>{% if new %}3.{% endif %} Work details</h2>
-{% set locked = not new and record.status not in ('draft','ready_for_review') %}
+{% set locked = not new and (record.is_archived or record.status not in ('draft','ready_for_review')) %}
 <div class="grid">
 <div><label for="customerTier">Customer pricing tier</label>
 <select id="customerTier" name="customer_tier" {% if locked %}disabled{% endif %}>
@@ -112,7 +112,7 @@ button:disabled{opacity:.55;cursor:not-allowed}.secondary{background:#272b33;bor
 <label for="notes">Scope and internal notes</label>
 <textarea id="notes" name="notes" maxlength="1500" rows="5" {% if locked %}disabled{% endif %}>{{ values.get('notes', '' if new else record.notes) }}</textarea>
 {% if locked %}
-<div class="notice">This record is {{ record.status }}. The approved scope is locked; manage its workflow in HQ job cards. No values will be changed here.</div>
+<div class="notice">{% if record.is_archived %}This record is archived. Restore it before editing its draft.{% else %}This record is {{ record.status }}. The approved scope is locked; manage its workflow in HQ job cards.{% endif %} No values will be changed here.</div>
 {% else %}
 <p class="notice">Prices and deposits can be added from the job card after saving. These are draft estimates only. Nothing is sent, booked, charged or synced to Google Sheets.</p>
 <button type="submit">{% if new %}Save new HQ record{% else %}Save draft changes{% endif %}</button>
