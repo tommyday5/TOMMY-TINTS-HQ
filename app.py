@@ -287,6 +287,7 @@ async function loadJobCards(){
    box.append(openCost,costDetail);
    const edit=document.createElement("a");edit.className="button";edit.textContent="Edit customer";
    edit.href="/hq/customers/"+encodeURIComponent(job.customer_id)+"/edit";box.append(edit);if(job.source_request_id.startsWith("HQ-")){const scopeEdit=document.createElement("a");scopeEdit.className="button";scopeEdit.textContent="Edit work scope & tier";scopeEdit.href="/hq/work/"+encodeURIComponent(job.id)+"/edit";box.append(scopeEdit);}
+   const progressLink=document.createElement("a");progressLink.className="button";progressLink.textContent="Record / view work stages";progressLink.href="/hq/work/"+encodeURIComponent(job.id)+"/progress";box.append(progressLink);
    jobCards.append(box);
   }
   const first=result.records.length?jobCardOffset+1:0;
