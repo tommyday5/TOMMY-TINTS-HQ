@@ -106,6 +106,41 @@ class SquarePaymentEvidenceTests(unittest.TestCase):
                         square.refresh_payments()
                 self.assertFalse(square._path().exists())
 
+    def test_impossible_payment_timestamps_cannot_replace_valid_snapshot(self):
+        # Provider-origin dates must be chronologically consistent. This is
+        # source integrity screening, not proof of settlement or bank cash.
+        with patch.object(square.requests, "get",
+                          return_value=self.page([self.payment()])):
+            self.assertEqual(square.refresh_payments(), 1)
+        reversed_dates = self.payment(ref="replacement")
+        reversed_dates["updated_at"] = "2026-11-17T10:59:00Z"
+        future_dates = self.payment(ref="replacement")
+        future_dates["created_at"] = "2099-11-17T11:00:00Z"
+        future_dates["updated_at"] = "2099-11-17T11:01:00Z"
+        for malformed in (reversed_dates, future_dates):
+            with self.subTest(created=malformed["created_at"],
+                              updated=malformed["updated_at"]):
+                with patch.object(square.requests, "get",
+                                  return_value=self.page([malformed])):
+                    with self.assertRaisesRegex(
+                            ValueError, "inconsistent payment timestamps"):
+                        square.refresh_payments()
+                state = square.read_snapshot()
+                self.assertEqual(state["payment_count"], 1)
+                self.assertEqual(state["payments"][0]["id"], "square-pmt-01")
+                self.assertFalse(state["bank_settlement_verified"])
+
+    def test_payment_timestamp_order_uses_utc_not_local_clock_strings(self):
+        # A later updated_at can have an earlier-looking local wall time.
+        item = self.payment()
+        item["created_at"] = "2026-11-17T11:00:00+01:00"
+        item["updated_at"] = "2026-11-17T10:01:00Z"
+        with patch.object(square.requests, "get", return_value=self.page([item])):
+            self.assertEqual(square.refresh_payments(), 1)
+        row = square.read_snapshot()["payments"][0]
+        self.assertEqual(row["created_at"], "2026-11-17T10:00:00+00:00")
+        self.assertEqual(row["updated_at"], "2026-11-17T10:01:00+00:00")
+
     def test_payment_pagination_rejects_oversized_pages_and_ambiguous_cursors(self):
         # Never replace a previously complete, source-scoped snapshot merely
         # because the provider responds with an ambiguous second-page token.
