@@ -4,7 +4,7 @@ import sqlite3
 import unittest
 
 from hq_offline_sheet_link_proposals import (
-    LinkProposalError, stage_unverified_candidate,
+    LinkProposalError, inspect_offline_candidate_ledger, stage_unverified_candidate,
 )
 
 OWNER = "a" * 32
@@ -46,6 +46,78 @@ class OfflineHistoricalCandidateTests(unittest.TestCase):
             "SELECT count(*) FROM offline_hq_sheet_link_proposals").fetchone()[0],
             self.db.execute(
                 "SELECT count(*) FROM offline_hq_sheet_link_events").fetchone()[0])
+
+    def test_read_only_audit_has_no_schema_or_provider_side_effects(self):
+        empty = inspect_offline_candidate_ledger(self.db, owner_scope=OWNER)
+        self.assertEqual(empty["candidate_count"], 0)
+        self.assertTrue(empty["integrity_consistent"])
+        self.assertFalse(empty["source_authenticated"])
+        self.assertFalse(empty["approved"])
+        self.assertEqual(self.db.execute(
+            "SELECT count(*) FROM sqlite_master WHERE name LIKE 'offline_hq_%'"
+        ).fetchone()[0], 0)
+        self.stage()
+        result = inspect_offline_candidate_ledger(self.db, owner_scope=OWNER)
+        self.assertEqual((result["candidate_count"], result["event_count"]), (1, 1))
+        self.assertFalse(result["live_sync"])
+
+    def test_corrupted_audit_event_prevents_successful_idempotent_replay(self):
+        self.stage()
+        self.db.execute(
+            "UPDATE offline_hq_sheet_link_events SET payload_digest=?", ("0" * 64,)
+        )
+        self.db.commit()
+        with self.assertRaises(LinkProposalError):
+            inspect_offline_candidate_ledger(self.db, owner_scope=OWNER)
+        with self.assertRaises(LinkProposalError):
+            self.stage()
+        self.assertEqual(self.counts(), (1, 1))
+
+    def test_missing_and_orphaned_events_fail_closed_without_new_candidates(self):
+        self.stage()
+        self.db.execute("DELETE FROM offline_hq_sheet_link_events")
+        self.db.commit()
+        with self.assertRaises(LinkProposalError):
+            self.stage()
+        self.assertEqual(self.counts(), (1, 0))
+        self.db.execute("""INSERT INTO offline_hq_sheet_link_events
+            VALUES (?, ?, ?, 'candidate_staged', ?, ?)""",
+            ("e" * 32, "f" * 32, OWNER, "0" * 64, "2026-01-01T00:00:00+00:00"))
+        self.db.commit()
+        with self.assertRaises(LinkProposalError):
+            inspect_offline_candidate_ledger(self.db, owner_scope=OWNER)
+
+    def test_changed_candidate_revision_fails_consistency_and_is_owner_scoped(self):
+        self.stage()
+        self.stage(owner_scope="f" * 32)
+        self.db.execute(
+            "UPDATE offline_hq_sheet_link_proposals SET work_revision=12 WHERE owner_scope=?",
+            ("f" * 32,)
+        )
+        self.db.commit()
+        self.assertEqual(inspect_offline_candidate_ledger(
+            self.db, owner_scope=OWNER)["candidate_count"], 1)
+        with self.assertRaises(LinkProposalError):
+            inspect_offline_candidate_ledger(self.db, owner_scope="f" * 32)
+        with self.assertRaises(LinkProposalError):
+            self.stage(owner_scope="f" * 32)
+
+    def test_rejects_existing_caller_transaction_without_rolling_it_back(self):
+        self.stage()
+        self.db.execute(
+            "UPDATE offline_hq_sheet_link_proposals SET work_revision=7")
+        self.assertTrue(self.db.in_transaction)
+        with self.assertRaises(LinkProposalError):
+            self.stage(operation_id="d" * 32, work_id="e" * 32,
+                       job_ref="J0099", sheet_row=7)
+        self.assertTrue(self.db.in_transaction)
+        self.assertEqual(self.db.execute(
+            "SELECT work_revision FROM offline_hq_sheet_link_proposals"
+        ).fetchone()[0], 7)
+        self.db.rollback()
+        self.assertEqual(self.db.execute(
+            "SELECT work_revision FROM offline_hq_sheet_link_proposals"
+        ).fetchone()[0], 3)
 
     def test_stage_is_explicitly_unverified_with_one_local_event(self):
         result = self.stage()
