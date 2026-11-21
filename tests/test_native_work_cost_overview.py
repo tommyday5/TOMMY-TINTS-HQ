@@ -148,3 +148,39 @@ class NativeWorkCostOverviewTests(unittest.TestCase):
         self.assertEqual(self.client.get("/hq/work/" + uuid.uuid4().hex + "/costs").status_code, 404)
         self.assertEqual(self.client.get("/hq/work/not-valid/costs").status_code, 404)
         self.assertEqual(self.client.get(self.url).status_code, 200)
+
+    def test_public_quote_to_canonical_job_costs_remain_private(self):
+        with patch.dict(os.environ, {"HQ_PUBLIC_REQUESTS_ENABLED": "true"}):
+            posted = self.client.post("/api/public/customer-request", json={
+                "kind": "quote", "name": "Synthetic public quote",
+                "email": "customer-cost@example.invalid", "phone": "07700 900998",
+                "service": "Window Tinting", "make": "Ford", "model": "Focus",
+                "year": "2020", "registration": "TP20 ABC",
+                "notes": "Synthetic public request", "privacy_acknowledged": True,
+            })
+        self.assertEqual(posted.status_code, 201, posted.json)
+        self.assertFalse(posted.json["confirmed_booking"])
+        self.login()
+        ref = posted.json["reference"]
+        headers = {"X-HQ-CSRF": "overview-csrf"}
+        draft = self.client.post("/api/hq/customer-requests/" + ref + "/draft",
+                                 json={"draft_type": "quote"}, headers=headers)
+        self.assertEqual(draft.status_code, 201, draft.json)
+        converted = self.client.post("/api/hq/customer-requests/" + ref + "/work-record",
+                                     json={}, headers=headers)
+        self.assertEqual(converted.status_code, 201, converted.json)
+        linked = converted.json["id"]
+        set_draft_financials(linked, 15000, 0, expected_revision=0)
+        change_work_status(linked, "ready_for_review", expected_revision=1)
+        change_work_status(linked, "approved", expected_revision=2)
+        with app.app_context():
+            result = cost_overview_snapshot(linked)
+            self.assertEqual(result["id"], linked)
+            self.assertEqual(result["source_request_id"], ref)
+            self.assertEqual(result["labour_entry_count"], 0)
+            self.assertIsNone(result["final_profit_pence"])
+        self.assertEqual(self.client.get("/hq/work/" + linked + "/costs").status_code, 200)
+        visitor = app.test_client()
+        self.assertEqual(visitor.get("/hq/work/" + linked + "/costs").status_code, 302)
+        self.assertNotIn(b"cost-overview", visitor.get("/book").data)
+        self.assertEqual(self.client.get("/hq/work/" + linked + "/progress").status_code, 200)
