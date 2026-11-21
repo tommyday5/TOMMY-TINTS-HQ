@@ -8,6 +8,7 @@ from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import os
+import re
 import secrets
 import sqlite3
 
@@ -166,6 +167,42 @@ def refresh_payments():
 
 
 
+
+def inspect_exact_payment(payment_id):
+    """Owner-triggered, memory-only GetPayment check for an exact known ID.
+
+    The rolling created-at snapshot excludes older payments; an individual
+    GetPayment can inspect an older refund/update without replacing or
+    silently extending that snapshot. This does not save a provider observation,
+    claim source completeness, allocate a job or prove a bank settlement.
+    """
+    if not configured():
+        raise RuntimeError("Square payment read access unavailable")
+    # Reject paths, query characters, control characters and unbounded input.
+    # Square IDs are opaque; support the URL-safe alphanumeric ID alphabet.
+    if not isinstance(payment_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,192}", payment_id):
+        raise ValueError("Invalid Square payment reference")
+    response = requests.get(
+        _API + "/" + payment_id,
+        headers={"Authorization": "Bearer " + os.environ["HQ_SQUARE_READ_TOKEN"],
+                 "Square-Version": _API_VERSION},
+        timeout=(3, 7),
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if (not isinstance(payload, dict) or payload.get("errors")
+            or not isinstance(payload.get("payment"), dict)):
+        raise ValueError("Square returned invalid payment evidence")
+    payment = payload["payment"]
+    if payment.get("id") != payment_id:
+        raise ValueError("Square returned a different payment reference")
+    ref, status, total, refunded, currency, created, updated = _payment(
+        payment, os.environ["HQ_SQUARE_LOCATION_ID"])
+    return {"id": ref, "status": status, "total_minor": total,
+            "refunded_minor": refunded, "currency": currency,
+            "created_at": created, "updated_at": updated}
+
+
 def _stored_payment_consistent(row, refreshed, start, end):
     """Revalidate one cached provider row before it can support owner review.
 
@@ -314,6 +351,34 @@ snapshot; do not treat this as evidence of zero receipts.</p>
 <button type="submit">Refresh read-only Square payment evidence</button></form>
 {% else %}<p>Owner must configure a Square token with PAYMENTS_READ and the Square location ID before a refresh is possible.</p>{% endif %}
 </section>
+<section class="panel">
+<h2>Inspect an older payment by exact Square ID</h2>
+<p>This is a one-off, owner-initiated, read-only provider lookup. It can show
+an older payment's current reported status or refund even when the 30-day
+creation-date snapshot does not contain it. Results are not stored, linked to
+HQ jobs, counted as receipts or used to advance synchronisation readiness.</p>
+{% if data.configured %}
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="action" value="inspect-exact">
+<label for="payment_id">Exact Square payment ID</label>
+<input id="payment_id" name="payment_id" required maxlength="192"
+pattern="[A-Za-z0-9_-]+" autocomplete="off" spellcheck="false">
+<button type="submit">Inspect payment (read-only)</button>
+</form>
+{% endif %}
+{% if inspected_payment %}
+<p><strong>Direct Square read (not bank verified):</strong>
+{{ inspected_payment.id }} — {{ inspected_payment.status }}.
+{{ inspected_payment.total_minor }} minor units ({{ inspected_payment.currency }}).
+Reported refunded amount:
+{{ inspected_payment.refunded_minor if inspected_payment.refunded_minor is not none else "Not supplied" }}.
+Created: {{ inspected_payment.created_at }}.
+Last updated: {{ inspected_payment.updated_at }}.</p>
+<p>This one-off result is not a historical-completeness check, payout, reconciled
+receipt or proof of permission to refund or alter any payment.</p>
+{% endif %}
+</section>
 {% if data.payments %}<div class="panel"><table><thead><tr>
 <th>Payment ID</th><th>Status</th><th>Provider amount</th><th>Reported refund</th><th>Created (UTC)</th>
 </tr></thead><tbody>{% for p in data.payments %}
@@ -334,34 +399,44 @@ Reconciliation with HQ jobs is deliberately disabled until exact matching and ap
 def payment_page():
     error = None
     error_status = 502
+    inspected_payment = None
     if request.method == "POST":
         if (request.content_length is not None and request.content_length > 2000):
             abort(413)
         if not secrets.compare_digest(request.form.get("csrf", ""), session.get("csrf", "not-set")):
             abort(403)
-        if not configured():
-            return "Square payment read access is not configured", 503
-        try:
-            refresh_payments()
-        except PersistedSyncError:
-            record_check("square_payments_sync", "Square payment snapshot commit failed")
-            error = "Unable to store the Square payment snapshot. Check persistent storage."
-        except Exception:
-            # No response bodies, customer data, URLs containing tokens or secrets logged.
-            record_check("square_payments", "Square payment read failed")
-            error = "Unable to refresh payment evidence. Check read-only Square access and PAYMENTS_READ permission."
+        if request.form.get("action") == "inspect-exact":
+            try:
+                inspected_payment = inspect_exact_payment(request.form.get("payment_id", ""))
+            except Exception:
+                # Keep API responses, permission errors and private IDs out of
+                # owner-visible failure text. No provider payload is logged.
+                error = "Unable to inspect this exact Square payment. Check the ID, access and PAYMENTS_READ permission."
         else:
-            # Snapshot persistence and readiness observation are separate
-            # commits. A missing observation must not look like a clean sync.
-            if not record_committed_sync(
-                    "square_payments", source_location=os.environ.get("HQ_SQUARE_LOCATION_ID")):
-                error = ("Square payment snapshot was stored, but integration "
-                         "read/sync evidence could not be recorded. Check "
-                         "Integration Health storage; sync remains unverified.")
-                error_status = 503
+            if not configured():
+                return "Square payment read access is not configured", 503
+            try:
+                refresh_payments()
+            except PersistedSyncError:
+                record_check("square_payments_sync", "Square payment snapshot commit failed")
+                error = "Unable to store the Square payment snapshot. Check persistent storage."
+            except Exception:
+                # No response bodies, customer data, URLs containing tokens or secrets logged.
+                record_check("square_payments", "Square payment read failed")
+                error = "Unable to refresh payment evidence. Check read-only Square access and PAYMENTS_READ permission."
+            else:
+                # Snapshot persistence and readiness observation are separate
+                # commits. A missing observation must not look like a clean sync.
+                if not record_committed_sync(
+                        "square_payments", source_location=os.environ.get("HQ_SQUARE_LOCATION_ID")):
+                    error = ("Square payment snapshot was stored, but integration "
+                             "read/sync evidence could not be recorded. Check "
+                             "Integration Health storage; sync remains unverified.")
+                    error_status = 503
     try:
         data = read_snapshot()
     except (OSError, sqlite3.Error, ValueError):
         return "Payment evidence storage is unavailable", 503
     return render_template_string(_PAGE, data=data, error=error,
+                                  inspected_payment=inspected_payment,
                                   csrf=session.get("csrf")), (error_status if error else 200)
