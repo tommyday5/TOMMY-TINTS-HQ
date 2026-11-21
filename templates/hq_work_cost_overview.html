@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>HQ actual job costs — Tommy Tints</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#090a0f;color:#f4f5f7}
+*{box-sizing:border-box}body{margin:0;padding:clamp(14px,4vw,32px)}main{max-width:850px;margin:auto}
+h1{font-size:clamp(23px,4vw,32px)}p,li{line-height:1.5}p,.hint{color:#bdc1ca}
+a{color:#ff737c}.panel{background:#181b21;border:1px solid #3b3d43;border-radius:14px;padding:clamp(14px,3vw,25px);margin:16px 0}
+.notice{border-left:4px solid #f2cb24;background:#302719;padding:12px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.number{font-size:clamp(22px,5vw,30px);font-weight:750;color:#f4f5f7}
+button{background:#da132b;border:1px solid #ff314a;border-radius:8px;color:white;font:inherit;font-weight:700;padding:11px 15px;cursor:pointer}
+a:focus-visible,button:focus-visible{outline:2px solid #f2cb24;outline-offset:3px}
+@media(max-width:600px){.grid{grid-template-columns:1fr}}
+@media print{body{background:white;color:black;padding:0}.panel{background:white;color:black;border:1px solid #555;break-inside:avoid}.number{color:black}p,.hint{color:#333}.no-print{display:none}.notice{background:white;color:black;border-color:#888}}
+</style></head><body><main>
+<nav class="no-print"><a href="/hq/work/{{ work.id }}/edit">← HQ work</a> · <a href="/hq/work/{{ work.id }}/time">Edit time ledger</a> · <a href="/hq/work/{{ work.id }}/materials">Edit material ledger</a> · <a href="/?page=jobs">Job cards</a></nav>
+<h1>Recorded job costs · {{ work.id[:10] }}</h1>
+<section class="panel">
+<p><strong>{{ work.customer_name }}</strong> · {{ work.make }} {{ work.model }} · {{ work.registration }}</p>
+<p>{{ work.service }} · {{ work.kind }} · {{ work.status.replace('_',' ') }} · HQ revision {{ work.revision }}</p>
+<p>Canonical HQ work reference: <code>{{ work.id }}</code></p>
+{% if work.approved_sale_price is not none %}
+<p>Approved customer selling price: <strong>£{{ '%.2f'|format(work.approved_sale_price/100) }}</strong> (not a verified receipt).</p>
+{% elif work.price_pence is not none %}
+<p>Unapproved draft selling price: £{{ '%.2f'|format(work.price_pence/100) }}. This is not agreed revenue.</p>
+{% else %}<p>Customer selling price: <strong>not recorded or approved</strong>.</p>{% endif %}
+<p class="notice">Private internal review only. These figures are recorded labour and consumed-material allocations, not final job costs or profit. Overhead, supplier evidence, subcontractors, other expenses, historical manual logs and VAT treatment remain unreconciled. A completed job does not mean paid.</p>
+</section>
+<div class="grid">
+<section class="panel">
+<h2>Workshop labour</h2>
+<p>{{ work.labour_entry_count }} active time entries · {{ work.labour_minutes }} recorded minutes.</p>
+{% if work.labour_recorded_total_pence is not none %}
+<p class="number">£{{ '%.2f'|format(work.labour_recorded_total_pence/100) }}</p>
+<p>All recorded active labour entries have an actual internal rate.</p>
+{% elif work.labour_entry_count %}
+<p><strong>Total unknown</strong> — {{ work.labour_unknown_count }} entries lack a cost rate.</p>
+{% else %}<p><strong>Not recorded</strong> — do not assume zero.</p>{% endif %}
+{% if work.labour_known_pence is not none and work.labour_unknown_count %}
+<p>Known-rate portion only: £{{ '%.2f'|format(work.labour_known_pence/100) }}.</p>{% endif %}
+<p class="no-print"><a href="/hq/work/{{ work.id }}/time">Record / reverse time</a></p>
+</section>
+<section class="panel">
+<h2>Materials consumed</h2>
+<p>{{ work.material_entry_count }} active usage entries.</p>
+{% if work.material_recorded_total_pence is not none %}
+<p class="number">£{{ '%.2f'|format(work.material_recorded_total_pence/100) }}</p>
+<p>All recorded active material allocations include a cost.</p>
+{% elif work.material_entry_count %}
+<p><strong>Total unknown</strong> — {{ work.material_unknown_count }} allocations lack a cost.</p>
+{% else %}<p><strong>Not recorded</strong> — do not assume zero.</p>{% endif %}
+{% if work.material_known_pence is not none and work.material_unknown_count %}
+<p>Known-cost portion only: £{{ '%.2f'|format(work.material_known_pence/100) }}.</p>{% endif %}
+<p class="no-print"><a href="/hq/work/{{ work.id }}/materials">Record / reverse materials</a></p>
+</section>
+</div>
+<section class="panel">
+<h2>Combined recorded ledger</h2>
+{% if work.recorded_labour_material_complete %}
+<p class="number">£{{ '%.2f'|format(work.recorded_labour_material_total_pence/100) }}</p>
+<p>Sum of recorded labour and material entries only; other real job costs may still be missing.</p>
+{% elif work.partial_known_subtotal_pence is not none %}
+<p class="number">£{{ '%.2f'|format(work.partial_known_subtotal_pence/100) }} known portion</p>
+<p><strong>Incomplete.</strong> Unrecorded categories or missing line rates prevent a full labour + material subtotal.</p>
+{% else %}
+<p><strong>Not determinable.</strong> No rate-backed time or cost-backed material evidence has been recorded.</p>
+{% endif %}
+<h3>Still requiring reconciliation</h3>
+<ul>{% for source in work.missing_sources %}<li>{{ source }}</li>{% endfor %}</ul>
+<p>Final job cost, contribution, profit, margin, invoices, cash receipts and bank balance are not calculated or verified here. This view excludes the existing manual profitability log to prevent double counting.</p>
+</section>
+<p class="no-print"><button type="button" onclick="window.print()">Print / save private review as PDF</button></p>
+<p class="hint">Read-only report sourced from one consistent HQ SQLite snapshot. Corrections are made in the versioned time and material editors. No Sheets, payments, bookings or notifications are changed.</p>
+</main></body></html>
