@@ -184,6 +184,38 @@ class SquarePaymentEvidenceTests(unittest.TestCase):
         self.assertFalse(snapshot["bank_settlement_verified"])
         self.assertIsNone(snapshot["verified_job_receipts_pence"])
 
+    def test_local_snapshot_corruption_withholds_all_payment_evidence(self):
+        # Provider reads are not a substitute for checking the durable local
+        # snapshot that powers owner review. Never manufacture zero receipts.
+        mutations = (
+            "DELETE FROM payments",
+            "UPDATE snapshot SET item_count=2",
+            "UPDATE snapshot SET window_start='2099-01-01T00:00:00Z'",
+            "UPDATE snapshot SET refreshed_at='2099-01-01T00:00:00Z'",
+        )
+        self.owner()
+        for sql in mutations:
+            with self.subTest(sql=sql):
+                with patch.object(square.requests, "get",
+                                  return_value=self.page([self.payment()])):
+                    self.assertEqual(square.refresh_payments(), 1)
+                with sqlite3.connect(square._path()) as db:
+                    db.execute(sql)
+                with patch.object(square.requests, "get") as provider:
+                    state = square.read_snapshot()
+                    api = self.client.get("/api/hq/square-payment-evidence")
+                    page = self.client.get("/hq/square-payment-evidence")
+                    provider.assert_not_called()
+                self.assertFalse(state["snapshot_available"])
+                self.assertTrue(state["integrity_issue"])
+                self.assertIsNone(state["payment_count"])
+                self.assertEqual(state["payments"], [])
+                self.assertFalse(state["bank_settlement_verified"])
+                self.assertTrue(api.json["integrity_issue"])
+                self.assertIn(b"metadata or row count cannot be verified", page.data)
+                self.assertNotIn(b"square-pmt-01", page.data)
+                self.assertNotIn(b"35000", page.data)
+
     def test_owner_auth_csrf_and_explicit_refresh_only(self):
         url = "/hq/square-payment-evidence"
         api = "/api/hq/square-payment-evidence"
