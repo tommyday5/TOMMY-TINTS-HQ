@@ -53,11 +53,12 @@ class PaymentReviewTests(unittest.TestCase):
         return work_id
 
     def seed(self, amount=7600, status="COMPLETED", refund=None, payment_id="square-01"):
+        created = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(days=2)
         payment = {
             "id": payment_id, "location_id": "location-one", "status": status,
             "total_money": {"amount": amount, "currency": "GBP"},
-            "created_at": "2026-11-18T08:00:00Z",
-            "updated_at": "2026-11-18T08:05:00Z",
+            "created_at": created.isoformat(),
+            "updated_at": (created + timedelta(minutes=5)).isoformat(),
             "buyer_email_address": "private@example.invalid",
             "card_details": {"card": {"last_4": "1234"}},
         }
