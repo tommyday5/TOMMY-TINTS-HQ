@@ -508,3 +508,9 @@ Changes immediately after the final read remain possible. Genuine owner
 workbook access, B:E mapping verification, current work identity, explicit
 write authorisation and independent restoration controls remain outstanding.
 No Jobs cells, HQ links, customer records or financial balances are written.
+
+### Jobs header drift guard across independent reads (21 November 2026; read-only)
+
+The existing owner-triggered historical Jobs link inspection now compares **all A:AJ header labels** from the raw GridData response with both the subsequent `FORMULA` values read and, when numeric/boolean selected inputs require it, the third `UNFORMATTED_VALUE` read. A changed, deleted, formula-replaced, missing or non-text column heading fails the entire inspection even when the selected J reference, price and customer fields appear unchanged. This includes B:E, whose meanings still require separate genuine owner verification. Four synthetic regression tests cover unchanged sources and schema drift between reads.
+
+These are sequential, non-atomic provider reads. A writer could still change the workbook after the final read, so **no snapshot is an approved link baseline**. This work creates no persistent HQ-to-J mapping, approved write scope, sync, payment allocation or bank reconciliation. The owner must first inspect the genuine workbook with valid read-only consent, verify each historical job identity and B:E mapping, then separately approve a durable, revision-checked staging/link workflow before any future write. No connection status is promoted by fixture tests.
