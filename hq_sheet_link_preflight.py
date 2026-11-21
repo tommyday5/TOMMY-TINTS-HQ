@@ -76,6 +76,24 @@ def _text(value, label):
 
 
 
+def _verify_header_consistency(rows, values):
+    """Fail closed if the independent source read changes a Jobs column heading.
+
+    Historical job-link decisions depend on the entire A:AJ schema, including
+    owner-unverified B:E headings. Compare literal entered header text rather
+    than trusting a potentially stale GridData header from an earlier read.
+    An independent Values read is not an atomic Sheets revision or write lock.
+    """
+    raw_header = rows[0]
+    observed_header = values[0] if values else []
+    for column in range(MIN_COLUMNS):
+        original = _text(_entered(raw_header, column), "Column heading")
+        observed = (observed_header[column]
+                    if column < len(observed_header) else "")
+        if type(observed) is not str or observed != original:
+            raise ValueError("Jobs column headings changed between source reads")
+
+
 def complete_trailing_blank_rows(snapshot, value_range, *, candidate_row):
     """Pad an omitted GridData tail only with independent, exact-range evidence.
 
@@ -135,6 +153,10 @@ def complete_trailing_blank_rows(snapshot, value_range, *, candidate_row):
             any(not isinstance(row, list) or len(row) > MIN_COLUMNS
                 for row in values)):
         raise ValueError("Trailing rows are not independently confirmed blank")
+    # Even the same-looking job reference is unsafe if the column layout
+    # changed while Google served two separately timed snapshots.
+    _verify_header_consistency(rows, values)
+
     # Fail closed if the second read sees a changed/missing raw reference.
     # FORMULA render prevents a formula evaluating to "" from masquerading
     # as an empty tail in the independent scan.
@@ -230,6 +252,10 @@ def verify_unformatted_candidate(snapshot, value_range, *, candidate_row):
             any(not isinstance(row, list) or len(row) > MIN_COLUMNS
                 for row in values)):
         raise ValueError("Unexpected typed evidence coverage")
+
+    # A third provider read must not silently accept header edits that
+    # occurred after the FORMULA-rendered read, either.
+    _verify_header_consistency(rows, values)
 
     # A third read must not accept a moved or replaced reference, or allow
     # an omitted-tail row to become populated after the FORMULA read.
