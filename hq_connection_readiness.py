@@ -60,7 +60,7 @@ PROFILES = (
     {"key": "square_payments", "name": "Square payment evidence", "implemented": True,
      "persisted_read": True,
      "setup": "Configure HQ_SQUARE_READ_TOKEN with PAYMENTS_READ and HQ_SQUARE_LOCATION_ID on Railway.",
-     "read": "Manually refresh owner-only Square Payment Evidence and compare exact payment and job references.",
+     "read": "Manually refresh Square Payment Evidence; for an older known payment ID, use the separate one-off owner-only GetPayment inspection (does not update snapshot readiness).",
      "reconcile": "Implement audited owner-approved allocations plus refunds, fees and bank-settlement evidence; comparisons are not receipts."},
     {"key": "monzo", "name": "Monzo transaction reconciliation", "implemented": False,
      "persisted_read": False,
