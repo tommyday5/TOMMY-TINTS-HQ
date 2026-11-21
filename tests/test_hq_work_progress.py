@@ -134,13 +134,17 @@ class HQWorkProgressTests(unittest.TestCase):
         self.approve()
         def write(stage):
             with app.app_context():
-                return record_work_progress(self.work_id, stage, 3, "test-owner")
+                try:
+                    record_work_progress(self.work_id, stage, 3, "test-owner")
+                    return "saved"
+                except StaleWorkRecordError:
+                    return "conflict"
         with ThreadPoolExecutor(max_workers=2) as pool:
-            jobs = list(pool.map(lambda x: x(), [
-                lambda: write("repair"), lambda: write("installation")
-            ]))
-        # One winner and one stale conflict is enforced under BEGIN IMMEDIATE.
-        self.assertEqual(len(jobs), 2)
+            outcomes = list(pool.map(write, ("repair", "installation")))
+        # One winner and one stale conflict under BEGIN IMMEDIATE.
+        self.assertEqual(sorted(outcomes), ["conflict", "saved"])
+        self.assertEqual(len(work_progress_snapshot(self.work_id)["events"]), 1)
+        self.assertEqual(work_progress_snapshot(self.work_id)["revision"], 4)
 
     def test_public_request_work_uses_same_hq_identifiers_without_customer_stage_endpoint(self):
         with patch.dict(os.environ, {"HQ_PUBLIC_REQUESTS_ENABLED": "true"}):
