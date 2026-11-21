@@ -10,6 +10,7 @@ The digest is NOT a signed/externally anchored audit trail.
 """
 from datetime import datetime, timezone
 import hashlib
+import hmac
 import json
 import re
 import sqlite3
@@ -49,6 +50,86 @@ def _schema(db):
     )""")
 
 
+
+def _candidate_digest(payload):
+    """Local checksum of selected identifiers, NOT a signed source attestation."""
+    return hashlib.sha256(json.dumps(
+        payload, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")).hexdigest()
+
+
+def inspect_offline_candidate_ledger(db, *, owner_scope):
+    """Read-only, owner-scoped consistency check of a fixture-only ledger.
+
+    Every candidate must have exactly one matching local event. This detects
+    accidental edits, partial audit writes and missing events before replay.
+    An attacker changing both the row and unkeyed digest, or removing both
+    records, is NOT detectable; there is no trusted external anchor.
+    """
+    if not isinstance(db, sqlite3.Connection) or not _id(owner_scope):
+        raise LinkProposalError("Invalid offline owner scope or database")
+    try:
+        tables = {row[0] for row in db.execute(
+            """SELECT name FROM sqlite_master WHERE type='table'
+               AND name IN ('offline_hq_sheet_link_proposals',
+                            'offline_hq_sheet_link_events')"""
+        )}
+        expected = {"offline_hq_sheet_link_proposals", "offline_hq_sheet_link_events"}
+        if not tables:
+            return {"candidate_count": 0, "event_count": 0,
+                    "integrity_consistent": True, "source_authenticated": False,
+                    "approved": False, "live_sync": False, "reconciled": False}
+        if tables != expected:
+            raise LinkProposalError("Offline candidate ledger has incomplete tables")
+        proposals = db.execute(
+            """SELECT id,owner_scope,work_id,work_revision,workbook_id,
+                      sheet_id,job_ref,sheet_row,status,created_at
+               FROM offline_hq_sheet_link_proposals WHERE owner_scope=?""",
+            (owner_scope,)
+        ).fetchall()
+        events = db.execute(
+            """SELECT id,proposal_id,owner_scope,event_type,payload_digest,recorded_at
+               FROM offline_hq_sheet_link_events WHERE owner_scope=?""",
+            (owner_scope,)
+        ).fetchall()
+    except sqlite3.Error:
+        raise LinkProposalError("Offline candidate ledger could not be read") from None
+    if len(proposals) != len(events) or len(proposals) > MAX_ROWS:
+        raise LinkProposalError("Offline candidate ledger event coverage is incomplete")
+    event_by_proposal = {}
+    for event_id, proposal_id, scope, kind, digest, recorded_at in events:
+        if (not _id(event_id) or not _id(proposal_id) or scope != owner_scope
+                or kind != "candidate_staged" or type(digest) is not str
+                or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                or type(recorded_at) is not str or not recorded_at
+                or proposal_id in event_by_proposal):
+            raise LinkProposalError("Offline candidate event integrity failed")
+        event_by_proposal[proposal_id] = (digest, recorded_at)
+    for (proposal_id, scope, work_id, work_revision, workbook_id,
+         sheet_id, job_ref, sheet_row, status, created_at) in proposals:
+        if (not _id(proposal_id) or scope != owner_scope or not _id(work_id)
+                or type(work_revision) is not int
+                or not 0 <= work_revision < 2**63 - 1
+                or workbook_id != WORKBOOK or type(sheet_id) is not int
+                or sheet_id != JOBS_SHEET_ID or type(job_ref) is not str
+                or not _JOB.fullmatch(job_ref) or type(sheet_row) is not int
+                or not 5 <= sheet_row <= MAX_ROWS
+                or status != "unverified_candidate"
+                or type(created_at) is not str or not created_at):
+            raise LinkProposalError("Offline candidate record integrity failed")
+        event = event_by_proposal.pop(proposal_id, None)
+        payload = (scope, work_id, work_revision, workbook_id,
+                   sheet_id, job_ref, sheet_row)
+        if (event is None or event[1] != created_at or
+                not hmac.compare_digest(event[0], _candidate_digest(payload))):
+            raise LinkProposalError("Offline candidate event does not match its record")
+    if event_by_proposal:
+        raise LinkProposalError("Offline candidate event has no matching record")
+    return {"candidate_count": len(proposals), "event_count": len(events),
+            "integrity_consistent": True, "source_authenticated": False,
+            "approved": False, "live_sync": False, "reconciled": False}
+
+
 def stage_unverified_candidate(db, *, owner_scope, operation_id, work_id,
                                work_revision, job_ref, sheet_row, inspection):
     """Store a NON-ACTIVE review candidate in a caller-owned isolated SQLite DB.
@@ -76,6 +157,10 @@ def stage_unverified_candidate(db, *, owner_scope, operation_id, work_id,
                 "write_authorised", "live_sync", "reconciled"))):
         raise LinkProposalError("An existing read-only, unverified candidate is required")
 
+    # Never let our context manager silently roll back a caller-owned transaction.
+    if db.in_transaction:
+        raise LinkProposalError("Finish the caller transaction before staging a candidate")
+
     payload = (owner_scope, work_id, work_revision, WORKBOOK,
                JOBS_SHEET_ID, job_ref, sheet_row)
     now = datetime.now(timezone.utc).isoformat()
@@ -85,6 +170,9 @@ def stage_unverified_candidate(db, *, owner_scope, operation_id, work_id,
         with db:
             db.execute("BEGIN IMMEDIATE")
             _schema(db)
+            # A replay is not successful evidence if its local event was lost
+            # or changed. This check stays in the same writer transaction.
+            inspect_offline_candidate_ledger(db, owner_scope=owner_scope)
             previous = db.execute(
                 """SELECT work_id, work_revision, workbook_id, sheet_id, job_ref,
                           sheet_row FROM offline_hq_sheet_link_proposals
@@ -103,15 +191,14 @@ def stage_unverified_candidate(db, *, owner_scope, operation_id, work_id,
                    VALUES(?,?,?,?,?,?,?,?,?,'unverified_candidate',?)""",
                 (proposal_id, owner_scope, operation_id, work_id, work_revision,
                  WORKBOOK, JOBS_SHEET_ID, job_ref, sheet_row, now))
-            digest = hashlib.sha256(json.dumps(payload, separators=(",", ":"),
-                                               ensure_ascii=True).encode("utf-8")).hexdigest()
+            digest = _candidate_digest(payload)
             db.execute(
                 """INSERT INTO offline_hq_sheet_link_events
                    (id,proposal_id,owner_scope,event_type,payload_digest,recorded_at)
                    VALUES(?,?,?,'candidate_staged',?,?)""",
                 (uuid.uuid4().hex, proposal_id, owner_scope, digest, now))
-    except sqlite3.IntegrityError:
+    except sqlite3.Error:
         raise LinkProposalError(
-            "Candidate row, J reference or HQ work is already reserved for review") from None
+            "Offline candidate ledger unavailable or candidate is already reserved") from None
     return {"candidate_state": "unverified_candidate", "created": True,
             "approved": False, "live_sync": False, "reconciled": False}
