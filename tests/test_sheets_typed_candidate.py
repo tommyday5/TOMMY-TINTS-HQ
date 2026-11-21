@@ -122,3 +122,34 @@ class TypedCandidateChecks(unittest.TestCase):
         wrong["range"] = "Jobs!A4:AJ6"
         with self.assertRaisesRegex(ValueError, "exact"):
             verify_unformatted_candidate(snap, wrong, candidate_row=5)
+
+    def test_complete_grid_typed_candidate_requires_three_consistent_reads(self):
+        snap = typed_fixture()
+        snap["sheets"][0]["data"][0]["rowData"].append(
+            {"values": [{"userEnteredValue": {"stringValue": "J0082"}}]})
+        raw_price = ["J0077"] + [""] * 15 + [100, True]
+        rendered_price = ["J0077"] + [""] * 15 + ["£100.00", True]
+        formula = {"range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
+                   "values": [["Job ID"], rendered_price, [], ["J0082"]]}
+        unformatted = {"range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
+                       "values": [["Job ID"], raw_price, [], ["J0082"]]}
+        responses = []
+        for value in (snap, formula, unformatted):
+            response = Mock()
+            response.json.return_value = value
+            responses.append(response)
+        with patch("hq_sheets_live.requests.get", side_effect=responses) as get:
+            checked = read_job_link_snapshot("synthetic-token", selected_row=5)
+        self.assertEqual(get.call_count, 3)
+        self.assertFalse(preflight_job_link(
+            checked, job_ref="J0077", target_row=5,
+            mode="existing")["write_authorised"])
+        unformatted["values"][1][16] = 101
+        responses = []
+        for value in (snap, formula, unformatted):
+            response = Mock()
+            response.json.return_value = value
+            responses.append(response)
+        with patch("hq_sheets_live.requests.get", side_effect=responses):
+            with self.assertRaisesRegex(ValueError, "numeric input changed"):
+                read_job_link_snapshot("synthetic-token", selected_row=5)

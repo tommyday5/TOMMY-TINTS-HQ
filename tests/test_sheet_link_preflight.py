@@ -326,3 +326,52 @@ class SheetLinkPreflightTests(unittest.TestCase):
         self.assertEqual(
             self.check(completed, job_ref="J0077", row=5, mode="existing")[
                 "preflight"], "sheet_snapshot_only")
+
+    def test_complete_grid_also_requires_second_formula_read(self):
+        from hq_sheets_live import read_job_link_snapshot
+        snap = fixture()  # All Jobs rows were returned by the first read.
+        formula = {
+            "range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
+            "values": [["Job ID"], ["J0077"], [], ["J0082"]],
+        }
+        raw_response, formula_response = Mock(), Mock()
+        raw_response.json.return_value = snap
+        formula_response.json.return_value = formula
+        with patch("hq_sheets_live.requests.get",
+                   side_effect=[raw_response, formula_response]) as get:
+            inspected = read_job_link_snapshot("synthetic-token", selected_row=6)
+        self.assertEqual(get.call_count, 2)
+        self.assertEqual(
+            dict(get.call_args.kwargs["params"])["valueRenderOption"], "FORMULA")
+        self.assertEqual(self.check(inspected)["preflight"], "sheet_snapshot_only")
+        self.assertFalse(self.check(inspected)["baseline_verified"])
+
+    def test_complete_grid_rejects_changes_without_missing_tail(self):
+        from hq_sheets_live import read_job_link_snapshot
+        for changed_row in (
+            ["", "", "Changed customer"],
+            ["", '=IF(FALSE,"test","")'],
+            ["J0084"],
+        ):
+            with self.subTest(changed_row=changed_row):
+                raw, formula = Mock(), Mock()
+                raw.json.return_value = fixture()
+                formula.json.return_value = {
+                    "range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
+                    "values": [["Job ID"], ["J0077"], changed_row, ["J0082"]],
+                }
+                with patch("hq_sheets_live.requests.get",
+                           side_effect=[raw, formula]) as get:
+                    with self.assertRaises(ValueError):
+                        read_job_link_snapshot("synthetic-token", selected_row=6)
+                self.assertEqual(get.call_count, 2)
+
+    def test_complete_grid_second_read_failure_blocks_preflight(self):
+        from hq_sheets_live import read_job_link_snapshot
+        raw = Mock()
+        raw.json.return_value = fixture()
+        with patch("hq_sheets_live.requests.get",
+                   side_effect=[raw, RuntimeError("fixture provider failure")]) as get:
+            with self.assertRaisesRegex(RuntimeError, "fixture provider failure"):
+                read_job_link_snapshot("synthetic-token", selected_row=6)
+        self.assertEqual(get.call_count, 2)

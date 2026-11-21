@@ -529,3 +529,23 @@ The comparison now re-reads the authoritative HQ job after inspecting the cached
 `hq_offline_square_payouts.py` adds a **pure, synthetic canonical-input validator** and explicit owner-proposed one-to-one Square payout/Monzo bank comparison. Canonical Square event rows require location/payout/event IDs, GBP, exact signed integer pence, payment IDs for payment-related events, event types, fee/net arithmetic and timezone-aware timestamps. Identical replayed events are deduplicated; conflicting events, altered in-memory canonical evidence, mixed locations, invalid fee/refund signs, duplicate proposed bank entries, zero-net transfers and impossible payout-before-event posting sequences are blocked. The comparison emits **counts only**, not money, customer identities or proposed matching references. Even when the amounts match, `bank_receipt_verified`, `bank_settlement_verified`, `job_payment_verified` and `reconciled` remain **false**.
 
 **No Square payout/export format has been verified.** This is not a Square API adapter, live ingest, bank connection, settlement confirmation, fee report, customer account or financial write. It does not automatically map GetPayment evidence to payouts, and cannot establish completeness across late refunds or historical settlements. Square and Monzo connection readiness stages **do not advance**. Before using real rows: verify the authorised Square payout/entry schema and source location, obtain a genuine Monzo bank export with independently verified account scope, document immutable event IDs and signed units, inspect held/failed payouts, and design owner-approved encrypted staging with durable audit and restore. Then reconcile actual bank entries and reviewed job allocations independently. No provider call, existing snapshot, job or bank value was changed.
+
+### Complete Jobs GridData independent consistency screening (21 November 2026; read-only)
+
+The owner-triggered Google Sheets historical/new job-link preflight now performs
+an independent `FORMULA`-rendered A:AJ values read **even when the first raw
+GridData response already contains every Jobs row**. Previously, the second
+source consistency check ran only when Google omitted trailing blank rows.
+The second read rechecks all job references and the selected row's mapped
+blank/literal/formula inputs. When selected mapped input cells contain numbers
+or booleans, a further `UNFORMATTED_VALUE` read verifies those exact typed
+values and rechecks references and selected mapped inputs. A changed field,
+new formula, replaced job reference, malformed response or failed provider
+read blocks the entire inspection instead of returning a candidate.
+
+This adds read-only race detection, **not** an atomic Google Sheets snapshot,
+lock, revision token, historical HQ-to-J identity approval or write baseline.
+Changes immediately after the final read remain possible. Genuine owner
+workbook access, B:E mapping verification, current work identity, explicit
+write authorisation and independent restoration controls remain outstanding.
+No Jobs cells, HQ links, customer records or financial balances are written.

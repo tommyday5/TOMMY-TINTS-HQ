@@ -79,9 +79,10 @@ def _text(value, label):
 def complete_trailing_blank_rows(snapshot, value_range, *, candidate_row):
     """Pad an omitted GridData tail only with independent, exact-range evidence.
 
-    Google's values API omits trailing empty rows. A second FORMULA-rendered
-    A:AJ read can establish that no non-empty input or job reference occurs
-    after the GridData tail. Never use this to approve a candidate row absent
+    Google's values API omits trailing empty rows. An independent FORMULA-
+    rendered A:AJ read checks references and selected mapped inputs even if
+    GridData is complete; when GridData omits the trailing blank rows, the
+    same read must also establish the absence of populated tail rows. Never use this to approve a candidate row absent
     from the original *raw* GridData: an entered empty string could otherwise
     look blank in the values API. This is an advisory read, not a write lock.
     """
@@ -116,8 +117,6 @@ def complete_trailing_blank_rows(snapshot, value_range, *, candidate_row):
     expected = count - FIRST_HEADER_ROW + 1
     if not isinstance(rows, list) or not 1 <= len(rows) <= expected:
         raise ValueError("Invalid Jobs GridData coverage")
-    if len(rows) == expected:
-        return snapshot
     if (type(candidate_row) is not int or
             not FIRST_DATA_ROW <= candidate_row <= FIRST_HEADER_ROW + len(rows) - 1):
         raise ValueError("Candidate row has no raw GridData cell evidence")

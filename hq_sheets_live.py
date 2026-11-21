@@ -106,10 +106,11 @@ def read_job_link_snapshot(access_token, *, selected_row):
     snapshot = response.json()
     if not isinstance(snapshot, dict):
         raise ValueError("Malformed Jobs GridData evidence")
-    # Sheets GridData can omit trailing blank RowData entries. Only when the
-    # *chosen* candidate already has complete raw cell evidence can a second,
-    # explicit FORMULA-rendered values read prove the missing A:AJ tail has no
-    # data. Never infer blank candidate input cells from trimmed values.
+    # Always independently compare the full reference scan and the chosen
+    # mapped inputs against a FORMULA-rendered read, including when GridData
+    # returns the full row count. Google may also trim trailing blank RowData;
+    # in that case the candidate must already have raw GridData evidence, and
+    # the second read must prove the omitted A:AJ tail is blank.
     sheets = snapshot.get("sheets")
     if not isinstance(sheets, list) or len(sheets) != 1:
         return snapshot
@@ -126,10 +127,11 @@ def read_job_link_snapshot(access_token, *, selected_row):
     count = grid.get("rowCount")
     rows = blocks[0].get("rowData")
     if (type(count) is not int or not FIRST_HEADER_ROW < count <= MAX_ROWS
-            or not isinstance(rows, list) or len(rows) >= count - FIRST_HEADER_ROW + 1):
+            or not isinstance(rows, list) or
+            not 1 <= len(rows) <= count - FIRST_HEADER_ROW + 1):
         return snapshot
     if (type(selected_row) is not int or
-            selected_row > FIRST_HEADER_ROW + len(rows) - 1):
+            not FIRST_HEADER_ROW < selected_row <= FIRST_HEADER_ROW + len(rows) - 1):
         # Fail closed in the existing preflight without a second provider call.
         return snapshot
     tail_response = requests.get(
