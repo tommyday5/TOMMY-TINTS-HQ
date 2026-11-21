@@ -113,12 +113,12 @@ class NativeVehicleEditTests(unittest.TestCase):
         self.assertEqual(native_vehicle_record(self.vehicle_id)["registration"], "AB22 AAA")
         self.assertNotEqual(native_vehicle_record(other_vehicle)["customer_id"],
                             native_vehicle_record(self.vehicle_id)["customer_id"])
+        customer_before = native_vehicle_record(self.vehicle_id)["customer_id"]
         self.assertEqual(self.client.post(self.path, data={
             **self.form, "customer_id": native_vehicle_record(other_vehicle)["customer_id"]
         }).status_code, 303)
         # Unknown extra form fields cannot reassign a vehicle to another customer.
-        self.assertEqual(native_vehicle_record(self.vehicle_id)["customer_id"],
-                         self.work["customer_id"] or read_work_record(self.work_id)["customer_id"] if "customer_id" in read_work_record(self.work_id) else native_vehicle_record(self.vehicle_id)["customer_id"])
+        self.assertEqual(native_vehicle_record(self.vehicle_id)["customer_id"], customer_before)
 
     def test_approved_job_preserves_historical_vehicle_details(self):
         self.login()
@@ -163,8 +163,7 @@ class NativeVehicleEditTests(unittest.TestCase):
                                 (work_id,)).fetchone()["vehicle_id"]
         self.assertNotEqual(linked, vehicle_id)
         self.assertEqual(self.client.get("/hq/vehicles/" + linked + "/edit").status_code, 200)
-        self.client.get("/auth/logout")
-        # Explicitly clear owner session, even when logout route behaviour evolves.
+        # Clear owner session to prove the public route cannot access the editor.
         with self.client.session_transaction() as sess:
             sess.clear()
         self.assertEqual(self.client.get("/hq/vehicles/" + linked + "/edit").status_code, 302)
