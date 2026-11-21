@@ -30,7 +30,7 @@ def fixture():
                     {"values": [cell(title) for title in headings]},
                     {"values": [cell("J0077"), {}, cell("Synthetic customer")]
                      + [{} for _ in range(13)]
-                     + [{"userEnteredValue": {"numberValue": 270}}],
+                     + [{"userEnteredValue": {"numberValue": 270}}]},
                     {"values": []},
                     {"values": [cell("J0082")]},
                 ],
