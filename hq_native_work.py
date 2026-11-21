@@ -280,7 +280,7 @@ def update_native_work(work_id, payload, expected_revision):
     return revision
 
 
-def _choices(search=""):
+def _choices(search="", highlighted_id=""):
     if not isinstance(search, str) or len(search) > 80:
         raise ValueError("Customer search is too long")
     with connect() as db:
@@ -294,6 +294,14 @@ def _choices(search=""):
         customers = [dict(r) for r in db.execute(
             "SELECT id,name,email,phone FROM hq_customers " + predicate
             + " ORDER BY name,id LIMIT 100", params)]
+        # A profile deep-link must still find its customer beyond the first 100.
+        # It never changes existing contact data or silently links another customer.
+        if highlighted_id and not any(c["id"] == highlighted_id for c in customers):
+            selected = db.execute("SELECT id,name,email,phone FROM hq_customers WHERE id=?",
+                                  (highlighted_id,)).fetchone()
+            if selected is None:
+                raise LookupError("HQ customer not found")
+            customers.insert(0, dict(selected))
         ids = [row["id"] for row in customers]
         vehicles = []
         if ids:
@@ -315,11 +323,18 @@ def private_no_cache(response):
 def new_work():
     if request.method == "GET":
         search = request.args.get("q", "")
+        preferred_customer = request.args.get("customer_id", "")
+        if preferred_customer and not HEX_ID.fullmatch(preferred_customer):
+            abort(404)
         try:
-            customers, vehicles = _choices(search)
+            customers, vehicles = _choices(search, preferred_customer)
         except ValueError:
             abort(400)
-        return render_template("native_work.html", new=True, values={}, csrf=session["csrf"],
+        except LookupError:
+            abort(404)
+        return render_template("native_work.html", new=True,
+                               values={"customer_id": preferred_customer} if preferred_customer else {},
+                               csrf=session["csrf"],
                                operation_id=uuid.uuid4().hex, customers=customers,
                                vehicles=vehicles, search=search, services=sorted(SERVICES),
                                tiers=TIERS, error=None)
