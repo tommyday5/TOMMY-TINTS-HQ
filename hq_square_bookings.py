@@ -84,9 +84,22 @@ def refresh_bookings():
         path = _path()
         path.parent.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(path, timeout=5)) as db, db:
+            # Keep the version check and UPSERT in one writer transaction.
+            # A provider replay with the SAME version but different booking
+            # status/time is contradictory evidence, not a new appointment.
+            # Abort the whole refresh before applying any other rows.
+            db.execute("BEGIN IMMEDIATE")
             db.execute("""CREATE TABLE IF NOT EXISTS bookings (
                 location TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL,
                 status TEXT NOT NULL, start_at TEXT NOT NULL, PRIMARY KEY(location, id))""")
+            for scoped_location, ref, version, status, start_at in rows:
+                previous = db.execute(
+                    "SELECT version,status,start_at FROM bookings WHERE location=? AND id=?",
+                    (scoped_location, ref)).fetchone()
+                if (previous is not None and previous[0] == version
+                        and (previous[1] != status or previous[2] != start_at)):
+                    raise RuntimeError(
+                        "Square returned conflicting evidence for an unchanged booking version")
             changed = db.executemany("""INSERT INTO bookings VALUES (?,?,?,?,?)
                 ON CONFLICT(location,id) DO UPDATE SET
                 version=excluded.version, status=excluded.status, start_at=excluded.start_at
