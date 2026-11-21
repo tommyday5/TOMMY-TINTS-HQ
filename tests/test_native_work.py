@@ -144,8 +144,9 @@ class NativeWorkTests(unittest.TestCase):
         first = self.post()
         self.assertEqual(first.status_code, 303)
         row = list_work_records()[0]
+        vehicle_id = native_work_record(row["id"])["vehicle_id"]
         chosen = {**self.payload, "operation_id": uuid.uuid4().hex,
-                  "customer_id": row["customer_id"], "vehicle_id": row["vehicle_id"],
+                  "customer_id": row["customer_id"], "vehicle_id": vehicle_id,
                   "customer_name": "", "email": "", "phone": "",
                   "make": "", "model": "", "model_year": "", "registration": "",
                   "kind": "job", "customer_tier": "maintenance"}
