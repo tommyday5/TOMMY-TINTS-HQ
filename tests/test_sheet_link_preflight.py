@@ -34,6 +34,14 @@ def fixture():
     }
 
 
+def rendered_header():
+    """Google Values API returns the complete, currently mapped header row."""
+    cells = fixture()["sheets"][0]["data"][0]["rowData"][0]["values"]
+    return [cell.get("userEnteredValue", {}).get("stringValue", "")
+            for cell in cells]
+
+
+
 class SheetLinkPreflightTests(unittest.TestCase):
     def check(self, snap=None, *, job_ref="J0083", row=6, mode="new"):
         return preflight_job_link(
@@ -187,7 +195,7 @@ class SheetLinkPreflightTests(unittest.TestCase):
         snap["sheets"][0]["data"][0]["rowData"].pop()
         values = {
             "range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
-            "values": [["Job ID"], ["J0077"]],
+            "values": [rendered_header(), ["J0077"]],
         }
         first = Mock()
         first.json.return_value = snap
@@ -223,15 +231,15 @@ class SheetLinkPreflightTests(unittest.TestCase):
         snap["sheets"][0]["data"][0]["rowData"].pop()
         cases = (
             {"range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
-             "values": [["Job ID"], ["J0077"], [], ["J0083"]]},
+             "values": [rendered_header(), ["J0077"], [], ["J0083"]]},
             {"range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
-             "values": [["Job ID"], ["J0099"]]},
+             "values": [rendered_header(), ["J0099"]]},
             {"range": "Jobs!A4:AJ6", "majorDimension": "ROWS",
-             "values": [["Job ID"], ["J0077"]]},
+             "values": [rendered_header(), ["J0077"]]},
             {"range": "Jobs!A4:AJ7", "majorDimension": "COLUMNS",
-             "values": [["Job ID"], ["J0077"]]},
+             "values": [rendered_header(), ["J0077"]]},
             {"range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
-             "values": [["Job ID"], ["J0077"], [], ["=NOW()"]]},
+             "values": [rendered_header(), ["J0077"], [], ["=NOW()"]]},
         )
         for bad in cases:
             with self.subTest(bad=bad), self.assertRaises(ValueError):
@@ -252,7 +260,7 @@ class SheetLinkPreflightTests(unittest.TestCase):
             with self.subTest(candidate_values=candidate_values):
                 second = {
                     "range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
-                    "values": [["Job ID"], ["J0077"], candidate_values],
+                    "values": [rendered_header(), ["J0077"], candidate_values],
                 }
                 with self.assertRaisesRegex(ValueError, "Candidate input changed"):
                     complete_trailing_blank_rows(snap, second, candidate_row=6)
@@ -265,7 +273,7 @@ class SheetLinkPreflightTests(unittest.TestCase):
         # customer field has changed between the two provider reads.
         second = {
             "range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
-            "values": [["Job ID"], ["J0077", "", "Private customer"]],
+            "values": [rendered_header(), ["J0077", "", "Private customer"]],
         }
         with self.assertRaisesRegex(ValueError, "Candidate input changed"):
             complete_trailing_blank_rows(snap, second, candidate_row=5)
@@ -301,7 +309,7 @@ class SheetLinkPreflightTests(unittest.TestCase):
             with self.subTest(candidate=candidate):
                 second = {
                     "range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
-                    "values": [["Job ID"], ["J0077", "", candidate]],
+                    "values": [rendered_header(), ["J0077", "", candidate]],
                 }
                 with self.assertRaisesRegex(ValueError, "Candidate input changed"):
                     complete_trailing_blank_rows(snap, second, candidate_row=5)
@@ -320,7 +328,7 @@ class SheetLinkPreflightTests(unittest.TestCase):
         observed = ["J0077", "", "Original customer"] + [""] * 13 + ["£100.00"]
         second = {
             "range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
-            "values": [["Job ID"], observed],
+            "values": [rendered_header(), observed],
         }
         completed = complete_trailing_blank_rows(snap, second, candidate_row=5)
         self.assertEqual(
@@ -332,7 +340,7 @@ class SheetLinkPreflightTests(unittest.TestCase):
         snap = fixture()  # All Jobs rows were returned by the first read.
         formula = {
             "range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
-            "values": [["Job ID"], ["J0077"], [], ["J0082"]],
+            "values": [rendered_header(), ["J0077"], [], ["J0082"]],
         }
         raw_response, formula_response = Mock(), Mock()
         raw_response.json.return_value = snap
@@ -358,7 +366,7 @@ class SheetLinkPreflightTests(unittest.TestCase):
                 raw.json.return_value = fixture()
                 formula.json.return_value = {
                     "range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
-                    "values": [["Job ID"], ["J0077"], changed_row, ["J0082"]],
+                    "values": [rendered_header(), ["J0077"], changed_row, ["J0082"]],
                 }
                 with patch("hq_sheets_live.requests.get",
                            side_effect=[raw, formula]) as get:
