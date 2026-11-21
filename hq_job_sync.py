@@ -36,6 +36,12 @@ def enqueue(db, work_id, revision):
                    (work_id,)).fetchone()
     if not row or row['source_request_id'].startswith('TEST-'):
         return
+    # New native HQ records are authoritative locally only; do not imply a
+    # Google Sheets export until an explicit, verified link exists.
+    if row['source_request_id'].startswith('HQ-') and not db.execute(
+        'SELECT 1 FROM hq_job_sheet_links WHERE work_id=?', (work_id,)
+    ).fetchone():
+        return
     if revision > row['revision']:
         raise ValueError('Cannot queue a Sheets revision that has not been saved')
     if revision < row['revision']:

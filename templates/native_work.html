@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>{% if new %}Create HQ work{% else %}Edit HQ work{% endif %} — Tommy Tints</title>
+<style>
+:root{color-scheme:dark;font-family:Inter,system-ui,sans-serif;background:#090a0f;color:#f4f5f7}
+*{box-sizing:border-box}body{margin:0;padding:clamp(14px,4vw,34px)}
+main{max-width:900px;margin:auto}.panel{background:#181b21;border:1px solid #3b3d43;border-radius:15px;padding:clamp(14px,3vw,28px);margin:16px 0}
+h1{font-size:clamp(23px,4vw,34px)}h2{font-size:19px;margin-bottom:8px}
+p,.hint{color:#b5bac5;line-height:1.5}.notice{padding:12px 15px;border-left:4px solid #f2cb24;background:#302719}
+.error{padding:12px 15px;border-left:4px solid #ff5f68;background:#401b23}
+.success{padding:12px 15px;border-left:4px solid #7ed99f;background:#1a3227}
+a{color:#ff727c}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+label{display:block;font-weight:650;margin:12px 0 5px}input,select,textarea{background:#0d1118;border:1px solid #555962;border-radius:8px;color:white;padding:12px;width:100%;font:inherit;min-width:0}
+textarea{resize:vertical}button,.button{display:inline-block;background:#da132b;border:1px solid #ff314a;color:white;font:inherit;font-weight:700;padding:11px 16px;border-radius:8px;cursor:pointer;text-decoration:none}
+button:disabled{opacity:.55;cursor:not-allowed}.secondary{background:#272b33;border-color:#575b65}
+.actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.fieldset{border:0;margin:0;padding:0}
+@media(max-width:600px){.grid{grid-template-columns:1fr}body{padding:12px}}
+</style>
+</head>
+<body><main>
+<p><a href="/?page=jobs">← Back to HQ job cards</a></p>
+<h1>{% if new %}Create a native HQ quote or job{% else %}Edit HQ work {{ record.id[:10] }}{% endif %}</h1>
+<p>Saved directly to the private HQ database. The Google Sheets workbook stays unchanged. A preferred date is <strong>not</strong> a confirmed booking; a planned deposit is <strong>not</strong> a payment.</p>
+{% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+{% if not new and request.args.get("created") == "1" %}<div class="success" role="status">Native HQ record created and saved. Reload this page to verify persistence.</div>{% endif %}
+{% if not new and request.args.get("saved") == "1" %}<div class="success" role="status">Draft details saved successfully.</div>{% endif %}
+{% if new %}
+<div class="panel">
+<h2>Find an existing HQ customer</h2>
+<form action="/hq/work/new" method="get" class="actions">
+<label for="customerSearch">Search by name, email or telephone</label>
+<input id="customerSearch" name="q" maxlength="80" value="{{ search }}" placeholder="Search saved HQ customers">
+<button class="secondary" type="submit">Find customer</button>
+</form><p class="hint">Showing up to 100 matches. Existing customer and vehicle records are reused rather than duplicated. Search before creating a second contact.</p>
+</div>
+{% else %}
+<div class="panel">
+<h2>Linked customer and vehicle</h2>
+<p><strong>{{ record.customer_name }}</strong> · {{ record.email }} · {{ record.phone }}</p>
+<p>{{ record.make }} {{ record.model }} {{ record.model_year }} · {{ record.registration }}</p>
+<p>HQ work ID <code>{{ record.id }}</code> · {{ record.kind }} · {{ record.status }} · revision {{ record.revision }}</p>
+<p><a href="/hq/customers/{{ record.customer_id }}/edit">Edit linked customer/contact/address</a> · <a href="/?page=jobs">Review price, approval and costing in job cards</a></p>
+</div>
+{% endif %}
+<form class="panel" method="post" action="{% if new %}/hq/work/new{% else %}/hq/work/{{ record.id }}/edit{% endif %}">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+{% if new %}
+<input type="hidden" name="operation_id" value="{{ operation_id }}">
+<h2>1. Customer and vehicle</h2>
+<div class="grid">
+<div><label for="customerId">Customer</label><select name="customer_id" id="customerId">
+<option value="">＋ Create new customer</option>
+{% for c in customers %}
+<option value="{{ c.id }}" {% if values.get("customer_id") == c.id %}selected{% endif %}>{{ c.name }}{% if c.email %} — {{ c.email }}{% endif %}</option>
+{% endfor %}
+</select></div>
+<div><label for="vehicleId">Existing vehicle (optional)</label><select name="vehicle_id" id="vehicleId">
+<option value="">＋ Add new vehicle</option>
+{% for vehicle in vehicles %}
+<option data-customer="{{ vehicle.customer_id }}" value="{{ vehicle.id }}" {% if values.get("vehicle_id") == vehicle.id %}selected{% endif %}>{{ vehicle.make }} {{ vehicle.model }} — {{ vehicle.registration or "Registration not recorded" }}</option>
+{% endfor %}
+</select></div>
+</div>
+<fieldset class="fieldset" id="newCustomerFields"><h2>New customer details</h2>
+<div class="grid">
+<div><label for="customerName">Name</label><input id="customerName" name="customer_name" maxlength="160" value="{{ values.get('customer_name','') }}"></div>
+<div><label for="customerEmail">Email</label><input id="customerEmail" name="email" type="email" maxlength="254" value="{{ values.get('email','') }}"></div>
+<div><label for="customerPhone">Phone</label><input id="customerPhone" name="phone" type="tel" maxlength="40" value="{{ values.get('phone','') }}"></div>
+</div><p class="hint">For a new customer, provide a name and at least one contact method.</p></fieldset>
+<fieldset class="fieldset" id="newVehicleFields"><h2>New vehicle</h2>
+<div class="grid">
+<div><label for="make">Make</label><input id="make" name="make" maxlength="60" value="{{ values.get('make','') }}"></div>
+<div><label for="model">Model</label><input id="model" name="model" maxlength="60" value="{{ values.get('model','') }}"></div>
+<div><label for="modelYear">Year (optional)</label><input id="modelYear" name="model_year" inputmode="numeric" maxlength="4" value="{{ values.get('model_year','') }}"></div>
+<div><label for="registration">Registration (optional)</label><input id="registration" name="registration" maxlength="20" value="{{ values.get('registration','') }}"></div>
+</div></fieldset>
+<h2>2. Work type</h2>
+<label for="kind">Create as</label><select id="kind" name="kind">
+<option value="quote" {% if values.get('kind','quote') == "quote" %}selected{% endif %}>Quote — approval required</option>
+<option value="job" {% if values.get('kind') == "job" %}selected{% endif %}>Job draft — not booked</option>
+</select>
+{% else %}
+<input type="hidden" name="revision" value="{{ record.revision }}">
+{% endif %}
+<h2>{% if new %}3.{% endif %} Work details</h2>
+{% set locked = not new and record.status not in ('draft','ready_for_review') %}
+<div class="grid">
+<div><label for="customerTier">Customer pricing tier</label>
+<select id="customerTier" name="customer_tier" {% if locked %}disabled{% endif %}>
+{% for key,label in tiers.items() %}
+{% set choice = values.get('customer_tier', 'retail' if new else record.customer_tier) %}
+<option value="{{ key }}" {% if choice == key %}selected{% endif %}>{{ label }}</option>
+{% endfor %}
+</select>
+<p class="hint">Classification only; no unverified tier prices are calculated automatically.</p></div>
+<div><label for="service">Service category</label>
+<select id="service" name="service" {% if locked %}disabled{% endif %}>
+{% for service in services %}
+{% set choice = values.get('service', '' if new else record.service) %}
+<option value="{{ service }}" {% if service == choice %}selected{% endif %}>{{ service }}</option>
+{% endfor %}
+</select></div>
+<div><label for="preferredDate">Requested date (optional)</label>
+<input type="date" name="preferred_date" id="preferredDate" value="{{ values.get('preferred_date', '' if new else record.preferred_date) }}" {% if locked %}disabled{% endif %}></div>
+<div><label for="preferredTime">Requested time (optional)</label>
+<input type="time" name="preferred_time" id="preferredTime" value="{{ values.get('preferred_time', '' if new else record.preferred_time) }}" {% if locked %}disabled{% endif %}></div>
+</div>
+<label for="notes">Scope and internal notes</label>
+<textarea id="notes" name="notes" maxlength="1500" rows="5" {% if locked %}disabled{% endif %}>{{ values.get('notes', '' if new else record.notes) }}</textarea>
+{% if locked %}
+<div class="notice">This record is {{ record.status }}. The approved scope is locked; manage its workflow in HQ job cards. No values will be changed here.</div>
+{% else %}
+<p class="notice">Prices and deposits can be added from the job card after saving. These are draft estimates only. Nothing is sent, booked, charged or synced to Google Sheets.</p>
+<button type="submit">{% if new %}Save new HQ record{% else %}Save draft changes{% endif %}</button>
+{% endif %}
+</form>
+{% if new %}
+<script>
+(() => {
+ const customer=document.getElementById("customerId");
+ const vehicle=document.getElementById("vehicleId");
+ const newCustomer=document.getElementById("newCustomerFields");
+ const newVehicle=document.getElementById("newVehicleFields");
+ function update(){
+  const existingCustomer=!!customer.value;
+  newCustomer.hidden=existingCustomer;
+  for(const input of newCustomer.querySelectorAll("input")){
+   input.disabled=existingCustomer;
+  }
+  for(const option of vehicle.options){
+   if(!option.value)continue;
+   option.disabled=option.dataset.customer!==customer.value;
+  }
+  if(vehicle.selectedOptions[0]?.disabled)vehicle.value="";
+  const existingVehicle=!!vehicle.value;
+  newVehicle.hidden=existingVehicle;
+  for(const input of newVehicle.querySelectorAll("input")){
+   input.disabled=existingVehicle;
+  }
+ }
+ customer.addEventListener("change",update);
+ vehicle.addEventListener("change",update);
+ update();
+})();
+</script>
+{% endif %}
+</main></body></html>

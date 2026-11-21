@@ -151,3 +151,8 @@ The inspector UI is now present, so the older description above of the pure help
 ### Third-read mapped-input drift protection (21 November 2026)
 
 The trailing-row inspector's optional final `UNFORMATTED_VALUE` read now rechecks **blank and literal** mapped inputs as well as numeric/boolean values. This closes a synthetic-tested gap where a Customer, Service or Status change after the second read could be overlooked while the Job ID and entered prices remained the same. Changed or deleted literal text, newly filled input fields and original input formulas now block the preflight. A final unformatted read still cannot detect every formula evaluating to an empty string, nor prevent a change after inspection. This is non-atomic advisory screening only; live historical links, write authorisation, targeted writes and end-to-end job synchronisation remain disabled.
+
+
+## Native HQ owner creation note — 21 November 2026
+
+Owner-created native HQ quote/job drafts may now be created without a public enquiry via /hq/work/new and edited while unapproved. These newly created records are deliberately **not** auto-exported or queued to Sheets until linked against verified source evidence and explicitly authorised. Existing J-series job IDs remain untouched; native records use HQ-UUID source identifiers and existing HQ UUID primary keys. Historical source-of-truth and migration status are tracked in docs/native-hq-ownership.md. Planned deposits, completion and approval must not be presented as verified receipts.

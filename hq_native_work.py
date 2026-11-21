@@ -1,0 +1,365 @@
+"""Owner-only native HQ customer/job creation and draft editing.
+
+Local SQLite on HQ_DATA_DIR is the only write destination. This intentionally
+does not import, reserve a J-series Sheets ID or make an external booking.
+"""
+import hashlib
+import hmac
+import json
+import re
+import secrets
+import sqlite3
+import uuid
+from datetime import date, datetime, timezone
+
+from flask import Blueprint, abort, current_app, redirect, render_template, request, session, url_for
+from customer_request_store import SERVICES, connect
+from hq_auth import required
+from hq_core_records import _audit_work, _schema, StaleWorkRecordError
+
+native_work = Blueprint("native_work", __name__)
+TIERS = {"retail": "Retail", "trade": "Trade", "maintenance": "Maintenance"}
+HEX_ID = re.compile(r"[0-9a-f]{32}\Z")
+EMAIL = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+\Z")
+PHONE = re.compile(r"[+0-9 ()-]{7,35}\Z")
+
+
+def _now():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _tables(db):
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_native_work_details(
+        work_id TEXT PRIMARY KEY REFERENCES hq_work_records(id),
+        customer_tier TEXT NOT NULL CHECK(customer_tier IN ('retail','trade','maintenance')),
+        created_at TEXT NOT NULL)""")
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_native_work_operations(
+        operation_id TEXT PRIMARY KEY, work_id TEXT NOT NULL UNIQUE,
+        payload_fingerprint TEXT NOT NULL, created_at TEXT NOT NULL)""")
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_native_work_events(
+        id TEXT PRIMARY KEY, work_id TEXT NOT NULL, action TEXT NOT NULL,
+        revision INTEGER NOT NULL, created_at TEXT NOT NULL)""")
+
+
+def _field(payload, name, limit, required=False):
+    value = payload.get(name, "")
+    if not isinstance(value, str):
+        raise ValueError("Invalid " + name)
+    value = value.strip()
+    if len(value) > limit or (required and not value):
+        raise ValueError("Missing or oversized " + name)
+    return value
+
+
+def _edit_fields(payload):
+    service = _field(payload, "service", 80, True)
+    if service not in SERVICES:
+        raise ValueError("Choose a supported service")
+    tier = _field(payload, "customer_tier", 15, True)
+    if tier not in TIERS:
+        raise ValueError("Choose Retail, Trade or Maintenance")
+    preferred_date = _field(payload, "preferred_date", 10)
+    preferred_time = _field(payload, "preferred_time", 5)
+    if preferred_date:
+        try:
+            if date.fromisoformat(preferred_date).isoformat() != preferred_date:
+                raise ValueError()
+        except ValueError:
+            raise ValueError("Enter a valid date in YYYY-MM-DD format")
+    if preferred_time:
+        if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", preferred_time):
+            raise ValueError("Enter a valid time in HH:MM format")
+    return {
+        "service": service, "customer_tier": tier,
+        "notes": _field(payload, "notes", 1500),
+        "preferred_date": preferred_date, "preferred_time": preferred_time,
+    }
+
+
+def _create_fields(payload):
+    values = _edit_fields(payload)
+    kind = _field(payload, "kind", 5, True)
+    if kind not in {"job", "quote"}:
+        raise ValueError("Choose a quote or job")
+    operation_id = _field(payload, "operation_id", 32, True)
+    if not HEX_ID.fullmatch(operation_id):
+        raise ValueError("Invalid operation identifier")
+    customer_id = _field(payload, "customer_id", 32)
+    vehicle_id = _field(payload, "vehicle_id", 32)
+    if (customer_id and not HEX_ID.fullmatch(customer_id)) or (
+        vehicle_id and not HEX_ID.fullmatch(vehicle_id)
+    ):
+        raise ValueError("Invalid customer or vehicle reference")
+    if vehicle_id and not customer_id:
+        raise ValueError("An existing vehicle requires its customer")
+    values.update({
+        "kind": kind, "operation_id": operation_id,
+        "customer_id": customer_id, "vehicle_id": vehicle_id,
+        "customer_name": _field(payload, "customer_name", 160),
+        "email": _field(payload, "email", 254).casefold(),
+        "phone": _field(payload, "phone", 40),
+        "make": _field(payload, "make", 60), "model": _field(payload, "model", 60),
+        "model_year": _field(payload, "model_year", 4),
+        "registration": _field(payload, "registration", 20).upper(),
+    })
+    if not customer_id:
+        if not values["customer_name"] or not (values["email"] or values["phone"]):
+            raise ValueError("New customers need a name and an email or telephone number")
+        if values["email"] and not EMAIL.fullmatch(values["email"]):
+            raise ValueError("Enter a valid customer email")
+        if values["phone"] and not PHONE.fullmatch(values["phone"]):
+            raise ValueError("Enter a valid customer telephone number")
+    elif any(values[k] for k in ("customer_name", "email", "phone")):
+        raise ValueError("Choose an existing customer or enter a new one, not both")
+    if vehicle_id:
+        if any(values[k] for k in ("make", "model", "model_year", "registration")):
+            raise ValueError("Choose an existing vehicle or enter a new one, not both")
+    else:
+        if not values["make"] or not values["model"]:
+            raise ValueError("Enter the new vehicle's make and model")
+        year = values["model_year"]
+        if year and (not year.isascii() or not year.isdecimal()
+                     or len(year) != 4 or not 1950 <= int(year) <= date.today().year + 1):
+            raise ValueError("Enter a valid vehicle year or leave it blank")
+    return values
+
+
+def _fingerprint(values):
+    # Use the configured stable server secret: do not duplicate customer PII in
+    # the idempotency journal, and do not expose the fingerprint to the browser.
+    secret = current_app.secret_key
+    if not isinstance(secret, str) or not secret:
+        raise RuntimeError("HQ session secret not configured")
+    raw = json.dumps(values, sort_keys=True, separators=(",", ":")).encode()
+    return hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+
+
+def create_native_work(payload):
+    """Atomic owner-requested CREATE: new/existing customer, vehicle, quote/job.
+
+    Same operation and payload returns one ID, conflicting replay fails closed.
+    Never mutates an existing customer, external workbook or provider.
+    """
+    fields = _create_fields(payload)
+    fingerprint = _fingerprint(fields)
+    with connect() as db:
+        db.execute("PRAGMA foreign_keys=ON")
+        _schema(db)
+        _tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        prior = db.execute("""SELECT work_id,payload_fingerprint
+            FROM hq_native_work_operations WHERE operation_id=?""",
+            (fields["operation_id"],)).fetchone()
+        if prior:
+            if not hmac.compare_digest(prior["payload_fingerprint"], fingerprint):
+                raise StaleWorkRecordError("This form was already submitted with different details. Start a new draft.")
+            return prior["work_id"]
+        customer_id = fields["customer_id"]
+        vehicle_id = fields["vehicle_id"]
+        now = _now()
+        if customer_id:
+            if db.execute("SELECT 1 FROM hq_customers WHERE id=?", (customer_id,)).fetchone() is None:
+                raise ValueError("Customer not found. Refresh the selection.")
+        else:
+            # Surface likely collisions for human review; never silently merge contacts.
+            if fields["email"] and db.execute(
+                "SELECT 1 FROM hq_customers WHERE lower(trim(email))=? LIMIT 1",
+                (fields["email"],)).fetchone():
+                raise ValueError("That email is already in HQ. Select the existing customer.")
+            if fields["phone"] and db.execute(
+                "SELECT 1 FROM hq_customers WHERE phone=? LIMIT 1",
+                (fields["phone"],)).fetchone():
+                raise ValueError("That phone is already in HQ. Select the existing customer.")
+            customer_id = uuid.uuid4().hex
+            db.execute("""INSERT INTO hq_customers(id,source_request_id,name,email,phone,created_at)
+                VALUES (?,NULL,?,?,?,?)""",
+                (customer_id, fields["customer_name"], fields["email"], fields["phone"], now))
+        if vehicle_id:
+            owner = db.execute("SELECT customer_id FROM hq_vehicles WHERE id=?", (vehicle_id,)).fetchone()
+            if owner is None or owner["customer_id"] != customer_id:
+                raise ValueError("This vehicle does not belong to the selected customer")
+        else:
+            vehicle_id = uuid.uuid4().hex
+            db.execute("""INSERT INTO hq_vehicles
+                (id,customer_id,make,model,model_year,registration,created_at)
+                VALUES (?,?,?,?,?,?,?)""",
+                (vehicle_id, customer_id, fields["make"], fields["model"],
+                 fields["model_year"], fields["registration"], now))
+        work_id = uuid.uuid4().hex
+        # HQ identifiers do not claim any historical J number.
+        db.execute("""INSERT INTO hq_work_records
+            (id,source_request_id,customer_id,vehicle_id,kind,service,notes,
+             preferred_date,preferred_time,status,created_at)
+            VALUES (?,?,?,?,?,?,?,?,?,'draft',?)""",
+            (work_id, "HQ-" + work_id, customer_id, vehicle_id, fields["kind"],
+             fields["service"], fields["notes"], fields["preferred_date"],
+             fields["preferred_time"], now))
+        db.execute("INSERT INTO hq_native_work_details VALUES (?,?,?)",
+                   (work_id, fields["customer_tier"], now))
+        db.execute("INSERT INTO hq_native_work_operations VALUES (?,?,?,?)",
+                   (fields["operation_id"], work_id, fingerprint, now))
+        db.execute("INSERT INTO hq_native_work_events VALUES (?,?,?,?,?)",
+                   (uuid.uuid4().hex, work_id, "created", 0, now))
+        # No Sheets outbox enqueue: workbook remains read-only until explicit
+        # historical ID mapping, source ownership and separate write consent.
+    return work_id
+
+
+def native_work_record(work_id):
+    if not isinstance(work_id, str) or not HEX_ID.fullmatch(work_id):
+        raise ValueError("Invalid native work ID")
+    with connect() as db:
+        _schema(db)
+        _tables(db)
+        row = db.execute("""SELECT w.*,d.customer_tier,c.name AS customer_name,
+            c.email,c.phone,v.make,v.model,v.model_year,v.registration
+            FROM hq_work_records w
+            JOIN hq_native_work_details d ON d.work_id=w.id
+            JOIN hq_customers c ON c.id=w.customer_id
+            JOIN hq_vehicles v ON v.id=w.vehicle_id
+            WHERE w.id=? AND w.source_request_id=?""",
+            (work_id, "HQ-" + work_id)).fetchone()
+    if row is None:
+        raise LookupError("Native work record not found")
+    return dict(row)
+
+
+def update_native_work(work_id, payload, expected_revision):
+    """Optimistic editable draft metadata; approval locks the scope of work."""
+    fields = _edit_fields(payload)
+    if type(expected_revision) is not int or not 0 <= expected_revision < 2**63 - 1:
+        raise ValueError("Invalid draft revision")
+    if not isinstance(work_id, str) or not HEX_ID.fullmatch(work_id):
+        raise ValueError("Invalid native work ID")
+    with connect() as db:
+        _schema(db)
+        _tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("""SELECT w.status,w.revision,w.service,w.notes,
+            w.preferred_date,w.preferred_time,d.customer_tier
+            FROM hq_work_records w JOIN hq_native_work_details d ON d.work_id=w.id
+            WHERE w.id=? AND w.source_request_id=?""",
+            (work_id, "HQ-" + work_id)).fetchone()
+        if row is None:
+            raise LookupError("Native work record not found")
+        if row["status"] not in ("draft", "ready_for_review"):
+            raise ValueError("Approved or closed work cannot be edited here")
+        changed = [key for key, value in fields.items() if value != row[key]]
+        if not changed:
+            return row["revision"]
+        if row["revision"] != expected_revision:
+            raise StaleWorkRecordError("This work record changed. Refresh before editing.")
+        updated = db.execute("""UPDATE hq_work_records SET service=?,notes=?,
+            preferred_date=?,preferred_time=?,revision=revision+1
+            WHERE id=? AND revision=?""",
+            (fields["service"], fields["notes"], fields["preferred_date"],
+             fields["preferred_time"], work_id, expected_revision))
+        if updated.rowcount != 1:
+            raise StaleWorkRecordError("This work record changed. Refresh before editing.")
+        db.execute("UPDATE hq_native_work_details SET customer_tier=? WHERE work_id=?",
+                   (fields["customer_tier"], work_id))
+        revision = expected_revision + 1
+        # Deliberately log field names, not PII or notes.
+        _audit_work(db, work_id, revision, "native_details",
+                    {"changed_fields": changed, "revision": expected_revision},
+                    {"changed_fields": changed, "revision": revision})
+        db.execute("INSERT INTO hq_native_work_events VALUES (?,?,?,?,?)",
+                   (uuid.uuid4().hex, work_id, "details_edited", revision, _now()))
+    return revision
+
+
+def _choices(search=""):
+    if not isinstance(search, str) or len(search) > 80:
+        raise ValueError("Customer search is too long")
+    with connect() as db:
+        _schema(db)
+        db.execute("BEGIN")
+        term = search.strip()
+        predicate = """WHERE instr(lower(name),lower(?))>0
+            OR instr(lower(email),lower(?))>0
+            OR instr(lower(phone),lower(?))>0""" if term else ""
+        params = [term] * 3 if term else []
+        customers = [dict(r) for r in db.execute(
+            "SELECT id,name,email,phone FROM hq_customers " + predicate
+            + " ORDER BY name,id LIMIT 100", params)]
+        ids = [row["id"] for row in customers]
+        vehicles = []
+        if ids:
+            placeholders = ",".join("?" for _ in ids)
+            vehicles = [dict(r) for r in db.execute(
+                "SELECT id,customer_id,make,model,registration FROM hq_vehicles "
+                + "WHERE customer_id IN (" + placeholders + ") ORDER BY make,model,id", ids)]
+    return customers, vehicles
+
+
+@native_work.after_request
+def private_no_cache(response):
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@native_work.route("/hq/work/new", methods=["GET", "POST"])
+@required
+def new_work():
+    if request.method == "GET":
+        search = request.args.get("q", "")
+        try:
+            customers, vehicles = _choices(search)
+        except ValueError:
+            abort(400)
+        return render_template("native_work.html", new=True, values={}, csrf=session["csrf"],
+                               operation_id=uuid.uuid4().hex, customers=customers,
+                               vehicles=vehicles, search=search, services=sorted(SERVICES),
+                               tiers=TIERS, error=None)
+    if request.content_length is None or request.content_length > 12000:
+        abort(413)
+    if not secrets.compare_digest(request.form.get("csrf", ""), session.get("csrf", "not-set")):
+        abort(403)
+    values = request.form.to_dict(flat=True)
+    try:
+        work_id = create_native_work(values)
+    except (ValueError, StaleWorkRecordError) as exc:
+        customers, vehicles = _choices()
+        status = 409 if isinstance(exc, StaleWorkRecordError) else 400
+        return render_template("native_work.html", new=True, values=values,
+            csrf=session["csrf"], operation_id=values.get("operation_id", ""),
+            customers=customers, vehicles=vehicles, search="", services=sorted(SERVICES),
+            tiers=TIERS, error=str(exc)), status
+    except (OSError, sqlite3.Error):
+        current_app.logger.exception("Native work creation unavailable")
+        abort(503)
+    return redirect(url_for(".edit_work", work_id=work_id, created="1"), 303)
+
+
+@native_work.route("/hq/work/<work_id>/edit", methods=["GET", "POST"])
+@required
+def edit_work(work_id):
+    try:
+        current = native_work_record(work_id)
+    except (ValueError, LookupError):
+        abort(404)
+    if request.method == "POST":
+        if request.content_length is None or request.content_length > 12000:
+            abort(413)
+        if not secrets.compare_digest(request.form.get("csrf", ""), session.get("csrf", "not-set")):
+            abort(403)
+        raw_revision = request.form.get("revision", "")
+        if not re.fullmatch(r"[0-9]{1,18}", raw_revision):
+            abort(400)
+        try:
+            update_native_work(work_id, request.form.to_dict(flat=True), int(raw_revision))
+        except StaleWorkRecordError as exc:
+            current = native_work_record(work_id)
+            return render_template("native_work.html", new=False, record=current,
+                values={}, csrf=session["csrf"], services=sorted(SERVICES), tiers=TIERS,
+                error=str(exc)), 409
+        except ValueError as exc:
+            return render_template("native_work.html", new=False, record=current,
+                values=request.form, csrf=session["csrf"], services=sorted(SERVICES), tiers=TIERS,
+                error=str(exc)), 400
+        except (OSError, sqlite3.Error):
+            current_app.logger.exception("Native work edit unavailable")
+            abort(503)
+        return redirect(url_for(".edit_work", work_id=work_id, saved="1"), 303)
+    return render_template("native_work.html", new=False, record=current, values={},
+        csrf=session["csrf"], services=sorted(SERVICES), tiers=TIERS, error=None)
