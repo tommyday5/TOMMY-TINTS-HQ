@@ -196,5 +196,42 @@ class NativeWorkTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_work_records").fetchone()[0], 1)
 
 
+    def test_existing_public_book_to_owner_hq_draft_uses_same_canonical_records(self):
+        # Public /book remains unconfirmed; owner converts request only after review.
+        with patch.dict(os.environ, {"HQ_PUBLIC_REQUESTS_ENABLED": "true"}):
+            response = self.client.post("/api/public/customer-request", json={
+                "kind": "quote", "name": "Synthetic booking customer",
+                "email": "public@example.invalid", "phone": "07700 900012",
+                "service": "Window Tinting", "make": "Ford", "model": "Focus",
+                "year": "2020", "registration": "EF20 ABC",
+                "notes": "Please quote rear tint", "privacy_acknowledged": True,
+            })
+            self.assertEqual(response.status_code, 201, response.json)
+            self.assertFalse(response.json["confirmed_booking"])
+            request_ref = response.json["reference"]
+        self.assertEqual(self.client.get("/api/hq/customer-requests").status_code, 302)
+        self.login()
+        inbox = self.client.get("/api/hq/customer-requests")
+        self.assertEqual(inbox.status_code, 200)
+        self.assertEqual(inbox.json["requests"][0]["id"], request_ref)
+        headers = {"X-HQ-CSRF": "test-csrf"}
+        draft = self.client.post("/api/hq/customer-requests/" + request_ref + "/draft",
+            json={"draft_type": "quote"}, headers=headers)
+        self.assertEqual(draft.status_code, 201, draft.json)
+        created = self.client.post("/api/hq/customer-requests/" + request_ref + "/work-record",
+            json={}, headers=headers)
+        self.assertEqual(created.status_code, 201, created.json)
+        work = read_work_record(created.json["id"])
+        self.assertEqual(work["source_request_id"], request_ref)
+        self.assertEqual(work["kind"], "quote")
+        self.assertEqual(work["name"], "Synthetic booking customer")
+        self.assertEqual(work["registration"], "EF20 ABC")
+        self.assertEqual(len(list_work_records()), 1)
+        # A public-origin record is not a manually created HQ-UUID draft.
+        self.assertEqual(self.client.get("/hq/work/" + created.json["id"] + "/edit").status_code, 404)
+        self.assertEqual(self.client.post("/api/hq/customer-requests/" + request_ref + "/work-record",
+            json={}, headers=headers).json["id"], created.json["id"])
+
+
 if __name__ == "__main__":
     unittest.main()
