@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>HQ Customer — Tommy Tints</title>
+<style>
+:root{color-scheme:dark;background:#090b10;color:#f6f7fa;font-family:system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;padding:clamp(12px,3vw,32px)}main{max-width:920px;margin:auto}
+h1{font-size:clamp(24px,4vw,34px)}h2{font-size:21px}
+a{color:#ff727c}p{line-height:1.5;color:#bdc2cf;overflow-wrap:anywhere}
+.panel,article{background:#171a21;border:1px solid #3b3f48;border-radius:14px;margin:14px 0;padding:clamp(14px,2vw,22px)}
+article p{margin:6px 0}.button{display:inline-block;background:#d0142a;border:1px solid #fa3348;color:white;text-decoration:none;padding:11px 15px;border-radius:8px;font-weight:700}
+code{overflow-wrap:anywhere}a:focus-visible{outline:2px solid #f4d129;outline-offset:3px}
+</style></head><body><main>
+<nav><a href="/hq/customers">← HQ customer directory</a> · <a href="/?page=jobs">Job cards</a></nav>
+<h1>{{ customer.name }}</h1>
+<section class="panel">
+<h2>Customer details</h2>
+<p>{{ customer.email or 'Email not recorded' }} · {{ customer.phone or 'Phone not recorded' }}</p>
+<p>Canonical HQ customer ID: <code>{{ customer.id }}</code></p>
+<p>{% if customer.source_request_id %}Origin: reviewed public request{% else %}Origin: owner-created HQ contact{% endif %}. Historical Sheets identity and pricing tier require separate verification.</p>
+<a class="button" href="/hq/customers/{{ customer.id }}/edit">Edit customer details</a>
+<a class="button" href="/hq/work/new?customer_id={{ customer.id }}">Create quote or job for this customer</a>
+</section>
+<h2>Saved vehicles ({{ vehicles|length }})</h2>
+{% for v in vehicles %}<article>
+<strong>{{ v.make }} {{ v.model }}</strong>
+<p>{{ v.model_year or 'Year not recorded' }} · {{ v.registration or 'Registration not recorded' }}</p>
+<a href="/hq/vehicles/{{ v.id }}/edit">Edit vehicle (historical locks apply)</a>
+</article>{% else %}<p>No HQ vehicles linked.</p>{% endfor %}
+<h2>Quotes and jobs ({{ work_count }})</h2>
+<p>Requested appointment dates are not confirmed bookings. Work completion is not evidence of payment. The newest 100 linked records are shown.</p>
+{% for w in work %}<article>
+<strong>{{ w.service }} · {{ w.kind|capitalize }} · {{ w.status|replace('_',' ') }}</strong>
+<p>HQ work ID: <code>{{ w.id }}</code> · revision {{ w.revision }}</p>
+{% if w.preferred_date %}<p>Requested: {{ w.preferred_date }} {{ w.preferred_time }} (unconfirmed)</p>{% endif %}
+{% if w.source_request_id.startswith('HQ-') %}<a href="/hq/work/{{ w.id }}/edit">Open native HQ job card</a>{% else %}<a href="/?page=jobs">Open in HQ job cards</a>{% endif %}
+</article>{% else %}<p>No linked HQ quotes or jobs.</p>{% endfor %}
+<p>Customer records and work stay in HQ SQLite. No Google Sheets, Gmail, Calendar, Square, payments or public account access are changed by viewing this page.</p>
+</main></body></html>
