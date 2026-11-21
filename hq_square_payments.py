@@ -156,6 +156,31 @@ def refresh_payments():
         raise PersistedSyncError("Square payment snapshot commit failed") from exc
 
 
+
+
+def snapshot_metadata_consistent(db, meta):
+    """Validate bounded local snapshot coverage, not payment authenticity.
+
+    A count mismatch, impossible reporting window or future-dated refresh
+    cannot be evidence for a later exact-reference HQ job comparison.
+    Call on the same SQLite read transaction as the matching payment rows.
+    """
+    count = meta["item_count"]
+    if type(count) is not int or not 0 <= count <= 1000:
+        return False
+    if db.execute("SELECT COUNT(*) FROM payments").fetchone()[0] != count:
+        return False
+    try:
+        start = datetime.fromisoformat(_timestamp(meta["window_start"]))
+        end = datetime.fromisoformat(_timestamp(meta["window_end"]))
+        refreshed = datetime.fromisoformat(_timestamp(meta["refreshed_at"]))
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return (start < end <= refreshed
+            and end - start <= timedelta(days=31)
+            and refreshed <= datetime.now(timezone.utc) + timedelta(minutes=5))
+
+
 def read_snapshot():
     """Read only a stored snapshot; missing access never implies zero payments."""
     result = {"configured": configured(), "snapshot_available": False,
@@ -164,11 +189,12 @@ def read_snapshot():
               "reconciliation_status": "not_linked",
               "verified_job_receipts_pence": None, "verified_job_outstanding_pence": None,
               "bank_settlement_verified": False, "automatic_job_matching": False,
-              "scope_unverified": False}
+              "scope_unverified": False, "integrity_issue": False}
     if not storage_ready() or not _path().exists():
         return result
     with closing(sqlite3.connect(_path().as_uri() + "?mode=ro", uri=True, timeout=3)) as db:
         db.row_factory = sqlite3.Row
+        db.execute("BEGIN")  # All local metadata/count/rows use one read snapshot.
         meta = db.execute("SELECT * FROM snapshot WHERE id=1").fetchone()
         if not meta:
             return result
@@ -182,6 +208,11 @@ def read_snapshot():
                 or not stored_location.isascii() or not active_location.isascii()
                 or not secrets.compare_digest(stored_location, active_location)):
             result["scope_unverified"] = True
+            return result
+        if not snapshot_metadata_consistent(db, meta):
+            # A missing/tampered payment row or impossible metadata is NOT
+            # evidence of zero receipts. Withhold all figures until refreshed.
+            result["integrity_issue"] = True
             return result
         rows = db.execute("""SELECT id,status,total_minor,refunded_minor,currency,
             created_at,updated_at FROM payments ORDER BY created_at DESC,id DESC LIMIT 50""").fetchall()
@@ -230,6 +261,10 @@ Refunds and processing fees can affect net proceeds.</p>
 <p>Stored historical Square evidence is withheld because the current configured
 location or read access cannot verify its scope. Reconnect/refresh the intended
 location before reviewing payments. This is not evidence of zero receipts.</p>
+{% elif data.integrity_issue %}
+<p>The local Square snapshot metadata or row count cannot be verified.
+Payment identifiers and amounts are withheld. Refresh the read-only provider
+snapshot; do not treat this as evidence of zero receipts.</p>
 {% else %}<p>No provider payment snapshot has been retrieved; this is not evidence of zero receipts.</p>{% endif %}
 {% if data.configured %}
 <form method="post"><input type="hidden" name="csrf" value="{{ csrf }}">

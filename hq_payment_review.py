@@ -16,7 +16,7 @@ from flask import Blueprint, abort, jsonify, render_template_string, request, se
 from customer_request_store import storage_ready
 from hq_auth import required
 from hq_core_records import read_work_record
-from hq_square_payments import _path, _timestamp, configured
+from hq_square_payments import _path, _timestamp, configured, snapshot_metadata_consistent
 
 payment_review = Blueprint("payment_review", __name__)
 _WORK_ID = re.compile(r"[0-9a-f]{32}\Z")
@@ -69,7 +69,7 @@ def compare_references(work_id, payment_id, now=None):
     with closing(sqlite3.connect(_path().as_uri() + "?mode=ro", uri=True, timeout=3)) as db:
         db.row_factory = sqlite3.Row
         db.execute("BEGIN")
-        meta = db.execute("SELECT location,refreshed_at,window_start,window_end FROM snapshot WHERE id=1").fetchone()
+        meta = db.execute("SELECT location,refreshed_at,window_start,window_end,item_count FROM snapshot WHERE id=1").fetchone()
         if not meta:
             warnings.append("No complete Square snapshot available.")
             return result
@@ -82,6 +82,9 @@ def compare_references(work_id, payment_id, now=None):
                 or not stored_location.isascii() or not active_location.isascii()
                 or not secrets.compare_digest(stored_location, active_location)):
             warnings.append("Square location has changed since this snapshot; refresh before reviewing.")
+            return result
+        if not snapshot_metadata_consistent(db, meta):
+            warnings.append("Square snapshot metadata or row coverage cannot be verified; refresh before reviewing.")
             return result
         evidence = db.execute(
             "SELECT id,status,total_minor,refunded_minor,currency FROM payments WHERE id=?",

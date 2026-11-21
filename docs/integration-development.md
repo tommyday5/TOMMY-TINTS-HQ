@@ -476,3 +476,10 @@ Even three consistent provider reads are not atomic and cannot prove that the wo
 ### Square booking same-version source integrity (21 November 2026)
 
 The existing read-only `hq_square_bookings.refresh_bookings` snapshot now treats a same-location, same-booking, same-version record with a different persisted status or start timestamp as contradictory source evidence. The full refresh is rejected atomically before any UPSERT, preserving the last consistent local snapshot. Exact replays and late older-version pages retain their prior behaviour. Tests use synthetic Square responses; this does not prove a seller connection, external booking confirmation, provider coverage or fresh availability. Real canonical HQ appointments and idempotent outbound changes remain owner-approval gated.
+
+
+### Square payment cached snapshot metadata guard (21 November 2026)
+
+The read-only Square snapshot helper verifies saved row count against SQLite payments, requires exact sane UTC report-window/refresh chronology (maximum 31-day window; no future refresh beyond five-minute clock tolerance), and runs on the same read transaction as the payment results. The owner-only evidence response exposes an integrity_issue signal and withholds all amounts and identifiers on mismatch; the exact-reference HQ job comparison uses the same helper and cannot return a comparison candidate when cached evidence is inconsistent. Existing successful snapshots are not deleted by validation, and no background/provider refresh is performed. Synthetic tests cover deleted rows, forged counts and chronology.
+
+This does not hash/authenticate individual stored payments or prevent well-formed tampering, and is not evidence of bank settlement, fees, refunds, source permission, live sync, approved HQ job payment or production restore. Next step remains a genuine owner-triggered Square read, exact provider/source verification, independently proven bank payouts, controlled job allocation and tested production backup restoration. Connection-readiness status remains evidence-gated.
