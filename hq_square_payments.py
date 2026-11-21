@@ -100,6 +100,8 @@ def refresh_payments():
     headers = {"Authorization": "Bearer " + os.environ["HQ_SQUARE_READ_TOKEN"],
                "Square-Version": _API_VERSION}
     rows, seen_ids, cursors = [], set(), set()
+    start_bound = datetime.fromisoformat(start)
+    end_bound = datetime.fromisoformat(end)
     for _ in range(10):
         response = requests.get(_API, params=params, headers=headers, timeout=(3, 7))
         response.raise_for_status()
@@ -113,6 +115,12 @@ def refresh_payments():
             raise ValueError("Square payment page cannot be verified")
         for item in payments:
             row = _payment(item, location)
+            # Square ListPayments begin_time/end_time filter by created_at.
+            # Evidence outside the requested window is not a complete,
+            # trustworthy provider response; never commit it as this window.
+            created = datetime.fromisoformat(row[5])
+            if not start_bound <= created <= end_bound:
+                raise ValueError("Square returned payment outside requested window")
             if row[0] in seen_ids:
                 raise ValueError("Square returned duplicate payment identifiers")
             seen_ids.add(row[0])
@@ -158,7 +166,7 @@ def refresh_payments():
 
 
 
-def _stored_payment_consistent(row, refreshed):
+def _stored_payment_consistent(row, refreshed, start, end):
     """Revalidate one cached provider row before it can support owner review.
 
     SQLite data can be altered after the provider adapter originally checked
@@ -181,7 +189,8 @@ def _stored_payment_consistent(row, refreshed):
         updated_at = datetime.fromisoformat(_timestamp(updated))
     except (TypeError, ValueError, OverflowError):
         return False
-    return created_at <= updated_at <= refreshed + timedelta(minutes=5)
+    return (start <= created_at <= end
+            and created_at <= updated_at <= refreshed + timedelta(minutes=5))
 
 
 def snapshot_metadata_consistent(db, meta):
@@ -209,7 +218,7 @@ def snapshot_metadata_consistent(db, meta):
         return False
     # Inspect every cached row, not just the first 50 displayed by HQ.
     # The snapshot is limited to 1,000 rows by bounded provider pagination.
-    return all(_stored_payment_consistent(row, refreshed) for row in db.execute(
+    return all(_stored_payment_consistent(row, refreshed, start, end) for row in db.execute(
         """SELECT id,status,total_minor,refunded_minor,currency,created_at,updated_at
            FROM payments"""
     ))
