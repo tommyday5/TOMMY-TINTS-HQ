@@ -16,6 +16,7 @@ from flask import Blueprint, abort, current_app, redirect, render_template, requ
 from customer_request_store import SERVICES, connect
 from hq_auth import required
 from hq_core_records import _audit_work, _schema, StaleWorkRecordError
+from hq_work_progress import WORK_STAGES, work_progress_snapshot, record_work_progress
 
 native_work = Blueprint("native_work", __name__)
 TIERS = {"retail": "Retail", "trade": "Trade", "maintenance": "Maintenance"}
@@ -493,3 +494,43 @@ def edit_vehicle(vehicle_id):
         return redirect(url_for(".edit_vehicle", vehicle_id=vehicle_id, saved="1"), 303)
     return render_template("native_vehicle.html", vehicle=current, csrf=session["csrf"],
                            values={}, error=None)
+
+
+@native_work.route("/hq/work/<work_id>/progress", methods=["GET", "POST"])
+@required
+def edit_work_progress(work_id):
+    """Save an internal milestone on a canonical HQ job, never a booking/payment."""
+    try:
+        current = work_progress_snapshot(work_id)
+    except (ValueError, LookupError):
+        abort(404)
+    except (OSError, sqlite3.Error):
+        current_app.logger.exception("Work progress store unavailable")
+        abort(503)
+    if request.method == "POST":
+        if request.content_length is None or request.content_length > 8192:
+            abort(413)
+        if not secrets.compare_digest(request.form.get("csrf", ""), session.get("csrf", "not-set")):
+            abort(403)
+        raw_revision = request.form.get("revision", "")
+        if not re.fullmatch(r"[0-9]{1,18}", raw_revision):
+            abort(400)
+        try:
+            record_work_progress(work_id, request.form.get("stage", ""),
+                                 int(raw_revision), session.get("google_sub"))
+        except StaleWorkRecordError as exc:
+            latest = work_progress_snapshot(work_id)
+            return render_template("hq_work_progress.html", work=latest,
+                                   stages=WORK_STAGES, csrf=session["csrf"],
+                                   error=str(exc)), 409
+        except ValueError as exc:
+            latest = work_progress_snapshot(work_id)
+            return render_template("hq_work_progress.html", work=latest,
+                                   stages=WORK_STAGES, csrf=session["csrf"],
+                                   error=str(exc)), 400
+        except (OSError, sqlite3.Error, RuntimeError):
+            current_app.logger.exception("Work progress write unavailable")
+            abort(503)
+        return redirect(url_for(".edit_work_progress", work_id=work_id, saved="1"), 303)
+    return render_template("hq_work_progress.html", work=current,
+                           stages=WORK_STAGES, csrf=session["csrf"], error=None)
