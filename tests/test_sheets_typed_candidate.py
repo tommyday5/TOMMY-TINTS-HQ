@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 
 from hq_sheet_link_preflight import verify_unformatted_candidate, preflight_job_link
 from hq_sheets_live import read_job_link_snapshot
-from test_sheet_link_preflight import fixture
+from test_sheet_link_preflight import fixture, rendered_header
 
 
 def typed_fixture():
@@ -20,7 +20,7 @@ def typed_fixture():
 
 def value_response(candidate):
     return {"range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
-            "values": [["Job ID"], candidate]}
+            "values": [rendered_header(), candidate]}
 
 
 class TypedCandidateChecks(unittest.TestCase):
@@ -116,7 +116,7 @@ class TypedCandidateChecks(unittest.TestCase):
         self.assertRaisesRegex(
             ValueError, "coverage", verify_unformatted_candidate, snap,
             {"range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
-             "values": [["Job ID"], ["J0077"] + [""] * 15 + [100, True],
+             "values": [rendered_header(), ["J0077"] + [""] * 15 + [100, True],
                         [], ["J0088"]]}, candidate_row=5)
         wrong = value_response(["J0077"] + [""] * 15 + [100, True])
         wrong["range"] = "Jobs!A4:AJ6"
@@ -130,9 +130,9 @@ class TypedCandidateChecks(unittest.TestCase):
         raw_price = ["J0077"] + [""] * 15 + [100, True]
         rendered_price = ["J0077"] + [""] * 15 + ["£100.00", True]
         formula = {"range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
-                   "values": [["Job ID"], rendered_price, [], ["J0082"]]}
+                   "values": [rendered_header(), rendered_price, [], ["J0082"]]}
         unformatted = {"range": "Jobs!A4:AJ7", "majorDimension": "ROWS",
-                       "values": [["Job ID"], raw_price, [], ["J0082"]]}
+                       "values": [rendered_header(), raw_price, [], ["J0082"]]}
         responses = []
         for value in (snap, formula, unformatted):
             response = Mock()
