@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 import uuid
+from pathlib import Path
 from unittest.mock import patch
 
 from app import app
@@ -16,9 +17,12 @@ from hq_native_work import (create_native_work, native_work_record,
                             StaleWorkRecordError)
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
 class NativeVehicleEditTests(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory()
+        self.directory = tempfile.TemporaryDirectory(dir=ROOT)
         self.addCleanup(self.directory.cleanup)
         env = patch.dict(os.environ, {
             "HQ_DATA_DIR": self.directory.name,
