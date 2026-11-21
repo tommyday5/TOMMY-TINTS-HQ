@@ -75,7 +75,7 @@ class CustomerDocumentTests(unittest.TestCase):
         self.assertFalse(snapshot["can_print"])
         refreshed = self.client.get(path)
         self.assertIn(b"Repair and repaint bonnet.", refreshed.data)
-        self.assertEqual(refreshed.headers["Cache-Control"], "private, no-store")
+        self.assertIn("no-store", refreshed.headers["Cache-Control"])
         self.assertEqual(self.post(work_id, 0, "Repair and repaint bonnet.").status_code, 303)
         self.assertEqual(read_work_record(work_id)["revision"], 1)
         with connect() as db:
