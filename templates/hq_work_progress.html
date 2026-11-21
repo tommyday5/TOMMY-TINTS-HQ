@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>HQ job progress — Tommy Tints</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#090a0f;color:#f4f5f7}
+*{box-sizing:border-box}body{padding:clamp(12px,4vw,32px);margin:0}main{max-width:800px;margin:auto}
+.panel{background:#181b21;border:1px solid #3b3d43;border-radius:14px;padding:clamp(14px,3vw,26px);margin:16px 0}
+h1{font-size:clamp(22px,4vw,32px)}p,li{line-height:1.5}p,.hint{color:#bdc1ca}
+a{color:#ff737c}.notice{border-left:4px solid #f2cb24;background:#302719;padding:12px}
+.error{border-left:4px solid #ff5e65;background:#401b23;padding:12px}
+.success{border-left:4px solid #8cdb9f;background:#1a3227;padding:12px}
+label{display:block;margin:14px 0 8px;font-weight:650}
+select{background:#0d1118;border:1px solid #555962;border-radius:8px;color:white;padding:12px;font:inherit;width:100%;max-width:500px}
+button{background:#da132b;border:1px solid #ff314a;color:white;font:inherit;font-weight:700;padding:11px 16px;border-radius:8px;cursor:pointer}
+button:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid #f2cb24;outline-offset:3px}
+li{padding:4px 0}time{color:#b4b9c4}
+</style></head><body><main>
+<p><a href="/?page=jobs">← HQ job cards</a></p>
+<h1>Work progress · {{ work.id[:10] }}</h1>
+<div class="panel">
+<p><strong>{{ work.customer_name }}</strong> · {{ work.make }} {{ work.model }} · {{ work.registration }}</p>
+<p>{{ work.service }} · <strong>{{ work.status.replace('_',' ') }}</strong> · revision {{ work.revision }}</p>
+<p><strong>Latest recorded stage:</strong> {{ stages.get(work.current_stage,"Not recorded") }}</p>
+<p class="notice">Internal job-progress notes only. A stage is not a booking, a completed job, an invoice, a payment, a customer notification or a Google Sheets update.</p>
+</div>
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+{% if request.args.get("saved") == "1" %}<p class="success" role="status">Work stage saved to the HQ database. Reload to verify the history.</p>{% endif %}
+{% if work.can_record_progress %}
+<form class="panel" method="post" action="/hq/work/{{ work.id }}/progress">
+<h2>Record a work stage</h2>
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="revision" value="{{ work.revision }}">
+<label for="stage">Stage reached</label>
+<select name="stage" id="stage" required>
+<option value="" selected disabled>Select the actual stage</option>
+{% for value,label in stages.items() %}
+<option value="{{ value }}">{{ label }}</option>
+{% endfor %}
+</select>
+<p class="hint">Only save a stage that actually occurred. Existing entries are not overwritten, and a stale browser tab cannot insert a conflicting stage.</p>
+<button type="submit">Save work stage</button>
+</form>
+{% else %}
+<div class="panel"><p>Stage updates become available on approved and in-progress jobs. This record is currently {{ work.status.replace('_',' ') }}; historical entries are still visible.</p></div>
+{% endif %}
+<div class="panel"><h2>Recorded progress history</h2>
+{% if work.events %}
+<ol>{% for event in work.events %}
+<li><strong>{{ stages.get(event.stage,'Unknown historical stage') }}</strong> · revision {{ event.revision }}
+<time datetime="{{ event.created_at }}">{{ event.created_at }}</time></li>
+{% endfor %}</ol>
+{% else %}<p>No work stages have been saved. Unknown progress is not treated as completed.</p>{% endif %}
+<p class="hint">Showing up to 50 latest milestones. Audit events remain in HQ SQLite. No costs, margins or private finance are exposed outside this owner-only view.</p>
+</div>
+</main></body></html>
