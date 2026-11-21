@@ -69,8 +69,17 @@ def _payment(item, location):
     refunded_minor = _minor(refunded, currency) if refunded is not None else None
     if refunded_minor is not None and refunded_minor > total:
         raise ValueError("Square returned inconsistent refund details")
+    created_at = _timestamp(item.get("created_at"))
+    updated_at = _timestamp(item.get("updated_at"))
+    # A provider payment cannot be updated before it was created. Reject
+    # impossible future evidence as well (allow five minutes of clock skew).
+    # These checks do not authenticate the payment or establish bank cash.
+    if (datetime.fromisoformat(updated_at) < datetime.fromisoformat(created_at)
+            or datetime.fromisoformat(updated_at)
+            > datetime.now(timezone.utc) + timedelta(minutes=5)):
+        raise ValueError("Square returned inconsistent payment timestamps")
     return (ref, status, total, refunded_minor, currency,
-            _timestamp(item.get("created_at")), _timestamp(item.get("updated_at")))
+            created_at, updated_at)
 
 
 def refresh_payments():
