@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>Actual job materials — Tommy Tints HQ</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#090a0f;color:#f4f5f7}
+*{box-sizing:border-box}body{margin:0;padding:clamp(12px,4vw,32px)}main{max-width:850px;margin:auto}
+h1{font-size:clamp(22px,4vw,32px)}h2{font-size:20px}
+.panel{background:#181b21;border:1px solid #3b3d43;border-radius:14px;padding:clamp(14px,3vw,25px);margin:16px 0}
+p,li{line-height:1.5}p,.hint{color:#bcc1cd}a{color:#ff737c}
+.notice{border-left:4px solid #f2cb24;background:#302719;padding:12px}
+.error{border-left:4px solid #ff5e65;background:#401b23;padding:12px}
+.success{border-left:4px solid #8cdb9f;background:#1a3227;padding:12px}
+label{display:block;font-weight:650;margin:14px 0 7px}
+input,select{background:#0d1118;border:1px solid #555962;border-radius:8px;color:white;padding:12px;font:inherit;width:100%}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+button{background:#da132b;border:1px solid #ff314a;border-radius:8px;color:white;font:inherit;font-weight:700;padding:11px 15px;cursor:pointer}
+button.secondary{background:#262b33;border-color:#666}
+button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid #f2cb24;outline-offset:3px}
+li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
+@media(max-width:600px){.grid{grid-template-columns:1fr}}
+</style></head><body><main>
+<p><a href="/hq/work/{{ work.id }}/edit">← Edit job</a> · <a href="/hq/work/{{ work.id }}/time">Workshop time</a> · <a href="/?page=jobs">HQ job cards</a></p>
+<h1>Materials used · {{ work.id[:10] }}</h1>
+<section class="panel">
+<p><strong>{{ work.customer_name }}</strong> · {{ work.make }} {{ work.model }} · {{ work.registration }}</p>
+<p>{{ work.service }} · {{ work.status.replace('_',' ') }} · revision {{ work.revision }}</p>
+<p>{{ work.entry_count }} active material usage entries recorded.</p>
+{% if work.actual_material_cost_pence is not none %}
+<p>Recorded actual material cost: <strong>£{{ '%.2f'|format(work.actual_material_cost_pence/100) }}</strong>.</p>
+{% elif work.entry_count %}
+<p>Complete material cost: <strong>unknown</strong> — {{ work.unknown_cost_count }} entry/entries lack actual allocated cost.</p>
+{% else %}
+<p>Complete material cost: <strong>not recorded</strong>.</p>
+{% endif %}
+{% if work.known_cost_subtotal_pence is not none and work.unknown_cost_count %}
+<p>Partial known-cost subtotal: £{{ '%.2f'|format(work.known_cost_subtotal_pence/100) }} (not a complete cost).</p>
+{% endif %}
+<p class="notice">These are materials you actually used, not inventory stock decrements, supplier invoices, an approved selling price, a final job profit or proof of payment. Unknown costs remain unknown. Existing manual job-cost logs and historical Google Sheets are separate and unreconciled.</p>
+</section>
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+{% if request.args.get("saved") == "1" %}<p class="success" role="status">Material usage saved against this HQ job.</p>{% endif %}
+{% if request.args.get("voided") == "1" %}<p class="success" role="status">Material usage reversed; original retained in history.</p>{% endif %}
+{% if request.args.get("conflict") == "1" %}<p class="error" role="alert">This job changed. Review the latest revision before correcting an entry.</p>{% endif %}
+{% if work.can_edit_materials %}
+<form class="panel" method="post" action="/hq/work/{{ work.id }}/materials">
+<h2>Record material used</h2>
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="revision" value="{{ work.revision }}">
+<input type="hidden" name="operation_id" value="{{ operation_id }}">
+<label for="materialName">Material / product</label>
+<input id="materialName" name="material_name" maxlength="100" required value="{{ values.get('material_name','') }}" placeholder="e.g. Octoral basecoat, primer, masking tape">
+<div class="grid">
+<div><label for="quantity">Quantity used</label><input id="quantity" name="quantity" inputmode="decimal" type="number" min="0.001" max="1000000" step="0.001" required value="{{ values.get('quantity','') }}"></div>
+<div><label for="unit">Unit</label><select name="unit" id="unit" required>
+<option value="" disabled {% if not values.get('unit') %}selected{% endif %}>Select a unit</option>
+{% for key,label in units.items() %}<option value="{{ key }}" {% if values.get('unit') == key %}selected{% endif %}>{{ label }}</option>{% endfor %}
+</select></div>
+</div>
+<label for="actualCost">Actual allocated cost for the quantity used, in pence (optional)</label>
+<input id="actualCost" name="actual_cost_pence" type="number" min="0" max="100000000" step="1"
+ value="{{ values.get('actual_cost_pence','') }}" placeholder="Blank means unknown">
+<p class="hint">Example: 861 means £8.61 actual consumption cost. Enter 0 only if you have verified the allocated material cost is genuinely zero. Do not enter retail selling price.</p>
+<label for="sourceNote">Private source / measurement note (optional)</label>
+<input id="sourceNote" name="source_note" maxlength="160" value="{{ values.get('source_note','') }}" placeholder="e.g. 300ml mixed; weighed / supplier invoice reviewed">
+<p class="hint">A save advances the canonical HQ work revision. Re-submitting the same operation cannot duplicate an entry.</p>
+<button type="submit">Save material usage</button>
+</form>
+{% else %}
+<div class="panel"><p>Material entries and corrections are available only on approved or in-progress jobs. Closed or draft records can still be reviewed.</p></div>
+{% endif %}
+<section class="panel"><h2>Material usage history</h2>
+{% if work.entries %}
+<ol>{% for entry in work.entries %}
+<li><strong>{{ entry.material_name }}</strong> · {{ '%.3f'|format(entry.quantity_milli/1000) }} {{ entry.unit }}
+{% if entry.voided_at %}<strong> · VOIDED</strong>{% endif %}
+<p>{% if entry.actual_cost_pence is none %}Actual allocated cost unknown{% else %}Actual allocated cost £{{ '%.2f'|format(entry.actual_cost_pence/100) }}{% endif %}
+{% if entry.source_note %} · {{ entry.source_note }}{% endif %}</p>
+<p><time datetime="{{ entry.created_at }}">{{ entry.created_at }}</time></p>
+{% if work.can_edit_materials and not entry.voided_at %}
+<form method="post" action="/hq/work/{{ work.id }}/materials/{{ entry.entry_id }}/void">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="revision" value="{{ work.revision }}">
+<button class="secondary" type="submit">Reverse mistaken usage entry</button></form>
+{% endif %}</li>
+{% endfor %}</ol>
+{% else %}<p>No materials have been recorded for this HQ job.</p>{% endif %}
+{% if work.history_truncated %}<p class="hint">Showing only the most recent 100 events. Older rows remain preserved in SQLite.</p>{% endif %}
+<p class="hint">Reversal does not destroy the original evidence or change stock, payments, quotes or other costing logs.</p>
+</section>
+</main></body></html>
