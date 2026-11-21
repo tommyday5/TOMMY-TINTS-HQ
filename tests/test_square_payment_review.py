@@ -172,6 +172,28 @@ class PaymentReviewTests(unittest.TestCase):
         self.assertTrue(restored["payment_evidence_found"])
         self.assertEqual(restored["provider_amount_pence"], 7600)
 
+    def test_local_snapshot_integrity_failure_never_returns_matching_receipt_candidate(self):
+        job_id = self.job()
+        self.seed()
+        self.owner()
+        with sqlite3.connect(square._path()) as db:
+            db.execute("UPDATE snapshot SET item_count=2")
+        with patch.object(square.requests, "get") as upstream:
+            result = compare_references(job_id, "square-01")
+            response = self.api(job_id)
+            upstream.assert_not_called()
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(result["snapshot_current"])
+        self.assertFalse(result["payment_evidence_found"])
+        self.assertIsNone(result["provider_amount_pence"])
+        self.assertFalse(result["matches_planned_deposit"])
+        self.assertFalse(result["candidate_evidence_complete"])
+        self.assertFalse(result["bank_settlement_verified"])
+        self.assertIn("row coverage cannot be verified", " ".join(result["warnings"]))
+        self.assertFalse(response.json["payment_evidence_found"])
+        self.assertIsNone(response.json["provider_amount_pence"])
+        self.assertFalse(response.json["job_marked_paid"])
+
     def test_auth_csrf_reference_validation_and_error_handling(self):
         job_id = self.job()
         self.seed()
