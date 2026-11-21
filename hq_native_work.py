@@ -19,6 +19,7 @@ from hq_core_records import _audit_work, _schema, StaleWorkRecordError
 from hq_work_progress import WORK_STAGES, work_progress_snapshot, record_work_progress
 from hq_work_time import time_ledger_snapshot, append_work_time, void_work_time
 from hq_work_materials import material_ledger_snapshot, append_work_material, void_work_material, UNITS
+from hq_work_archive import archived_work_snapshot, set_work_archived, list_archived_work
 
 native_work = Blueprint("native_work", __name__)
 TIERS = {"retail": "Retail", "trade": "Trade", "maintenance": "Maintenance"}
@@ -214,10 +215,12 @@ def native_work_record(work_id):
     with connect() as db:
         _schema(db)
         _tables(db)
-        row = db.execute("""SELECT w.*,d.customer_tier,c.name AS customer_name,
+        row = db.execute("""SELECT w.*,d.customer_tier,COALESCE(a.is_archived,0) AS is_archived,
+            c.name AS customer_name,
             c.email,c.phone,v.make,v.model,v.model_year,v.registration
             FROM hq_work_records w
             JOIN hq_native_work_details d ON d.work_id=w.id
+            LEFT JOIN hq_work_archive_state a ON a.work_id=w.id
             JOIN hq_customers c ON c.id=w.customer_id
             JOIN hq_vehicles v ON v.id=w.vehicle_id
             WHERE w.id=? AND w.source_request_id=?""",
@@ -239,12 +242,16 @@ def update_native_work(work_id, payload, expected_revision):
         _tables(db)
         db.execute("BEGIN IMMEDIATE")
         row = db.execute("""SELECT w.status,w.revision,w.service,w.notes,
-            w.preferred_date,w.preferred_time,d.customer_tier
+            w.preferred_date,w.preferred_time,d.customer_tier,
+            COALESCE(a.is_archived,0) AS is_archived
             FROM hq_work_records w JOIN hq_native_work_details d ON d.work_id=w.id
+            LEFT JOIN hq_work_archive_state a ON a.work_id=w.id
             WHERE w.id=? AND w.source_request_id=?""",
             (work_id, "HQ-" + work_id)).fetchone()
         if row is None:
             raise LookupError("Native work record not found")
+        if row["is_archived"]:
+            raise ValueError("Restore this archived record before editing it")
         if row["status"] not in ("draft", "ready_for_review"):
             raise ValueError("Approved or closed work cannot be edited here")
         changed = [key for key, value in fields.items() if value != row[key]]
@@ -652,3 +659,55 @@ def void_work_material_entry(work_id, entry_id):
         current_app.logger.exception("Material reversal unavailable")
         abort(503)
     return redirect(url_for(".edit_work_materials", work_id=work_id, voided="1"), 303)
+
+
+@native_work.route("/hq/work/archived", methods=["GET"])
+@required
+def archived_work_index():
+    """Owner-only list of archived native records, never a public endpoint."""
+    raw_offset = request.args.get("offset", "0")
+    if not re.fullmatch(r"[0-9]{1,6}", raw_offset) or int(raw_offset) > 100000:
+        abort(400)
+    try:
+        listing = list_archived_work(int(raw_offset))
+    except (OSError, sqlite3.Error):
+        current_app.logger.exception("Archived work list unavailable")
+        abort(503)
+    return render_template("hq_work_archive.html", listing=listing, current=None,
+                           csrf=session["csrf"], error=None)
+
+
+@native_work.route("/hq/work/<work_id>/archive", methods=["GET", "POST"])
+@required
+def archive_work(work_id):
+    """Versioned archive/restore. No lifecycle, payment or provider side effects."""
+    try:
+        current = archived_work_snapshot(work_id)
+    except (ValueError, LookupError):
+        abort(404)
+    except (OSError, sqlite3.Error):
+        current_app.logger.exception("Native work archive unavailable")
+        abort(503)
+    if request.method == "POST":
+        if request.content_length is None or request.content_length > 2048:
+            abort(413)
+        if not secrets.compare_digest(request.form.get("csrf", ""), session.get("csrf", "not-set")):
+            abort(403)
+        raw_revision = request.form.get("revision", "")
+        if not re.fullmatch(r"[0-9]{1,18}", raw_revision):
+            abort(400)
+        try:
+            set_work_archived(work_id, request.form.get("action", ""),
+                              int(raw_revision), request.form.get("operation_id", ""))
+        except (StaleWorkRecordError, ValueError) as exc:
+            latest = archived_work_snapshot(work_id)
+            return render_template("hq_work_archive.html", current=latest,
+                listing=None, csrf=session["csrf"], operation_id=uuid.uuid4().hex,
+                error=str(exc)), 409 if isinstance(exc, StaleWorkRecordError) else 400
+        except (OSError, sqlite3.Error):
+            current_app.logger.exception("Native work archive write unavailable")
+            abort(503)
+        return redirect(url_for(".archive_work", work_id=work_id, saved="1"), 303)
+    return render_template("hq_work_archive.html", current=current, listing=None,
+                           csrf=session["csrf"], operation_id=uuid.uuid4().hex,
+                           error=None)
