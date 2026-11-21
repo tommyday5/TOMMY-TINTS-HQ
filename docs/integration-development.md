@@ -517,3 +517,9 @@ the existing rolling snapshot. A successful result is historical provider
 evidence at inspection time, **not** a verified cash receipt. Separately
 obtain bank/payout evidence for any financial reconciliation. No live Square
 connection was exercised or authorised by the synthetic tests.
+
+### Square exact-reference review: request and HQ revision integrity (21 November 2026)
+
+The owner-only, **read-only** HQ job versus Square payment candidate comparison now rejects ambiguous native JSON instructions: duplicate JSON member names (including nested), unknown/missing fields, non-string references, malformed UTF-8/JSON and request bodies above 2,048 bytes. CSRF is checked **before** JSON decoding; an omitted Content-Length cannot bypass the bounded read. Existing form submissions remain supported. A valid request never calls Square; it compares only the configured-location cached snapshot with one exact HQ work record.
+
+The comparison now re-reads the authoritative HQ job after inspecting the cached Square payment. If the work revision, status, kind, selling price, planned deposit or source-request identity changed during the comparison, amount-match flags and the stale job figures are withheld and no candidate-complete result is emitted. This is **a race screen, not an atomic snapshot across two databases**: edits immediately after the second read are still possible. The review never marks a payment allocated, received, reconciled or bank-settled; no financial, customer, Sheets or Square record is changed. Real permissions, provider evidence, fees, independent payouts and owner-approved allocation remain outstanding. Synthetic regression tests cover revision/price/status races and invalid request envelopes. No integration readiness stage is advanced by these tests.
