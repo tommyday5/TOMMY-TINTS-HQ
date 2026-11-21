@@ -194,6 +194,31 @@ class PaymentReviewTests(unittest.TestCase):
         self.assertIsNone(response.json["provider_amount_pence"])
         self.assertFalse(response.json["job_marked_paid"])
 
+    def test_invalid_cached_row_cannot_be_offered_as_job_payment_candidate(self):
+        job_id = self.job()
+        self.seed()
+        self.owner()
+        with sqlite3.connect(square._path()) as db:
+            # The count and payment ID still match; only the signed financial
+            # evidence is contradictory. Withhold the entire local snapshot.
+            db.execute("UPDATE payments SET refunded_minor=9000 "
+                       "WHERE id='square-01'")
+        with patch.object(square.requests, "get") as provider:
+            result = compare_references(job_id, "square-01")
+            api = self.api(job_id)
+            provider.assert_not_called()
+        for evidence in (result, api.json):
+            self.assertFalse(evidence["snapshot_current"])
+            self.assertFalse(evidence["payment_evidence_found"])
+            self.assertFalse(evidence["matches_planned_deposit"])
+            self.assertFalse(evidence["candidate_evidence_complete"])
+            self.assertIsNone(evidence["provider_amount_pence"])
+            self.assertIsNone(evidence["reported_refund_pence"])
+            self.assertFalse(evidence["bank_settlement_verified"])
+            self.assertIsNone(evidence["verified_job_receipts_pence"])
+        self.assertIn("row coverage cannot be verified",
+                      " ".join(result["warnings"]))
+
     def test_auth_csrf_reference_validation_and_error_handling(self):
         job_id = self.job()
         self.seed()
