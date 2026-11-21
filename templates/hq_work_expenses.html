@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>Job expenses and overhead — Tommy Tints HQ</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#090a0f;color:#f4f5f7}
+*{box-sizing:border-box}body{margin:0;padding:clamp(12px,4vw,32px)}main{max-width:850px;margin:auto}
+h1{font-size:clamp(22px,4vw,32px)}p,li{line-height:1.5}p,.hint{color:#bec3ce}a{color:#ff737c}
+.panel{background:#181b21;border:1px solid #3b3d43;border-radius:14px;padding:clamp(14px,3vw,25px);margin:16px 0}
+.notice{border-left:4px solid #f2cb24;background:#302719;padding:12px}
+.error{border-left:4px solid #ff5e65;background:#401b23;padding:12px}
+.success{border-left:4px solid #8cdb9f;background:#1a3227;padding:12px}
+label{display:block;font-weight:650;margin:14px 0 7px}
+input,select{background:#0d1118;border:1px solid #555962;border-radius:8px;color:white;padding:12px;font:inherit;width:100%}
+button{background:#da132b;border:1px solid #ff314a;border-radius:8px;color:white;font:inherit;font-weight:700;padding:11px 15px;cursor:pointer}
+button.secondary{background:#262b33;border-color:#666}
+button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid #f2cb24;outline-offset:3px}
+li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
+</style></head><body><main>
+<nav><a href="/hq/work/{{ work.id }}/edit">← Edit job</a> · <a href="/hq/work/{{ work.id }}/costs">Combined costs</a> · <a href="/hq/work/{{ work.id }}/time">Time</a> · <a href="/hq/work/{{ work.id }}/materials">Materials</a></nav>
+<h1>Other expenses and overhead · {{ work.id[:10] }}</h1>
+<section class="panel">
+<p><strong>{{ work.customer_name }}</strong> · {{ work.make }} {{ work.model }} · {{ work.registration }}</p>
+<p>{{ work.service }} · {{ work.status.replace('_',' ') }} · HQ revision {{ work.revision }}</p>
+<p>{{ work.entry_count }} active expense allocations.</p>
+{% if work.actual_expenses_pence is not none %}
+<p>Recorded expense allocation: <strong>£{{ '%.2f'|format(work.actual_expenses_pence/100) }}</strong>.</p>
+{% elif work.entry_count %}
+<p>Full expense allocation: <strong>unknown</strong> — {{ work.unknown_cost_count }} active entries have no actual cost.</p>
+{% else %}<p>Expense allocation: <strong>not recorded</strong>, not assumed to be zero.</p>{% endif %}
+{% if work.known_cost_subtotal_pence is not none and work.unknown_cost_count %}
+<p>Known portion only: £{{ '%.2f'|format(work.known_cost_subtotal_pence/100) }}.</p>{% endif %}
+<p class="notice">Private, manually allocated job costs only. Enter each expense once, excluding anything already recorded in materials or labour. This does not prove supplier invoices, payment, VAT basis, overall overhead coverage, final profit or bank settlement. Historic manual costing and Google Sheets remain separate.</p>
+</section>
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+{% if request.args.get("saved") == "1" %}<p class="success" role="status">Job expense saved.</p>{% endif %}
+{% if request.args.get("voided") == "1" %}<p class="success" role="status">Expense reversed; original history preserved.</p>{% endif %}
+{% if request.args.get("conflict") == "1" %}<p class="error" role="alert">This job changed. Review the latest revision.</p>{% endif %}
+{% if work.can_edit_expenses %}
+<form class="panel" method="post" action="/hq/work/{{ work.id }}/expenses">
+<h2>Record actual job expense</h2>
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="revision" value="{{ work.revision }}">
+<input type="hidden" name="operation_id" value="{{ operation_id }}">
+<label for="expense_type">Allocation category</label>
+<select id="expense_type" name="expense_type" required>
+<option value="">Select category</option>
+{% for key,label in expense_types.items() %}
+<option value="{{ key }}" {% if values.get('expense_type') == key %}selected{% endif %}>{{ label }}</option>
+{% endfor %}
+</select>
+<label for="description">Expense description</label>
+<input id="description" name="description" maxlength="100" required value="{{ values.get('description','') }}" placeholder="e.g. Allocated booth power, outsourced wheel repair">
+<label for="allocated_cost_pence">Actual allocated cost in pence (leave blank if unknown)</label>
+<input id="allocated_cost_pence" name="allocated_cost_pence" type="number" min="0" max="100000000" step="1" value="{{ values.get('allocated_cost_pence','') }}" placeholder="500 means £5.00">
+<p class="hint">An explicit zero is only for a verified free allocation. Blank means the real cost is unknown.</p>
+<label for="source_note">Private evidence or allocation method (optional)</label>
+<input id="source_note" name="source_note" maxlength="160" value="{{ values.get('source_note','') }}" placeholder="e.g. Supplier invoice reviewed or monthly cost / approved jobs">
+<p class="hint">Saves advance the canonical job revision. Retry with the same operation ID cannot duplicate a cost.</p>
+<button type="submit">Save actual expense</button>
+</form>
+{% else %}<div class="panel"><p>New expenses and corrections are available only on approved or in-progress jobs. Closed job evidence is read-only.</p></div>{% endif %}
+<section class="panel"><h2>Expense history</h2>
+{% if work.entries %}<ol>
+{% for entry in work.entries %}
+<li><strong>{{ expense_types[entry.expense_type] }} · {{ entry.description }}</strong>
+{% if entry.voided_at %}<strong> · REVERSED</strong>{% endif %}
+<p>{% if entry.allocated_cost_pence is none %}Actual cost unknown{% else %}Allocated £{{ '%.2f'|format(entry.allocated_cost_pence/100) }}{% endif %}
+{% if entry.source_note %} · {{ entry.source_note }}{% endif %}</p>
+<p><time datetime="{{ entry.created_at }}">{{ entry.created_at }}</time></p>
+{% if work.can_edit_expenses and not entry.voided_at %}
+<form method="post" action="/hq/work/{{ work.id }}/expenses/{{ entry.entry_id }}/void">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="revision" value="{{ work.revision }}">
+<button class="secondary" type="submit">Reverse mistaken expense</button>
+</form>{% endif %}
+</li>{% endfor %}
+</ol>{% else %}<p>No expenses have yet been allocated to this HQ job.</p>{% endif %}
+{% if work.history_truncated %}<p>Latest 100 entries displayed; full evidence is kept in SQLite.</p>{% endif %}
+</section>
+</main></body></html>

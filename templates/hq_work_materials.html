@@ -19,7 +19,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{ou
 li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 @media(max-width:600px){.grid{grid-template-columns:1fr}}
 </style></head><body><main>
-<p><a href="/hq/work/{{ work.id }}/edit">← Edit job</a> · <a href="/hq/work/{{ work.id }}/time">Workshop time</a> · <a href="/hq/work/{{ work.id }}/costs">Combined job costs</a> · <a href="/?page=jobs">HQ job cards</a></p>
+<p><a href="/hq/work/{{ work.id }}/edit">← Edit job</a> · <a href="/hq/work/{{ work.id }}/time">Workshop time</a> · <a href="/hq/work/{{ work.id }}/expenses">Expenses / overhead</a> · <a href="/hq/work/{{ work.id }}/costs">Combined job costs</a> · <a href="/?page=jobs">HQ job cards</a></p>
 <h1>Materials used · {{ work.id[:10] }}</h1>
 <section class="panel">
 <p><strong>{{ work.customer_name }}</strong> · {{ work.make }} {{ work.model }} · {{ work.registration }}</p>
