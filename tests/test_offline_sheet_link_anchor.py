@@ -1,5 +1,4 @@
 """Synthetic-only detached candidate ledger HMAC tests; no production access."""
-import hashlib
 import json
 import sqlite3
 import unittest
