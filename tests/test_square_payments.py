@@ -1,4 +1,5 @@
 """Square payment evidence must never be mistaken for verified HQ job receipts."""
+from datetime import datetime, timedelta, timezone
 import os
 from pathlib import Path
 import sqlite3
@@ -34,10 +35,11 @@ class SquarePaymentEvidenceTests(unittest.TestCase):
             sess["csrf"] = "owner-csrf"
 
     def payment(self, status="COMPLETED", ref="square-pmt-01", refund=None):
+        created = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(days=2)
         record = {"id": ref, "status": status, "location_id": "location-one",
                   "total_money": {"amount": 35000, "currency": "GBP"},
-                  "created_at": "2026-11-17T11:00:00Z",
-                  "updated_at": "2026-11-17T11:01:00Z",
+                  "created_at": created.isoformat(),
+                  "updated_at": (created + timedelta(minutes=1)).isoformat(),
                   "card_details": {"card": {"last_4": "9999"}},
                   "buyer_email_address": "private@example.invalid",
                   "reference_id": "untrusted-free-text"}
@@ -113,7 +115,8 @@ class SquarePaymentEvidenceTests(unittest.TestCase):
                           return_value=self.page([self.payment()])):
             self.assertEqual(square.refresh_payments(), 1)
         reversed_dates = self.payment(ref="replacement")
-        reversed_dates["updated_at"] = "2026-11-17T10:59:00Z"
+        reversed_dates["updated_at"] = (datetime.fromisoformat(
+            reversed_dates["created_at"]) - timedelta(minutes=1)).isoformat()
         future_dates = self.payment(ref="replacement")
         future_dates["created_at"] = "2099-11-17T11:00:00Z"
         future_dates["updated_at"] = "2099-11-17T11:01:00Z"
@@ -130,16 +133,65 @@ class SquarePaymentEvidenceTests(unittest.TestCase):
                 self.assertEqual(state["payments"][0]["id"], "square-pmt-01")
                 self.assertFalse(state["bank_settlement_verified"])
 
+    def test_provider_out_of_window_payment_does_not_replace_good_snapshot(self):
+        # Square's begin_time/end_time filter Payment.created_at, not updated_at.
+        # Reject contradictory source coverage before any SQLite write.
+        with patch.object(square.requests, "get",
+                          return_value=self.page([self.payment()])):
+            self.assertEqual(square.refresh_payments(), 1)
+        outside = self.payment(ref="outside-window")
+        past = datetime.now(timezone.utc) - timedelta(days=35)
+        outside["created_at"] = past.isoformat()
+        outside["updated_at"] = (past + timedelta(minutes=1)).isoformat()
+        with patch.object(square.requests, "get",
+                          return_value=self.page([outside])):
+            with self.assertRaisesRegex(ValueError, "outside requested window"):
+                square.refresh_payments()
+        state = square.read_snapshot()
+        self.assertTrue(state["snapshot_available"])
+        self.assertEqual(state["payment_count"], 1)
+        self.assertEqual(state["payments"][0]["id"], "square-pmt-01")
+        self.assertFalse(state["bank_settlement_verified"])
+
+    def test_cached_window_contradiction_withholds_full_snapshot(self):
+        # Even valid monetary and timestamp rows are unsafe if their creation
+        # dates contradict the cached source window's own metadata.
+        for metadata_change in (False, True):
+            with self.subTest(metadata_change=metadata_change):
+                with patch.object(square.requests, "get",
+                                  return_value=self.page([self.payment()])):
+                    square.refresh_payments()
+                with sqlite3.connect(square._path()) as db:
+                    if metadata_change:
+                        later_start = (datetime.now(timezone.utc)
+                                       - timedelta(days=1)).isoformat()
+                        db.execute("UPDATE snapshot SET window_start=?", (later_start,))
+                    else:
+                        old_created = (datetime.now(timezone.utc)
+                                       - timedelta(days=35)).isoformat()
+                        db.execute("UPDATE payments SET created_at=?", (old_created,))
+                with patch.object(square.requests, "get") as upstream:
+                    state = square.read_snapshot()
+                    upstream.assert_not_called()
+                self.assertTrue(state["integrity_issue"])
+                self.assertFalse(state["snapshot_available"])
+                self.assertIsNone(state["payment_count"])
+                self.assertEqual(state["payments"], [])
+                self.assertFalse(state["bank_settlement_verified"])
+
     def test_payment_timestamp_order_uses_utc_not_local_clock_strings(self):
         # A later updated_at can have an earlier-looking local wall time.
         item = self.payment()
-        item["created_at"] = "2026-11-17T11:00:00+01:00"
-        item["updated_at"] = "2026-11-17T10:01:00Z"
+        created_utc = datetime.fromisoformat(item["created_at"])
+        item["created_at"] = created_utc.astimezone(
+            timezone(timedelta(hours=1))).isoformat()
+        item["updated_at"] = (created_utc + timedelta(minutes=1)).isoformat()
         with patch.object(square.requests, "get", return_value=self.page([item])):
             self.assertEqual(square.refresh_payments(), 1)
         row = square.read_snapshot()["payments"][0]
-        self.assertEqual(row["created_at"], "2026-11-17T10:00:00+00:00")
-        self.assertEqual(row["updated_at"], "2026-11-17T10:01:00+00:00")
+        self.assertEqual(row["created_at"], created_utc.isoformat())
+        self.assertEqual(row["updated_at"],
+                         (created_utc + timedelta(minutes=1)).isoformat())
 
     def test_payment_pagination_rejects_oversized_pages_and_ambiguous_cursors(self):
         # Never replace a previously complete, source-scoped snapshot merely
@@ -225,7 +277,7 @@ class SquarePaymentEvidenceTests(unittest.TestCase):
             "UPDATE payments SET refunded_minor=35001",
             "UPDATE payments SET currency='BAD!'",
             "UPDATE payments SET id='bad id'",
-            "UPDATE payments SET updated_at='2026-11-17T10:59:00Z'",
+            "UPDATE payments SET updated_at='2000-01-01T00:00:00Z'",
             "UPDATE payments SET updated_at='2099-11-17T11:59:00Z'",
         )
         self.owner()
