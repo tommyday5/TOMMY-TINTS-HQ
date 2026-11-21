@@ -493,3 +493,27 @@ The existing bounded Square payments snapshot now checks every cached row's prov
 The existing `hq_square_payments.py` owner-triggered GET adapter requests a rolling 30-day `begin_time`/`end_time` window. Per Square's pinned ListPayments semantics this bounds **Payment.created_at**, so each upstream item is checked against those timestamps before the all-or-nothing SQLite snapshot commit. On subsequent read-only HQ views, the entire cached set (including records beyond the 50-row display) is checked against the stored window and creation/update chronology. Violations withhold all amounts, payment references and exact-reference candidate matches rather than asserting zero activity. The previous snapshot survives a rejected upstream refresh; a local corruption requires a fresh owner-initiated read.
 
 Provider responses can be eventually consistent; a 30-day creation window does **not** capture historical payments updated outside that period, prove complete refund/fee coverage, provide settlement data or authenticate bank cash. Synthetic tests include source rows outside the window, changed cached creation dates and altered cached window metadata. All receipts, job allocations, current Square permissions and reconciliations remain **unverified** until independent owner/provider evidence is obtained; there is no automated payment, booking, refund, email or financial writeback.
+
+
+### Owner-initiated exact historical Square payment inspection (21 November 2026)
+
+The existing authenticated `/hq/square-payment-evidence` page has an additional
+**GetPayment by exact ID** form. The rolling ListPayments snapshot is filtered by
+payment `created_at` and does not prove current refund status for every older
+payment. Given a known payment ID, the owner can manually request
+`GET /v2/payments/{payment_id}` with the existing read token (PAYMENTS_READ).
+The response is checked against the exact requested ID, configured seller
+location, status, timestamps and monetary bounds. Only minimal ID/status,
+currency, original amount and provider-reported refund are displayed. No buyer,
+card, customer identity or returned untrusted free text is rendered.
+
+The one-off inspection is **in memory only**: no persistent provider payload,
+customer/job match, readiness timestamp or committed-sync marker is written.
+It cannot establish complete historical coverage, source-side payout fees,
+bank settlement, receipt verification or approval to change any payment.
+GET page requests do not contact Square. Missing permissions, unavailable
+provider access and malformed/mismatched evidence fail closed without changing
+the existing rolling snapshot. A successful result is historical provider
+evidence at inspection time, **not** a verified cash receipt. Separately
+obtain bank/payout evidence for any financial reconciliation. No live Square
+connection was exercised or authorised by the synthetic tests.
