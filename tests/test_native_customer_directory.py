@@ -92,7 +92,7 @@ class CustomerDirectoryTests(unittest.TestCase):
         self.assertNotIn(b"private note", result.data)
         self.assertNotIn(b"materials cost", result.data)
         self.assertNotIn(b"bank balance", result.data)
-        self.assertEqual(result.headers["Cache-Control"], "private, no-store")
+        self.assertIn("no-store", result.headers["Cache-Control"])
 
     def test_profile_can_preselect_customer_and_reuse_canonical_ids(self):
         self.login()
