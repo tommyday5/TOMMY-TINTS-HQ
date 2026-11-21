@@ -158,12 +158,39 @@ def refresh_payments():
 
 
 
-def snapshot_metadata_consistent(db, meta):
-    """Validate bounded local snapshot coverage, not payment authenticity.
+def _stored_payment_consistent(row, refreshed):
+    """Revalidate one cached provider row before it can support owner review.
 
-    A count mismatch, impossible reporting window or future-dated refresh
-    cannot be evidence for a later exact-reference HQ job comparison.
-    Call on the same SQLite read transaction as the matching payment rows.
+    SQLite data can be altered after the provider adapter originally checked
+    it. This detects malformed or contradictory local evidence; it is NOT a
+    cryptographic attestation that a valid-looking row came from Square.
+    """
+    ref, status, total, refunded, currency, created, updated = row
+    if (type(ref) is not str or not 1 <= len(ref) <= 192
+            or any(ord(ch) < 33 or ord(ch) > 126 for ch in ref)
+            or type(status) is not str or status not in _STATUSES
+            or type(total) is not int or not 0 <= total <= 10**12
+            or (refunded is not None and
+                (type(refunded) is not int or not 0 <= refunded <= total))
+            or type(currency) is not str or len(currency) != 3
+            or not currency.isascii() or not currency.isalpha()
+            or currency != currency.upper()):
+        return False
+    try:
+        created_at = datetime.fromisoformat(_timestamp(created))
+        updated_at = datetime.fromisoformat(_timestamp(updated))
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return created_at <= updated_at <= refreshed + timedelta(minutes=5)
+
+
+def snapshot_metadata_consistent(db, meta):
+    """Validate all bounded cached rows and metadata on one SQLite snapshot.
+
+    A matching item count alone does not establish that cached monetary,
+    refund, status or timestamp evidence still satisfies provider rules.
+    Fail closed for the evidence list AND exact-reference job comparison.
+    Even consistent rows are not authenticated bank receipts or settlement.
     """
     count = meta["item_count"]
     if type(count) is not int or not 0 <= count <= 1000:
@@ -176,9 +203,16 @@ def snapshot_metadata_consistent(db, meta):
         refreshed = datetime.fromisoformat(_timestamp(meta["refreshed_at"]))
     except (TypeError, ValueError, OverflowError):
         return False
-    return (start < end <= refreshed
+    if not (start < end <= refreshed
             and end - start <= timedelta(days=31)
-            and refreshed <= datetime.now(timezone.utc) + timedelta(minutes=5))
+            and refreshed <= datetime.now(timezone.utc) + timedelta(minutes=5)):
+        return False
+    # Inspect every cached row, not just the first 50 displayed by HQ.
+    # The snapshot is limited to 1,000 rows by bounded provider pagination.
+    return all(_stored_payment_consistent(row, refreshed) for row in db.execute(
+        """SELECT id,status,total_minor,refunded_minor,currency,created_at,updated_at
+           FROM payments"""
+    ))
 
 
 def read_snapshot():
