@@ -245,6 +245,71 @@ class PaymentReviewTests(unittest.TestCase):
         self.assertNotIn(b"XX20ABC", posted.data)
         self.assertEqual(posted.headers["Cache-Control"], "no-store")
 
+    def test_changed_hq_revision_or_price_cannot_generate_stale_match(self):
+        job_id = self.job()
+        self.seed()
+        original = read_work_record(job_id)
+        self.assertTrue(compare_references(job_id, "square-01")["candidate_evidence_complete"])
+        variants = (
+            dict(original, revision=original["revision"] + 1),
+            dict(original, price_pence=original["price_pence"] + 1000),
+            dict(original, status="cancelled"),
+        )
+        for changed in variants:
+            with self.subTest(changed=changed), patch(
+                    "hq_payment_review.read_work_record",
+                    side_effect=[original, changed]) as job_read:
+                with patch.object(square.requests, "get") as upstream:
+                    result = compare_references(job_id, "square-01")
+                    upstream.assert_not_called()
+                self.assertEqual(job_read.call_count, 2)
+            self.assertTrue(result["payment_evidence_found"])
+            self.assertFalse(result["candidate_evidence_complete"])
+            self.assertFalse(result["matches_planned_deposit"])
+            self.assertFalse(result["matches_approved_price"])
+            self.assertIsNone(result["price_pence"])
+            self.assertIsNone(result["planned_deposit_pence"])
+            self.assertIn("work record changed", " ".join(result["warnings"]))
+            self.assertFalse(result["payment_verified_for_job"])
+            self.assertFalse(result["bank_settlement_verified"])
+
+    def test_api_rejects_duplicate_ambiguous_and_oversized_review_requests(self):
+        job_id = self.job()
+        self.seed()
+        self.owner()
+        base = '{"work_id":"' + job_id + '","payment_id":"square-01"'
+        bad_payloads = (
+            (base + ',"payment_id":"other"}', 400),
+            (base + ',"extra":true}', 400),
+            (base + ',"context":{"state":1,"state":2}}', 400),
+            ('{"work_id":"' + job_id + '","payment_id":false}', 400),
+            (base + ",", 400),
+            (base + ',"extra":"' + "X" * 2500 + '"}', 413),
+        )
+        with patch.object(square.requests, "get") as upstream:
+            for body, expected in bad_payloads:
+                with self.subTest(expected=expected, body_len=len(body)):
+                    response = self.client.post(
+                        "/api/hq/square-payment-review", data=body,
+                        content_type="application/json",
+                        headers={"X-HQ-CSRF": "csrf"})
+                    self.assertEqual(response.status_code, expected)
+            invalid_utf8 = self.client.post(
+                "/api/hq/square-payment-review", data=b'{"work_id":"\\xff"}'.replace(b'\\xff', bytes([255])),
+                content_type="application/json",
+                headers={"X-HQ-CSRF": "csrf"})
+            self.assertEqual(invalid_utf8.status_code, 400)
+            wrong_csrf = self.client.post(
+                "/api/hq/square-payment-review", data=base + ",",
+                content_type="application/json",
+                headers={"X-HQ-CSRF": "incorrect"})
+            self.assertEqual(wrong_csrf.status_code, 403)
+            upstream.assert_not_called()
+        valid = self.api(job_id)
+        self.assertEqual(valid.status_code, 200)
+        self.assertTrue(valid.json["candidate_evidence_complete"])
+        self.assertFalse(valid.json["payment_verified_for_job"])
+
     def test_no_credentials_or_snapshot_means_unknown_not_zero(self):
         job_id = self.job()
         missing = compare_references(job_id, "square-01")
