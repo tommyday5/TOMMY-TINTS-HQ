@@ -19,7 +19,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 @media(max-width:600px){.grid{grid-template-columns:1fr}}
 </style></head><body><main>
-<p><a href="/hq/work/{{ work.id }}/progress">← Workshop progress</a> · <a href="/?page=jobs">HQ job cards</a></p>
+<p><a href="/hq/work/{{ work.id }}/progress">← Workshop progress</a> · <a href="/?page=jobs">HQ job cards</a> · <a href="/hq/work/{{ work.id }}/materials">Record material usage</a></p>
 <h1>Actual workshop time · {{ work.id[:10] }}</h1>
 <section class="panel">
 <p><strong>{{ work.customer_name }}</strong> · {{ work.make }} {{ work.model }} · {{ work.registration }}</p>
