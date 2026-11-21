@@ -11,13 +11,14 @@ import json
 import re
 import sqlite3
 
+from hq_sheet_link_preflight import MAX_ROWS
 from hq_offline_sheet_link_proposals import (
     LinkProposalError, _id, inspect_offline_candidate_ledger,
 )
 
 _VERSION = 1
 _CONTEXT = b"tommy-tints/offline-sheet-link-head/v1\x00"
-_HEX_SHA256 = re.compile(r"[0-9a-f]{64}\\Z")
+_HEX_SHA256 = re.compile("[0-9a-f]{64}")
 
 
 def _validate_key(key):
@@ -89,7 +90,7 @@ def verify_detached_candidate_head(db, *, owner_scope, key, head):
             "source_authenticated", "approved", "live_sync", "reconciled",
         } or type(head["version"]) is not int or head["version"] != _VERSION
             or type(head["candidate_count"]) is not int
-            or not 0 <= head["candidate_count"] <= 2000
+            or not 0 <= head["candidate_count"] <= MAX_ROWS
             or type(head["event_count"]) is not int
             or head["event_count"] != head["candidate_count"]
             or type(head["digest"]) is not str
