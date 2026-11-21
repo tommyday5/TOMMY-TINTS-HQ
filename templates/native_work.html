@@ -43,7 +43,7 @@ button:disabled{opacity:.55;cursor:not-allowed}.secondary{background:#272b33;bor
 <p><strong>{{ record.customer_name }}</strong> · {{ record.email }} · {{ record.phone }}</p>
 <p>{{ record.make }} {{ record.model }} {{ record.model_year }} · {{ record.registration }}</p>
 <p>HQ work ID <code>{{ record.id }}</code> · {{ record.kind }} · {{ record.status }} · revision {{ record.revision }}</p>
-<p><a href="/hq/customers/{{ record.customer_id }}/edit">Edit linked customer/contact/address</a> · <a href="/?page=jobs">Review price, approval and costing in job cards</a></p>
+<p><a href="/hq/customers/{{ record.customer_id }}/edit">Edit linked customer/contact/address</a> · <a href="/hq/vehicles/{{ record.vehicle_id }}/edit">Edit linked vehicle</a> · <a href="/?page=jobs">Review price, approval and costing in job cards</a></p>
 </div>
 {% endif %}
 <form class="panel" method="post" action="{% if new %}/hq/work/new{% else %}/hq/work/{{ record.id }}/edit{% endif %}">

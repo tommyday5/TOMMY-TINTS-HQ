@@ -363,3 +363,133 @@ def edit_work(work_id):
         return redirect(url_for(".edit_work", work_id=work_id, saved="1"), 303)
     return render_template("native_work.html", new=False, record=current, values={},
         csrf=session["csrf"], services=sorted(SERVICES), tiers=TIERS, error=None)
+
+
+# Vehicle details are edited in their own versioned operation, rather than
+# silently changing a historical work record or reassigning ownership.
+VEHICLE_KEYS = ("make", "model", "model_year", "registration")
+
+
+def _vehicle_tables(db):
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_vehicle_edit_audit(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, vehicle_id TEXT NOT NULL,
+        changed_fields TEXT NOT NULL, changed_at TEXT NOT NULL)""")
+
+
+def _vehicle_revision(db, vehicle_id):
+    return db.execute(
+        "SELECT COALESCE(MAX(id),0) FROM hq_vehicle_edit_audit WHERE vehicle_id=?",
+        (vehicle_id,)).fetchone()[0]
+
+
+def _vehicle_fields(payload):
+    values = {
+        "make": _field(payload, "make", 60, True),
+        "model": _field(payload, "model", 60, True),
+        "model_year": _field(payload, "model_year", 4),
+        "registration": _field(payload, "registration", 20).upper(),
+    }
+    year = values["model_year"]
+    if year and (len(year) != 4 or not year.isascii() or not year.isdecimal()
+                 or not 1950 <= int(year) <= date.today().year + 1):
+        raise ValueError("Enter a valid vehicle year or leave it blank")
+    if not re.fullmatch(r"[A-Z0-9 -]*", values["registration"]):
+        raise ValueError("Enter a valid registration using letters, numbers, spaces or hyphens")
+    return values
+
+
+def native_vehicle_record(vehicle_id):
+    """Owner-facing vehicle snapshot, including durable revision and lock state."""
+    if not isinstance(vehicle_id, str) or not HEX_ID.fullmatch(vehicle_id):
+        raise ValueError("Invalid vehicle reference")
+    with connect() as db:
+        _schema(db)
+        _vehicle_tables(db)
+        db.execute("BEGIN")
+        row = db.execute("""SELECT v.*,c.name AS customer_name,
+            (SELECT COALESCE(MAX(a.id),0) FROM hq_vehicle_edit_audit a
+             WHERE a.vehicle_id=v.id) AS revision,
+            EXISTS(SELECT 1 FROM hq_work_records w WHERE w.vehicle_id=v.id
+                AND w.status NOT IN ('draft','ready_for_review')) AS locked
+            FROM hq_vehicles v JOIN hq_customers c ON c.id=v.customer_id
+            WHERE v.id=?""", (vehicle_id,)).fetchone()
+    if row is None:
+        raise LookupError("Vehicle not found")
+    return dict(row)
+
+
+def update_native_vehicle(vehicle_id, payload, expected_revision):
+    """Owner-only vehicle correction under a SQLite write lock.
+
+    Only vehicles with exclusively editable draft work may be updated.
+    Approved/closed work retains its historical vehicle identity until a
+    separately approved correction/versioning workflow is implemented.
+    """
+    if not isinstance(vehicle_id, str) or not HEX_ID.fullmatch(vehicle_id):
+        raise ValueError("Invalid vehicle reference")
+    if type(expected_revision) is not int or not 0 <= expected_revision < 2**63 - 1:
+        raise ValueError("Invalid vehicle revision")
+    values = _vehicle_fields(payload)
+    with connect() as db:
+        db.execute("PRAGMA foreign_keys=ON")
+        _schema(db)
+        _vehicle_tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("SELECT * FROM hq_vehicles WHERE id=?", (vehicle_id,)).fetchone()
+        if row is None:
+            raise LookupError("Vehicle not found")
+        changed = [k for k in VEHICLE_KEYS if values[k] != row[k]]
+        if not changed:
+            return _vehicle_revision(db, vehicle_id)
+        if db.execute("""SELECT 1 FROM hq_work_records WHERE vehicle_id=?
+            AND status NOT IN ('draft','ready_for_review') LIMIT 1""",
+            (vehicle_id,)).fetchone() is not None:
+            raise ValueError("A linked job is approved or closed. Vehicle details are locked to protect the work history.")
+        if _vehicle_revision(db, vehicle_id) != expected_revision:
+            raise StaleWorkRecordError("This vehicle changed since you opened the editor. Reload before saving.")
+        registration = values["registration"]
+        if registration and db.execute("""SELECT 1 FROM hq_vehicles
+            WHERE id != ? AND replace(upper(registration),' ','') =
+                replace(upper(?),' ','') LIMIT 1""",
+            (vehicle_id, registration)).fetchone() is not None:
+            raise ValueError("That registration is already used by another HQ vehicle. Review the existing record.")
+        db.execute("""UPDATE hq_vehicles SET make=?, model=?, model_year=?, registration=?
+            WHERE id=?""", (*(values[k] for k in VEHICLE_KEYS), vehicle_id))
+        # Store only changed field names. Never copy registration or vehicle
+        # identifiers into a second audit column beyond the stable vehicle ID.
+        db.execute("""INSERT INTO hq_vehicle_edit_audit(vehicle_id,changed_fields,changed_at)
+            VALUES (?,?,?)""", (vehicle_id, ",".join(changed), _now()))
+        return _vehicle_revision(db, vehicle_id)
+
+
+@native_work.route("/hq/vehicles/<vehicle_id>/edit", methods=["GET", "POST"])
+@required
+def edit_vehicle(vehicle_id):
+    try:
+        current = native_vehicle_record(vehicle_id)
+    except (ValueError, LookupError):
+        abort(404)
+    if request.method == "POST":
+        if request.content_length is None or request.content_length > 8192:
+            abort(413)
+        if not secrets.compare_digest(request.form.get("csrf", ""), session.get("csrf", "not-set")):
+            abort(403)
+        raw_revision = request.form.get("revision", "")
+        if not re.fullmatch(r"[0-9]{1,18}", raw_revision):
+            abort(400)
+        try:
+            update_native_vehicle(vehicle_id, request.form.to_dict(flat=True), int(raw_revision))
+        except StaleWorkRecordError as exc:
+            current = native_vehicle_record(vehicle_id)
+            return render_template("native_vehicle.html", vehicle=current, csrf=session["csrf"],
+                                   values={}, error=str(exc)), 409
+        except ValueError as exc:
+            current = native_vehicle_record(vehicle_id)
+            return render_template("native_vehicle.html", vehicle=current, csrf=session["csrf"],
+                                   values=request.form, error=str(exc)), 400
+        except (OSError, sqlite3.Error):
+            current_app.logger.exception("Native vehicle edit unavailable")
+            abort(503)
+        return redirect(url_for(".edit_vehicle", vehicle_id=vehicle_id, saved="1"), 303)
+    return render_template("native_vehicle.html", vehicle=current, csrf=session["csrf"],
+                           values={}, error=None)

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Edit HQ vehicle — Tommy Tints</title>
+<style>
+:root{color-scheme:dark;font-family:Inter,system-ui,sans-serif;background:#090a0f;color:#f4f5f7}
+*{box-sizing:border-box}body{margin:0;padding:clamp(14px,4vw,32px)}
+main{max-width:720px;margin:auto}.panel{background:#181b21;border:1px solid #3b3d43;border-radius:15px;padding:clamp(14px,3vw,28px);margin:16px 0}
+h1{font-size:clamp(23px,4vw,32px)}p{color:#b5bac5;line-height:1.5}
+a{color:#ff727c}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+label{display:block;font-weight:650;margin:12px 0 5px}
+input{background:#0d1118;border:1px solid #555962;border-radius:8px;color:white;padding:12px;width:100%;font:inherit;min-width:0}
+button{background:#da132b;border:1px solid #ff314a;color:white;font:inherit;font-weight:700;padding:12px 18px;border-radius:8px;cursor:pointer}
+.notice,.error,.success{padding:12px 15px;border-left:4px solid #f2cb24;background:#302719}
+.error{border-color:#ff5f68;background:#401b23}.success{border-color:#7ed99f;background:#1a3227}
+@media(max-width:600px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body><main>
+<p><a href="/?page=jobs">← Back to HQ job cards</a></p>
+<h1>Edit HQ vehicle</h1>
+<p>Linked customer: <strong>{{ vehicle.customer_name }}</strong>. Changes save to the persistent HQ database and update associated draft job cards. Google Sheets is not changed.</p>
+<p>Vehicle reference <code>{{ vehicle.id }}</code> · Revision {{ vehicle.revision }}</p>
+{% if request.args.get('saved') == '1' and not error %}<div class="success" role="status">Vehicle details saved. Reload to confirm the stored values.</div>{% endif %}
+{% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+{% if vehicle.locked %}
+<div class="notice" role="status">Editing is locked because an approved, active or closed work record references this vehicle. A future controlled correction workflow is required to protect historical job evidence.</div>
+{% else %}
+<form class="panel" method="post" action="{{ url_for('native_work.edit_vehicle',vehicle_id=vehicle.id) }}">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="revision" value="{{ vehicle.revision }}">
+<div class="grid">
+<div><label for="make">Make</label><input id="make" name="make" required maxlength="60" value="{{ values.get('make',vehicle.make) }}"></div>
+<div><label for="model">Model</label><input id="model" name="model" required maxlength="60" value="{{ values.get('model',vehicle.model) }}"></div>
+<div><label for="modelYear">Year (optional)</label><input id="modelYear" name="model_year" inputmode="numeric" maxlength="4" value="{{ values.get('model_year',vehicle.model_year) }}"></div>
+<div><label for="registration">Registration (optional)</label><input id="registration" name="registration" maxlength="20" value="{{ values.get('registration',vehicle.registration) }}"></div>
+</div>
+<p>Edits use optimistic version checks. A registration already linked to a different HQ vehicle must be reviewed, not automatically merged. Customer ownership cannot be reassigned here.</p>
+<button type="submit">Save vehicle details</button>
+</form>
+{% endif %}
+<p><a href="{{ url_for('customer_edits.internal_customer',customer_id=vehicle.customer_id) }}">Edit customer contact and address</a></p>
+</main></body></html>
