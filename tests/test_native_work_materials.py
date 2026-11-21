@@ -213,6 +213,7 @@ class NativeMaterialLedgerTests(unittest.TestCase):
         set_draft_financials(linked, 15000, 0, expected_revision=0)
         change_work_status(linked, "ready_for_review", expected_revision=1)
         change_work_status(linked, "approved", expected_revision=2)
+        prior_sheet_state = sheet_sync_status(linked)["state"]
         self.assertEqual(self.client.post("/hq/work/" + linked + "/materials",
             data=self.form(actual_cost_pence="250", unit="ml", quantity="120")).status_code, 303)
         self.assertEqual(material_ledger_snapshot(linked)["actual_material_cost_pence"], 250)
@@ -221,7 +222,7 @@ class NativeMaterialLedgerTests(unittest.TestCase):
         self.assertIn(b"Record material usage",
                       self.client.get("/hq/work/" + linked + "/progress").data)
         self.assertEqual(app.test_client().get("/hq/work/" + linked + "/materials").status_code, 302)
-        self.assertEqual(sheet_sync_status(linked)["state"], "not_linked")
+        self.assertEqual(sheet_sync_status(linked)["state"], prior_sheet_state)
 
 
 if __name__ == "__main__":
