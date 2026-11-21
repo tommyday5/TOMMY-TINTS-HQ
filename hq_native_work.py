@@ -20,6 +20,7 @@ from hq_work_progress import WORK_STAGES, work_progress_snapshot, record_work_pr
 from hq_work_time import time_ledger_snapshot, append_work_time, void_work_time
 from hq_work_materials import material_ledger_snapshot, append_work_material, void_work_material, UNITS
 from hq_work_archive import archived_work_snapshot, set_work_archived, list_archived_work
+from hq_work_cost_overview import cost_overview_snapshot
 
 native_work = Blueprint("native_work", __name__)
 TIERS = {"retail": "Retail", "trade": "Trade", "maintenance": "Maintenance"}
@@ -711,3 +712,20 @@ def archive_work(work_id):
     return render_template("hq_work_archive.html", current=current, listing=None,
                            csrf=session["csrf"], operation_id=uuid.uuid4().hex,
                            error=None)
+
+
+@native_work.get("/hq/work/<work_id>/costs")
+@required
+def work_cost_overview(work_id):
+    """Private, point-in-time recorded-cost report; never infer final profit."""
+    try:
+        snapshot = cost_overview_snapshot(work_id)
+    except (ValueError, LookupError):
+        abort(404)
+    except (OSError, sqlite3.Error):
+        current_app.logger.exception("Native work cost overview unavailable")
+        abort(503)
+    response = current_app.make_response(render_template(
+        "hq_work_cost_overview.html", work=snapshot))
+    response.headers["Cache-Control"] = "no-store"
+    return response
