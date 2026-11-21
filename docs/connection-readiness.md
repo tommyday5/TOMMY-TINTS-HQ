@@ -431,3 +431,9 @@ This remains non-atomic **read-only preflight**. An inserted formula that evalua
 ### Square payment timestamp consistency (21 November 2026)
 
 The owner-triggered, read-only Square payment snapshot now rejects records whose `updated_at` precedes `created_at` after UTC normalization or whose update time exceeds the local UTC clock by more than five minutes. A bad provider page cannot replace the previously committed snapshot; fixture tests cover reversed/future timestamps and equivalent offset representations. This is a local evidence sanity check, **not** proof of a valid Square token, authorised current access, provider accuracy, fees, refund settlement, HQ job payment or bank cash. Read/sync/reconciled stages must advance only from independently recorded provider evidence and approved bank reconciliation.
+
+### Square unchanged-version booking conflict protection (21 November 2026)
+
+The owner-triggered Square booking refresh now compares every returned booking against the already persisted record for its exact Square location and ID, inside the same SQLite writer transaction. A repeated version with a changed start time or status fails the complete refresh rather than silently displaying contradictory booking evidence. Identical replays remain idempotent, older versions do not overwrite newer snapshots and a higher version may update the record. Two fixture-only regression tests verify status/time conflicts and full-batch rollback. No bookings or confirmed appointments are created or changed remotely.
+
+A complete read and local version consistency do **not** verify present Square permissions, authoritative Calendar availability, customer identity, a canonical HQ appointment, an approved write or any bank receipt. The Square authorisation/read/sync/reconciled stages remain evidence-gated; genuine owner-authorised provider reads and independent identity checks are still needed before outbound bookings.

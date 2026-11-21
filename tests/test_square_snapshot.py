@@ -40,6 +40,46 @@ class SquareSnapshotTests(unittest.TestCase):
         self.assertEqual(dict(row), {"id": "booking", "status": "CANCELLED_BY_SELLER",
                                      "start_at": "2099-07-10T09:00:00+00:00"})
 
+    def test_same_version_contradiction_rejected_without_changing_existing_booking(self):
+        # The provider version is the concurrency boundary: a changed status
+        # or appointment time must be accompanied by a higher version.
+        with patch.object(square.requests, "get",
+                          return_value=self.response(3, "ACCEPTED")):
+            self.assertEqual(square.refresh_bookings(), 1)
+        for replacement in (
+                dict(status="CANCELLED_BY_SELLER"),
+                dict(start_at="2099-07-10T12:00:00+01:00")):
+            with self.subTest(replacement=replacement):
+                item = self.response(3, "ACCEPTED").json()["bookings"][0]
+                item.update(replacement)
+                with patch.object(square.requests, "get", return_value=Mock(
+                        json=Mock(return_value={"bookings": [item]}))):
+                    with self.assertRaisesRegex(RuntimeError, "unchanged booking version"):
+                        square.refresh_bookings()
+                with sqlite3.connect(square._path()) as db:
+                    self.assertEqual(db.execute(
+                        "SELECT version,status,start_at FROM bookings WHERE id='booking'"
+                    ).fetchone(), (3, "ACCEPTED", "2099-07-10T09:00:00+00:00"))
+        with patch.object(square.requests, "get",
+                          return_value=self.response(4, "CANCELLED_BY_SELLER")):
+            self.assertEqual(square.refresh_bookings(), 1)
+
+    def test_conflicting_version_in_multi_booking_page_rolls_back_entire_batch(self):
+        with patch.object(square.requests, "get",
+                          return_value=self.response(3, "ACCEPTED")):
+            square.refresh_bookings()
+        original = self.response(3, "ACCEPTED").json()["bookings"][0]
+        other = dict(original, id="new-booking", version=1)
+        conflict = dict(original, status="NO_SHOW")
+        with patch.object(square.requests, "get", return_value=Mock(
+                json=Mock(return_value={"bookings": [other, conflict]}))):
+            with self.assertRaisesRegex(RuntimeError, "unchanged booking version"):
+                square.refresh_bookings()
+        with sqlite3.connect(square._path()) as db:
+            self.assertEqual(db.execute(
+                "SELECT id,version,status FROM bookings"
+            ).fetchall(), [("booking", 3, "ACCEPTED")])
+
     def test_pagination_and_failure_do_not_write_a_partial_snapshot(self):
         with patch.object(square.requests, "get", side_effect=[
             self.response(3, "ACCEPTED", "next"), RuntimeError("failed page"),
