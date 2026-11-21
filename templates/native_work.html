@@ -22,7 +22,7 @@ button:disabled{opacity:.55;cursor:not-allowed}.secondary{background:#272b33;bor
 </style>
 </head>
 <body><main>
-<p><a href="/?page=jobs">← Back to HQ job cards</a></p>
+<p><a href="/?page=jobs">← Back to HQ job cards</a> · <a href="/hq/customers">Browse HQ customers</a></p>
 <h1>{% if new %}Create a native HQ quote or job{% else %}Edit HQ work {{ record.id[:10] }}{% endif %}</h1>
 <p>Saved directly to the private HQ database. The Google Sheets workbook stays unchanged. A preferred date is <strong>not</strong> a confirmed booking; a planned deposit is <strong>not</strong> a payment.</p>
 {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
