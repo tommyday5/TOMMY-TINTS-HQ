@@ -478,3 +478,7 @@ the existing rolling snapshot. A successful result is historical provider
 evidence at inspection time, **not** a verified cash receipt. Separately
 obtain bank/payout evidence for any financial reconciliation. No live Square
 connection was exercised or authorised by the synthetic tests.
+
+### Owner Square job/payment candidate integrity (21 November 2026)
+
+The existing /hq/square-payment-review and /api/hq/square-payment-review remain read-only. A positive candidate comparison now requires a second HQ work-record read after inspecting the cached Square payment: changed revisions, statuses, approved prices, planned deposits and work identity suppress the candidate and stale job amounts. This cannot provide a true cross-database lock or prevent an edit after the second read. The JSON API also rejects duplicate members, unknown fields, non-string IDs, malformed input and bodies over 2,048 bytes; CSRF validation precedes JSON parsing. These controls are fixture-tested only and do not call Square, alter jobs, allocate payments, update readiness observations, prove bank cash or produce a reconciled settlement. Owner action remains a real provider read and independent transaction/fee/settlement evidence before any approved allocation. The repository and owner-only UI definitions remain conservative.
