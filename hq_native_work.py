@@ -585,10 +585,10 @@ def void_work_time_entry(work_id, entry_id):
         abort(400)
     try:
         void_work_time(work_id, entry_id, int(revision), session.get("google_sub"))
-    except (ValueError, LookupError):
-        abort(400)
     except StaleWorkRecordError:
         return redirect(url_for(".edit_work_time", work_id=work_id, conflict="1"), 303)
+    except (ValueError, LookupError):
+        abort(400)
     except (OSError, sqlite3.Error, RuntimeError):
         current_app.logger.exception("Work time reversal unavailable")
         abort(503)
