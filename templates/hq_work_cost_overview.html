@@ -14,7 +14,7 @@ a:focus-visible,button:focus-visible{outline:2px solid #f2cb24;outline-offset:3p
 @media(max-width:600px){.grid{grid-template-columns:1fr}}
 @media print{body{background:white;color:black;padding:0}.panel{background:white;color:black;border:1px solid #555;break-inside:avoid}.number{color:black}p,.hint{color:#333}.no-print{display:none}.notice{background:white;color:black;border-color:#888}}
 </style></head><body><main>
-<nav class="no-print"><a href="/hq/work/{{ work.id }}/edit">← HQ work</a> · <a href="/hq/work/{{ work.id }}/time">Edit time ledger</a> · <a href="/hq/work/{{ work.id }}/materials">Edit material ledger</a> · <a href="/?page=jobs">Job cards</a></nav>
+<nav class="no-print"><a href="/hq/work/{{ work.id }}/edit">← HQ work</a> · <a href="/hq/work/{{ work.id }}/time">Edit time ledger</a> · <a href="/hq/work/{{ work.id }}/materials">Edit material ledger</a> · <a href="/hq/work/{{ work.id }}/expenses">Edit expense ledger</a> · <a href="/?page=jobs">Job cards</a></nav>
 <h1>Recorded job costs · {{ work.id[:10] }}</h1>
 <section class="panel">
 <p><strong>{{ work.customer_name }}</strong> · {{ work.make }} {{ work.model }} · {{ work.registration }}</p>
@@ -25,7 +25,7 @@ a:focus-visible,button:focus-visible{outline:2px solid #f2cb24;outline-offset:3p
 {% elif work.price_pence is not none %}
 <p>Unapproved draft selling price: £{{ '%.2f'|format(work.price_pence/100) }}. This is not agreed revenue.</p>
 {% else %}<p>Customer selling price: <strong>not recorded or approved</strong>.</p>{% endif %}
-<p class="notice">Private internal review only. These figures are recorded labour and consumed-material allocations, not final job costs or profit. Overhead, supplier evidence, subcontractors, other expenses, historical manual logs and VAT treatment remain unreconciled. A completed job does not mean paid.</p>
+<p class="notice">Private internal review only. These figures represent manually recorded labour, materials and additional expense allocations, not final job costs or profit. Supplier evidence, coverage of overhead and subcontractors, historical manual logs and VAT treatment remain unreconciled. A completed job does not mean paid.</p>
 </section>
 <div class="grid">
 <section class="panel">
@@ -56,6 +56,19 @@ a:focus-visible,button:focus-visible{outline:2px solid #f2cb24;outline-offset:3p
 </section>
 </div>
 <section class="panel">
+<h2>Other expenses and allocated overhead</h2>
+<p>{{ work.expense_entry_count }} active expense entries.</p>
+{% if work.expense_recorded_total_pence is not none %}
+<p class="number">£{{ '%.2f'|format(work.expense_recorded_total_pence/100) }}</p>
+<p>All recorded active expense entries have an explicit allocated cost.</p>
+{% elif work.expense_entry_count %}
+<p><strong>Total unknown</strong> — {{ work.expense_unknown_count }} expense entries lack a cost.</p>
+{% else %}<p><strong>Not recorded</strong> — do not assume no additional expenses.</p>{% endif %}
+{% if work.expense_known_pence is not none and work.expense_unknown_count %}
+<p>Known-cost portion only: £{{ '%.2f'|format(work.expense_known_pence/100) }}.</p>{% endif %}
+<p class="no-print"><a href="/hq/work/{{ work.id }}/expenses">Record / reverse actual expenses</a></p>
+</section>
+<section class="panel">
 <h2>Combined recorded ledger</h2>
 {% if work.recorded_labour_material_complete %}
 <p class="number">£{{ '%.2f'|format(work.recorded_labour_material_total_pence/100) }}</p>
@@ -66,10 +79,17 @@ a:focus-visible,button:focus-visible{outline:2px solid #f2cb24;outline-offset:3p
 {% else %}
 <p><strong>Not determinable.</strong> No rate-backed time or cost-backed material evidence has been recorded.</p>
 {% endif %}
+<h3>Three-ledger cost allocations (labour + materials + expenses)</h3>
+{% if work.recorded_three_ledger_complete %}
+<p class="number">£{{ '%.2f'|format(work.recorded_three_ledger_total_pence/100) }}</p>
+<p>Complete for active entered lines across all three ledgers ONLY; additional unrecorded actual costs may exist.</p>
+{% elif work.partial_known_three_ledger_pence is not none %}
+<p>Known portion only: <strong>£{{ '%.2f'|format(work.partial_known_three_ledger_pence/100) }}</strong>. The three-ledger total is incomplete because some lines or cost categories are unknown/absent.</p>
+{% else %}<p>Not determinable without verified allocated costs.</p>{% endif %}
 <h3>Still requiring reconciliation</h3>
 <ul>{% for source in work.missing_sources %}<li>{{ source }}</li>{% endfor %}</ul>
 <p>Final job cost, contribution, profit, margin, invoices, cash receipts and bank balance are not calculated or verified here. This view excludes the existing manual profitability log to prevent double counting.</p>
 </section>
 <p class="no-print"><button type="button" onclick="window.print()">Print / save private review as PDF</button></p>
-<p class="hint">Read-only report sourced from one consistent HQ SQLite snapshot. Corrections are made in the versioned time and material editors. No Sheets, payments, bookings or notifications are changed.</p>
+<p class="hint">Read-only report sourced from one consistent HQ SQLite snapshot. Corrections are made in the versioned time, material and expense editors. No Sheets, payments, bookings or notifications are changed.</p>
 </main></body></html>
