@@ -1,6 +1,6 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HQ Products</title><link rel="stylesheet" href="/static/commerce.css"></head>
-<body><main><a href="/">Back to HQ</a><h1>Products</h1><p><a href="/book/shop">Preview shop</a> · <a href="/hq/shop/enquiries">Review customer basket enquiries</a> · <a href="/hq/maintenance/packages">Maintenance packages</a></p>
-<p>Each entry is a stock keeping variant. Amounts are in pence. Delivery uses the highest configured product delivery charge in the basket.</p>
+<body><main><a href="/">Back to HQ</a><h1>Products</h1><p><a href="/book/shop">Preview shop</a> · <a href="/hq/shop/enquiries">Review customer basket enquiries</a> · <a href="/hq/shop/stock">Stock movements &amp; corrections</a> · <a href="/hq/maintenance/packages">Maintenance packages</a></p>
+<p>Each entry is a stock keeping variant. Amounts are in pence. Delivery uses the highest configured product delivery charge in the basket. Editing stock here is also journalled; use Stock movements for goods received, used and counted with an evidence note.</p>
 {% if error %}<p role="alert">{{ error }}</p>{% endif %}
 {% macro editor(product) %}
 <form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ product.id or '' }}">
