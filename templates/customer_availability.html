@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>Request availability — Tommy Tints</title>
+<style>:root{color-scheme:dark;background:#090b10;color:white;font-family:system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;padding:clamp(12px,3vw,30px)}main{max-width:900px;margin:auto}
+a{color:#ff7887}p{color:#c4c8d1;line-height:1.5;overflow-wrap:anywhere}
+.card{background:#161921;border:1px solid #414854;border-radius:14px;margin:14px 0;padding:clamp(14px,3vw,22px)}
+label{display:block;margin:12px 0 6px}input,select,textarea,button{font:inherit;max-width:100%}
+input,select,textarea{width:100%;padding:10px;background:#10131a;color:white;border:1px solid #727785;border-radius:8px}
+button{background:#bd142e;color:white;border:1px solid #fa455b;border-radius:8px;font-weight:bold;padding:11px 16px;cursor:pointer}
+button.alt{background:#333842;border-color:#90949b}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid #fbd434;outline-offset:2px}
+.alert{border-color:#fbd434}code{overflow-wrap:anywhere}</style></head><body><main>
+<nav><a href="/customer/account">← My account</a> · <a href="/book">Tommy Tints Bookings</a></nav>
+<h1>Request an appointment preference</h1>
+<p>You can request a preferred date for approved work. This does <strong>not</strong> reserve an appointment. Tommy Tints must review it, check actual availability, and confirm any booking separately. No payment is taken.</p>
+{% if saved %}<div class="card" role="status">Request updated. It is not a confirmed appointment.</div>{% endif %}
+{% if error %}<div class="card alert" role="alert">{{ error }}</div>{% endif %}
+<section class="card"><h2>New availability request</h2>
+{% if works %}
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="operation_id" value="{{ operation_id }}">
+<input type="hidden" name="action" value="request">
+<label for="work">Approved quote or job</label>
+<select id="work" name="work_id" required>
+{% for work in works %}<option value="{{ work.id }}">{{ work.service }} · {{ work.registration or 'Vehicle not registered' }} · {{ work.id[:8] }}</option>{% endfor %}
+</select>
+<label for="date">Preferred date (not confirmed)</label><input id="date" name="date" type="date" required>
+<label for="time">Preferred hour</label><select id="time" name="time" required>
+{% for hour in ['09:00','10:00','11:00','12:00','13:00','14:00','15:00'] %}<option value="{{ hour }}">{{ hour }}</option>{% endfor %}
+</select>
+<label for="note">Additional information (optional, max 500 characters)</label>
+<textarea id="note" name="note" maxlength="500" rows="3"></textarea>
+<p>Submitting requests review only; these times are not live slot availability.</p>
+<button type="submit">Send availability request</button>
+</form>
+{% else %}<p>No approved active work is available for a new request. You can submit a general enquiry from <a href="/book">Bookings</a>.</p>{% endif %}
+</section>
+<h2>My availability requests</h2>
+{% for item in items %}<article class="card">
+<h3>{{ item.service }} · {{ item.registration or 'Vehicle not registered' }}</h3>
+<p>Requested: {{ item.requested_date }} at {{ item.requested_time }} · <strong>{{ item.status|title }}</strong></p>
+{% if item.note %}<p>{{ item.note }}</p>{% endif %}
+{% if item.offered_date and item.status == 'offered' %}
+<p><strong>Tentative offer:</strong> {{ item.offered_date }} at {{ item.offered_time }}. This remains unconfirmed until Tommy Tints separately confirms the booking.</p>
+{% endif %}
+{% if item.owner_message %}<p>Tommy Tints: {{ item.owner_message }}</p>{% endif %}
+{% if item.status in ('requested','offered') %}
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="action" value="withdraw">
+<input type="hidden" name="request_id" value="{{ item.id }}">
+<input type="hidden" name="revision" value="{{ item.revision }}">
+<button type="submit" class="alt">Withdraw request</button>
+</form>{% endif %}
+</article>{% else %}<div class="card"><p>You have no availability requests yet.</p></div>{% endfor %}
+<p>These are private HQ records. Dates, proposed offers and completed work must never be interpreted as confirmed appointments, invoices or payments.</p>
+</main></body></html>
