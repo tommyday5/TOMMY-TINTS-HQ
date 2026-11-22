@@ -77,6 +77,11 @@ table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:12px;bor
 <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="revision" value="{{ record.revision }}">
 <button type="submit" name="action" value="{% if record.archived %}restore{% else %}archive{% endif %}">{% if record.archived %}Restore visit{% else %}Archive visit{% endif %}</button>
 </form></div>{% endif %}
+{% if record %}
+<div class="panel"><h2>Saved change history</h2>
+<p>Each change is revisioned. Historical field snapshots are retained privately for audit; no financial payment is inferred.</p>
+<ul>{% for event in events %}<li>Revision {{ event.revision }} — {{ event.action|title }} — {{ event.created_at }}</li>{% else %}<li>No history entries.</li>{% endfor %}</ul>
+</div>{% endif %}
 <script>
 (() => {
  const customer=document.getElementById('customer_id'), vehicle=document.getElementById('vehicle_id');
