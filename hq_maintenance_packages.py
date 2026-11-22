@@ -18,6 +18,11 @@ from hq_auth import required
 from hq_core_records import _schema
 from hq_customer_portal import active_customer
 from hq_native_maintenance import _options
+from hq_maintenance_entitlements import (
+    _tables as entitlement_tables, _count as linked_count, usage as entitlement_usage,
+    candidates as entitlement_candidates, plan_links, history as entitlement_history,
+    change_link,
+)
 
 maintenance_plans = Blueprint("maintenance_plans", __name__)
 HEX = re.compile(r"[0-9a-f]{32}\Z")
@@ -196,6 +201,15 @@ def save_plan(form, *, plan_id=None, expected_revision=None, actor="owner"):
                 after = {**values, "archived": 0}
                 if before == after:
                     return plan_id
+                entitlement_tables(db)
+                any_links = db.execute("""SELECT 1 FROM hq_maintenance_plan_visit_links
+                    WHERE plan_id=? AND active=1 LIMIT 1""", (plan_id,)).fetchone()
+                if any_links and any(before[k] != after[k] for k in
+                                     ("customer_id", "vehicle_id", "service")):
+                    raise ValueError("Unlink completed visits before changing the plan identity or service")
+                if (values["visits_included"] is not None and
+                        linked_count(db, plan_id) > values["visits_included"]):
+                    raise ValueError("Included visits cannot be lower than completed linked usage")
                 db.execute("""UPDATE hq_maintenance_plans SET
                     customer_id=?,vehicle_id=?,plan_name=?,service=?,frequency=?,
                     next_due=?,status=?,visit_price_pence=?,visits_included=?,
@@ -271,6 +285,19 @@ def plan_history(plan_id):
         return [dict(row) for row in db.execute("""SELECT revision,action,created_at
             FROM hq_maintenance_plan_audit WHERE plan_id=?
             ORDER BY revision DESC LIMIT 100""", (plan_id,))]
+
+
+def _entitlement_view(plan_id):
+    with connect() as db:
+        _schema(db)
+        _tables(db)
+        entitlement_tables(db)
+        linked = plan_links(db, plan_id)
+        return dict(entitlement=entitlement_usage(db, plan_id),
+                    linked_visits=linked, candidate_visits=entitlement_candidates(db, plan_id),
+                    link_events=entitlement_history(db, plan_id),
+                    link_operation_id=uuid.uuid4().hex,
+                    unlink_operations={item["visit_id"]: uuid.uuid4().hex for item in linked})
 
 
 def _csrf():
@@ -350,6 +377,16 @@ def owner_edit(plan_id):
             elif action == "save":
                 save_plan(request.form.to_dict(), plan_id=plan_id,
                           expected_revision=revision, actor=session.get("google_sub", "owner"))
+            elif action in ("link_visit", "unlink_visit"):
+                raw_link_revision = request.form.get("link_revision", "")
+                if action == "unlink_visit" and not re.fullmatch(r"(?:0|[1-9][0-9]{0,9})", raw_link_revision):
+                    abort(400)
+                change_link(plan_id, request.form.get("visit_id", ""),
+                            action="link" if action == "link_visit" else "unlink",
+                            operation_id=request.form.get("operation_id", ""),
+                            plan_revision=revision,
+                            link_revision=int(raw_link_revision) if action == "unlink_visit" else None,
+                            actor=session.get("google_sub", "owner"))
             else:
                 abort(400)
             return redirect("/hq/maintenance/plans/" + plan_id + "?saved=1", code=303)
@@ -357,17 +394,20 @@ def owner_edit(plan_id):
         return render_template("hq_maintenance_plans.html", listing=False, new=False,
                                record=record, values=record, customers=customers, vehicles=vehicles,
                                csrf=session["csrf"], frequencies=FREQUENCIES, statuses=STATUSES,
-                               error=None, events=plan_history(plan_id))
+                               error=None, events=plan_history(plan_id),
+                               **_entitlement_view(plan_id))
     except (ValueError, LookupError) as exc:
         if request.method == "GET":
             abort(404)
         record = plan_snapshot(plan_id)
         customers, vehicles = _options("", record["customer_id"])
         return render_template("hq_maintenance_plans.html", listing=False, new=False,
-                               record=record, values=request.form.to_dict(), customers=customers,
-                               vehicles=vehicles, csrf=session["csrf"], frequencies=FREQUENCIES,
-                               statuses=STATUSES, error=str(exc),
-                               events=plan_history(plan_id)), 409
+                               record=record,
+                               values=record if request.form.get("action") in ("link_visit", "unlink_visit")
+                               else request.form.to_dict(),
+                               customers=customers, vehicles=vehicles, csrf=session["csrf"],
+                               frequencies=FREQUENCIES, statuses=STATUSES, error=str(exc),
+                               events=plan_history(plan_id), **_entitlement_view(plan_id)), 409
     except (OSError, sqlite3.Error):
         current_app.logger.exception("Maintenance plan unavailable")
         abort(503)
@@ -382,12 +422,14 @@ def customer_index():
         with connect() as db:
             _schema(db)
             _tables(db)
-            rows = [dict(row) for row in db.execute("""SELECT p.id,p.plan_name,p.service,
+            rows = [dict(row) for row in db.execute("""SELECT p.id,p.plan_name,p.service,p.visits_included,
                 p.frequency,p.next_due,p.status,v.make,v.model,v.registration
                 FROM hq_maintenance_plans p JOIN hq_vehicles v
                 ON v.id=p.vehicle_id AND v.customer_id=p.customer_id
                 WHERE p.customer_id=? AND p.portal_visible=1 AND p.archived=0
                 ORDER BY p.updated_at DESC,p.id DESC LIMIT 100""", (customer_id,))]
+            for row in rows:
+                row["entitlement"] = entitlement_usage(db, row["id"])
         return render_template("customer_maintenance_plans.html", plans=rows)
     except (OSError, sqlite3.Error):
         current_app.logger.exception("Customer maintenance plans unavailable")
