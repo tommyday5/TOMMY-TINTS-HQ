@@ -11,6 +11,7 @@
 <p><strong>Owner-reviewed quote: £{{ '%.2f'|format(e.approved_total_pence/100) }}</strong></p><p>{{ e.public_note }}</p>
 {% else %}<p>Price requires owner review. No payment has been taken.</p>{% endif %}
 {% if e.approved_lines %}
+<p><a href="/customer/service-enquiries/{{ e.id }}/quote.pdf">Download approved quote PDF</a> · Private, for your verified account only.</p>
 <p><strong>Approved itemised services</strong> (included in the total above):</p>
 <ul>{% for item in e.approved_lines %}<li>{{ item.service }} — £{{ '%.2f'|format(item.amount_pence/100) }}</li>{% endfor %}</ul>
 {% endif %}
