@@ -1,0 +1,14 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>My service quotes · Tommy Tints</title><link rel="stylesheet" href="/static/commerce.css"></head><body><main>
+<p><a href="/customer/account">← Account</a> · <a href="/book/services">New service enquiry</a></p>
+<h1>My service quote enquiries</h1>
+<p>Private requests for your verified HQ customer account only. Owner-reviewed quotes are not confirmed jobs, bookings, invoices or payments.</p>
+{% if request.args.get('saved') %}<p role="status">Request saved. Tommy Tints must review it before confirming any price or booking.</p>{% endif %}
+{% for e in enquiries %}<article>
+<h2>{{ e.status|title }} · {{ e.created_at[:10] }}</h2><p>{{ e.make }} {{ e.model }} · {{ e.registration or 'Registration not recorded' }}</p>
+<p>Reference <code>{{ e.id }}</code> · {{ e.requested_tier|title }} requested (not verified)</p>
+<ul>{% for s in e.services %}<li>{{ s }}</li>{% endfor %}</ul>
+{% if e.status == 'quoted' and e.approved_total_pence is not none %}
+<p><strong>Owner-reviewed quote: £{{ '%.2f'|format(e.approved_total_pence/100) }}</strong></p><p>{{ e.public_note }}</p>
+{% else %}<p>Price requires owner review. No payment has been taken.</p>{% endif %}
+</article>{% else %}<p>You have no service enquiries yet.</p>{% endfor %}
+</main></body></html>
