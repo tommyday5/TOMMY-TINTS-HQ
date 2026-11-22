@@ -2,6 +2,7 @@
 from contextlib import contextmanager, closing
 from datetime import datetime, timezone
 import os
+import re
 from pathlib import Path
 import secrets
 import sqlite3
@@ -39,6 +40,16 @@ def database():
         db.execute("""CREATE TABLE IF NOT EXISTS commerce_audit (
             id TEXT PRIMARY KEY, action TEXT NOT NULL, reference TEXT NOT NULL,
             created TEXT NOT NULL)""")
+        # Additive inventory journal; never reconstruct historical supplier receipts.
+        db.execute("""CREATE TABLE IF NOT EXISTS commerce_stock_movements (
+            id TEXT PRIMARY KEY, operation_id TEXT NOT NULL UNIQUE,
+            product_id TEXT NOT NULL REFERENCES products(id),
+            movement TEXT NOT NULL, delta INTEGER NOT NULL,
+            before_quantity INTEGER NOT NULL, after_quantity INTEGER NOT NULL,
+            version_before INTEGER NOT NULL, version_after INTEGER NOT NULL,
+            note TEXT NOT NULL, actor TEXT NOT NULL, created_at TEXT NOT NULL)""")
+        db.execute("""CREATE INDEX IF NOT EXISTS commerce_stock_movements_product
+            ON commerce_stock_movements(product_id,created_at)""")
         db.execute("PRAGMA foreign_keys=ON")
         yield db
 
@@ -63,6 +74,27 @@ def text(value, name, limit, required=True):
     return value.strip()
 
 
+def _stock_event(db, operation_id, product_id, movement, delta, before, after,
+                 version_before, version_after, note, actor):
+    db.execute("""INSERT INTO commerce_stock_movements
+        (id,operation_id,product_id,movement,delta,before_quantity,after_quantity,
+         version_before,version_after,note,actor,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""", (
+        uuid.uuid4().hex, operation_id, product_id, movement, delta,
+        before, after, version_before, version_after, note, actor[:100], now()))
+
+
+def _ensure_stock_baseline(db, row):
+    """Legacy catalogue quantity is a snapshot, NOT reconciled historic stock."""
+    if not db.execute(
+        "SELECT 1 FROM commerce_stock_movements WHERE product_id=? LIMIT 1",
+        (row["id"],)
+    ).fetchone():
+        _stock_event(db, "legacy:" + row["id"], row["id"], "legacy_baseline",
+                     0, row["stock"], row["stock"], row["version"], row["version"],
+                     "Existing catalogue quantity, historical receipts not verified", "system")
+
+
 def save_product(data):
     if not isinstance(data, dict):
         raise ValueError("Invalid product")
@@ -83,12 +115,25 @@ def save_product(data):
         db.execute("BEGIN IMMEDIATE")
         if version == 0:
             db.execute("INSERT INTO products VALUES(?,?,?,?,?,?,?,?,?,?,1)", (ref, *values))
+            _stock_event(db, "opening:" + ref, ref, "declared_opening",
+                         0, values[6], values[6], 1, 1,
+                         "Owner-entered opening quantity; supplier evidence not verified", "owner")
         else:
+            previous = db.execute("SELECT * FROM products WHERE id=?", (ref,)).fetchone()
+            if not previous or previous["version"] != version:
+                raise ValueError("Product changed. Reload before saving.")
+            if previous["stock"] != values[6]:
+                _ensure_stock_baseline(db, previous)
             changed = db.execute("""UPDATE products SET name=?,variant=?,description=?,retail=?,trade=?,
                 cost=?,stock=?,delivery=?,published=?,version=version+1 WHERE id=? AND version=?""",
                 (*values, ref, version)).rowcount
             if not changed:
                 raise ValueError("Product changed. Reload before saving.")
+            if previous["stock"] != values[6]:
+                _stock_event(db, "catalogue:" + ref + ":" + str(version), ref,
+                             "catalogue_edit", values[6] - previous["stock"],
+                             previous["stock"], values[6], version, version + 1,
+                             "Manual catalogue quantity edit; evidence not verified", "owner")
         audit(db, "product_saved", ref)
     return ref
 
@@ -161,6 +206,90 @@ def visit_event(ref, event, delta, reason):
         db.execute("INSERT INTO visits VALUES(?,?,?,?,?,?)", (uuid.uuid4().hex, ref, event, delta, reason, now()))
         audit(db, "visit_event", ref)
     return True
+
+
+STOCK_MOVEMENTS = {"received": 1, "used": -1, "correction_in": 1, "correction_out": -1}
+
+
+def record_stock_movement(product_id, operation_id, expected_version,
+                          movement, quantity, note, actor="owner"):
+    """Append-only stock correction with transaction, revision and replay protection."""
+    if not isinstance(product_id, str) or not re.fullmatch(r"[0-9a-f]{32}", product_id):
+        raise ValueError("Invalid product")
+    if not isinstance(operation_id, str) or not re.fullmatch(r"[0-9a-f]{32}", operation_id):
+        raise ValueError("Invalid stock operation")
+    if type(expected_version) is not int or expected_version < 1 or expected_version > 100000000:
+        raise ValueError("Invalid stock revision")
+    if movement not in STOCK_MOVEMENTS:
+        raise ValueError("Invalid stock movement")
+    if type(quantity) is not int or not 1 <= quantity <= 100000:
+        raise ValueError("Quantity must be between 1 and 100000")
+    note = text(note, "stock evidence note", 300)
+    if len(note) < 5:
+        raise ValueError("Explain why the stock changed")
+    delta = STOCK_MOVEMENTS[movement] * quantity
+    with database() as db:
+        db.execute("BEGIN IMMEDIATE")
+        previous_operation = db.execute(
+            "SELECT * FROM commerce_stock_movements WHERE operation_id=?",
+            (operation_id,)).fetchone()
+        if previous_operation:
+            if (previous_operation["product_id"], previous_operation["movement"],
+                previous_operation["delta"], previous_operation["note"],
+                previous_operation["version_before"]) != (
+                    product_id, movement, delta, note, expected_version):
+                raise ValueError("Operation ID was already used for a different stock change")
+            return previous_operation["version_after"]
+        row = db.execute("SELECT id,stock,version FROM products WHERE id=?", (product_id,)).fetchone()
+        if row is None:
+            raise LookupError("Product not found")
+        if row["version"] != expected_version:
+            raise ValueError("Stock changed elsewhere; reload before adjusting")
+        after = row["stock"] + delta
+        if after < 0 or after > 100000:
+            raise ValueError("Insufficient stock or maximum stock exceeded")
+        _ensure_stock_baseline(db, row)
+        changed = db.execute(
+            "UPDATE products SET stock=?,version=version+1 WHERE id=? AND version=?",
+            (after, product_id, expected_version)).rowcount
+        if changed != 1:
+            raise ValueError("Stock changed elsewhere; reload before adjusting")
+        _stock_event(db, operation_id, product_id, movement, delta,
+                     row["stock"], after, expected_version, expected_version + 1,
+                     note, actor)
+        audit(db, "stock_movement", product_id)
+        return expected_version + 1
+
+
+@commerce.route("/hq/shop/stock", methods=["GET", "POST"])
+@required
+def stock_ledger():
+    error = None
+    if request.method == "POST":
+        protected_write()
+        raw_version = request.form.get("version", "")
+        raw_quantity = request.form.get("quantity", "")
+        if not re.fullmatch(r"[1-9][0-9]{0,8}", raw_version) or not re.fullmatch(
+                r"[1-9][0-9]{0,5}", raw_quantity):
+            abort(400)
+        try:
+            record_stock_movement(
+                request.form.get("product_id"), request.form.get("operation_id"),
+                int(raw_version), request.form.get("movement"), int(raw_quantity),
+                request.form.get("note", ""), session.get("google_sub", "owner"))
+            return redirect("/hq/shop/stock?saved=1", code=303)
+        except (ValueError, LookupError) as exc:
+            error = str(exc)
+        except (sqlite3.Error, OSError, RuntimeError):
+            abort(503)
+    with database() as db:
+        products = [dict(p, operation_id=uuid.uuid4().hex) for p in db.execute(
+            "SELECT id,name,variant,stock,version FROM products ORDER BY name,variant")]
+        movements = db.execute("""SELECT m.*,p.name,p.variant FROM commerce_stock_movements m
+            JOIN products p ON p.id=m.product_id
+            ORDER BY m.created_at DESC,m.id DESC LIMIT 100""").fetchall()
+    return render_template("commerce_stock.html", products=products, movements=movements,
+                           csrf=session.get("csrf"), error=error), (409 if error else 200)
 
 
 def protected_write():

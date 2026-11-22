@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>Stock Movements · Tommy Tints HQ</title>
+<link rel="stylesheet" href="/static/commerce.css"></head><body><main>
+<p><a href="/hq/shop">← Products and prices</a> · <a href="/">HQ dashboard</a></p>
+<h1>Inventory movements</h1>
+<p>Record goods received, stock used and inventory corrections against an existing HQ product. Each entry changes the catalogue's available stock and appears immediately in the customer shop and server-checked baskets. This does not create purchases, sales, invoices or payments.</p>
+<p><strong>Migration boundary:</strong> existing stock figures and owner-entered opening quantities are not independently reconciled to the historical Google workbook. Earlier receipts and sales have not been imported. The journal below records changes from the point tracking began.</p>
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+{% if request.args.get("saved") %}<p role="status">Stock movement saved in HQ.</p>{% endif %}
+{% for p in products %}
+<details><summary>{{ p.name }} · {{ p.variant }} — {{ p.stock }} available (revision {{ p.version }})</summary>
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="product_id" value="{{ p.id }}">
+<input type="hidden" name="operation_id" value="{{ p.operation_id }}">
+<input type="hidden" name="version" value="{{ p.version }}">
+<label>Movement<select name="movement" required>
+<option value="received">Stock received (owner-entered)</option>
+<option value="used">Stock used / sold (record quantity only)</option>
+<option value="correction_in">Count correction: add</option>
+<option value="correction_out">Count correction: remove</option>
+</select></label>
+<label>Units<input type="number" name="quantity" min="1" max="100000" step="1" required></label>
+<label>Evidence / reason (5–300 characters)<textarea name="note" minlength="5" maxlength="300" rows="2" required placeholder="Supplier delivery note, workshop use or stock count reason"></textarea></label>
+<button type="submit">Save stock movement</button>
+</form></details>
+{% else %}<p>No products yet. <a href="/hq/shop">Create a product</a> first.</p>{% endfor %}
+<h2>Latest stock journal entries</h2>
+<p>Positive and negative quantities record units only, not paid sales or verified supplier invoices. Opening snapshots are explicitly unverified.</p>
+{% for m in movements %}
+<article>
+<h3>{{ m.name }} · {{ m.variant }} — {{ m.movement|replace('_',' ')|title }}</h3>
+<p>{{ m.before_quantity }} → <strong>{{ m.after_quantity }}</strong> units
+({{ '+' if m.delta > 0 else '' }}{{ m.delta }}) · {{ m.created_at[:19] }} UTC</p>
+<p>{{ m.note }}</p>
+<small>Revision {{ m.version_before }} → {{ m.version_after }} · {{ m.actor }}</small>
+</article>
+{% else %}<p>No inventory movements recorded.</p>{% endfor %}
+</main></body></html>
