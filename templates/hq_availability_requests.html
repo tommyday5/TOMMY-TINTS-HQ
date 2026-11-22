@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>HQ appointment requests — Tommy Tints</title>
+<style>:root{color-scheme:dark;background:#090b10;color:#fff;font-family:system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;padding:clamp(12px,3vw,30px)}main{max-width:970px;margin:auto}
+a{color:#ff7987}p{line-height:1.5;color:#c4c8d1;overflow-wrap:anywhere}
+.card{background:#161921;border:1px solid #454854;border-radius:14px;padding:clamp(14px,2.5vw,24px);margin:14px 0}
+label{display:block;margin:12px 0 5px}input,select,textarea,button{font:inherit;max-width:100%}
+input,select,textarea{width:100%;padding:10px;background:#10131a;color:#fff;border:1px solid #7b8090;border-radius:8px}
+button{font-weight:700;background:#ba152e;border:1px solid #ec4358;color:white;border-radius:8px;padding:11px 15px;cursor:pointer;margin:12px 10px 0 0}
+button.alt{background:#333844;border-color:#858c9b}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid #fbd434;outline-offset:2px}
+.alert{border-color:#fbd434}code{overflow-wrap:anywhere}</style></head><body><main>
+<nav><a href="/hq/customers">← Customer directory</a> · <a href="/hq/profile-change-requests">Profile corrections</a></nav>
+<h1>Customer availability request inbox</h1>
+<p>Review preferences against your actual calendar and workload. An offer is <strong>tentative only</strong>. This screen never books Calendar or Square, sends messages, takes deposits, or promises a confirmed time.</p>
+{% if saved %}<div class="card" role="status">Owner response saved in HQ. No appointment was confirmed or message sent.</div>{% endif %}
+{% if error %}<div class="card alert" role="alert">{{ error }}</div>{% endif %}
+{% for item in items %}<article class="card">
+<h2>{{ item.customer_name }} · {{ item.service }}</h2>
+<p>Vehicle: {{ item.registration or 'Unrecorded' }} · status: <strong>{{ item.status|title }}</strong></p>
+<p>Customer requested: <strong>{{ item.requested_date }} at {{ item.requested_time }}</strong></p>
+{% if item.note %}<p>Customer note: {{ item.note }}</p>{% endif %}
+<p><a href="/hq/customers/{{ item.customer_id }}">Customer and linked work</a>
+ · <a href="/hq/work/{{ item.work_id }}/customer-document">Work document</a>
+ · Reference <code>{{ item.id[:8] }}</code></p>
+{% if item.status in ('requested','offered') %}
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="request_id" value="{{ item.id }}">
+<input type="hidden" name="revision" value="{{ item.revision }}">
+<label for="date-{{ item.id }}">Tentative offered date</label>
+<input id="date-{{ item.id }}" type="date" name="date" value="{{ item.offered_date or item.requested_date }}">
+<label for="time-{{ item.id }}">Tentative offered hour</label><select id="time-{{ item.id }}" name="time">
+{% for hour in ['09:00','10:00','11:00','12:00','13:00','14:00','15:00'] %}
+<option value="{{ hour }}" {% if hour == (item.offered_time or item.requested_time) %}selected{% endif %}>{{ hour }}</option>
+{% endfor %}
+</select>
+<label for="message-{{ item.id }}">Customer-safe response (optional, max 500 characters)</label>
+<textarea id="message-{{ item.id }}" name="message" rows="2" maxlength="500">{{ item.owner_message or '' }}</textarea>
+<p>This offer is displayed in the authenticated customer portal, but is never a confirmed booking.</p>
+<button name="decision" value="offered" type="submit">Save tentative offer</button>
+<button name="decision" value="declined" type="submit" class="alt">Decline request</button>
+</form>
+{% else %}
+<p>Owner response: {{ item.owner_message or 'None recorded' }}</p>
+{% endif %}
+</article>{% else %}<div class="card"><p>No customer availability requests have been saved in HQ.</p></div>{% endfor %}
+<p>Historical Sheets dates and live external calendars are not reconciled on this screen. Confirm an appointment only using your separately authorised scheduling process.</p>
+</main></body></html>
