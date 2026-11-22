@@ -38,7 +38,7 @@ def snapshots():
     effective_jobs = [r[:] for r in jobs]
     effective_jobs[2] = jobs[2][:]
     effective_jobs[2][16] = 200
-    return formula, response([effective_jobs, cust])
+    return formula, response([effective_jobs, [row[:] for row in cust]])
 
 
 class HistoricalPreviewTests(unittest.TestCase):
