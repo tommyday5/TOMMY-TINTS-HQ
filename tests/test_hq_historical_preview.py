@@ -174,9 +174,9 @@ class HistoricalPreviewTests(unittest.TestCase):
             with client.session_transaction() as sess, auth_db() as db:
                 sess.update(hq_sid=issue_session(db, "synthetic-subject"),
                             csrf="page-csrf", google_sub="synthetic-subject")
-            with patch.dict(app.extensions, {
-                    "hq_sheets_connection": lambda: ("fixture", 9999999999)}), \\
-                 patch("hq_historical_preview._read_live", return_value=(formula, actual)) as read:
+            with (patch.dict(app.extensions, {
+                    "hq_sheets_connection": lambda: ("fixture", 9999999999)}),
+                  patch("hq_historical_preview._read_live", return_value=(formula, actual)) as read):
                 response = client.post("/hq/migration/preview", data={
                     "csrf": "page-csrf", "action": "compare", "page_index": "1"})
                 self.assertEqual(response.status_code, 200)
