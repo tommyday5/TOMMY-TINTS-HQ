@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>My customer profile — Tommy Tints</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#090b10;color:#fff}*{box-sizing:border-box}
+body{margin:0;padding:clamp(12px,3vw,30px)}main{max-width:850px;margin:auto}a{color:#ff828c}
+.card{padding:clamp(14px,3vw,24px);border:1px solid #464751;border-radius:14px;margin:16px 0;background:#171a21}
+p{color:#c5c9d3;line-height:1.5;overflow-wrap:anywhere}h1,h2{line-height:1.2}
+label{display:block;margin:12px 0 5px;font-weight:650}input,select{display:block;width:100%;min-height:44px;padding:10px;background:#10141d;border:1px solid #737c90;border-radius:8px;color:#fff;font:inherit}
+button{padding:12px 17px;border:1px solid #f64054;background:#ba1b30;color:#fff;border-radius:8px;font:inherit;font-weight:700;cursor:pointer;margin-top:16px}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #ffdb36;outline-offset:2px}
+.alert{border-color:#ffcf42}code{overflow-wrap:anywhere}
+</style></head><body><main>
+<nav><a href="/customer/account">← My work</a> · <a href="/book">Bookings enquiries</a></nav>
+<h1>My customer and vehicle details</h1>
+<p>Review your details saved with Tommy Tints. Corrections are sent to the owner for review. They do not change the saved details or any historic job until approved and edited in HQ.</p>
+{% if submitted %}<div class="card alert" role="status"><strong>Correction request saved.</strong><p>The owner can now review it in HQ. This is not a confirmed change or booking.</p></div>{% endif %}
+{% if error %}<div class="card alert" role="alert">{{ error }}</div>{% endif %}
+<section class="card"><h2>Customer profile</h2>
+<p><strong>{{ customer.name }}</strong></p>
+<p>Email: {{ customer.email or 'Not recorded' }} · Phone: {{ customer.phone or 'Not recorded' }}</p>
+</section>
+<h2>Vehicles linked to your account</h2>
+{% for v in vehicles %}<article class="card">
+<h3>{{ v.make }} {{ v.model }}</h3>
+<p>Year: {{ v.model_year or 'Not recorded' }} · Registration: {{ v.registration or 'Not recorded' }}</p>
+</article>{% else %}<div class="card">No saved HQ vehicle profiles are available yet.</div>{% endfor %}
+<section class="card">
+<h2>Request a correction</h2>
+<p>Select a customer detail or one of your vehicles. Requests are checked against your authenticated account and cannot be applied automatically.</p>
+<form method="post" action="/customer/profile/correction">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="operation_id" value="{{ operation_id }}">
+<label for="vehicle_id">Record to correct</label>
+<select id="vehicle_id" name="vehicle_id">
+<option value="">My customer contact details</option>
+{% for v in vehicles %}<option value="{{ v.id }}">{{ v.registration or v.make ~ ' ' ~ v.model }} — {{ v.make }} {{ v.model }}</option>{% endfor %}
+</select>
+<label for="field">Field to correct</label>
+<select id="field" name="field" required>
+<optgroup label="Customer contact details"><option value="name">Customer name</option><option value="email">Email address</option><option value="phone">Phone number</option></optgroup>
+<optgroup label="Vehicle (select a vehicle above)"><option value="make">Vehicle make</option><option value="model">Vehicle model</option><option value="model_year">Vehicle year</option><option value="registration">Registration</option></optgroup>
+</select>
+<label for="value">Proposed new value</label>
+<input id="value" name="value" maxlength="254" autocomplete="off" required>
+<button type="submit">Send correction request to HQ</button>
+</form></section>
+{% if pending %}<section class="card"><h2>Waiting for owner review</h2>
+{% for item in pending %}<p><strong>{{ item.field|replace('_',' ')|title }}</strong>: {{ item.proposed_value }} · pending{% if item.vehicle_id %} (vehicle){% endif %}</p>{% endfor %}
+</section>{% endif %}
+<p>Correcting a vehicle linked to approved work may require a separate evidence-preserving review. No customer booking, price, invoice or payment changes when you submit a correction.</p>
+</main></body></html>

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>HQ profile corrections — Tommy Tints</title>
+<style>:root{color-scheme:dark;background:#090b10;color:#fff;font-family:system-ui,sans-serif}*{box-sizing:border-box}body{margin:0;padding:clamp(12px,3vw,30px)}
+main{max-width:990px;margin:auto}a{color:#ff818e}.card{background:#161921;border:1px solid #454854;border-radius:14px;padding:clamp(14px,2vw,22px);margin:15px 0}
+p{line-height:1.5;color:#c4c8d1;overflow-wrap:anywhere}button{font:inherit;font-weight:700;border:1px solid #f34b5d;background:#b4172e;color:white;border-radius:8px;padding:10px 14px;margin:5px;cursor:pointer}
+button.alt{background:#303443;border-color:#858b9c}button:focus-visible,a:focus-visible{outline:2px solid #ffdd3b;outline-offset:2px}
+code{overflow-wrap:anywhere}.alert{border-color:#eebd33}
+</style></head><body><main>
+<nav><a href="/hq/customers">← Customer directory</a></nav>
+<h1>Customer profile correction inbox</h1>
+<p>Customer-submitted proposals are saved in HQ, but never automatically edit the canonical record. Before marking one as resolved, open the existing editor, check the evidence, make any safe permitted change and save it. Approved or completed job vehicle identities can be locked.</p>
+{% if saved %}<div class="card" role="status">Correction decision saved.</div>{% endif %}
+{% if error %}<div class="card alert" role="alert">{{ error }}</div>{% endif %}
+{% for item in pending %}
+<article class="card">
+<h2>{{ item.customer_name }}</h2>
+<p>Requested {{ item.field|replace('_',' ')|title }}: <strong>{{ item.proposed_value }}</strong></p>
+{% if item.vehicle_id %}<p>Vehicle registration: {{ item.vehicle_registration or 'Not recorded' }}</p>
+<p><a href="/hq/vehicles/{{ item.vehicle_id }}/edit">Open existing vehicle editor</a></p>
+{% else %}<p><a href="/hq/customers/{{ item.customer_id }}/edit">Open existing customer editor</a></p>{% endif %}
+<p><a href="/hq/customers/{{ item.customer_id }}">View canonical customer and linked jobs</a></p>
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="request_id" value="{{ item.id }}">
+<button type="submit" name="decision" value="resolved">Mark resolved (saved value must match)</button>
+<button type="submit" name="decision" value="declined" class="alt">Decline without editing</button>
+</form>
+</article>
+{% else %}<div class="card"><p>No pending customer profile corrections.</p></div>{% endfor %}
+<p>These decisions do not send customer emails, make appointments, take payment, or change Google Sheets. The original request and PII-free status events remain in SQLite.</p>
+</main></body></html>

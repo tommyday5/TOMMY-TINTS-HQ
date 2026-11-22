@@ -19,6 +19,7 @@ code{overflow-wrap:anywhere}a:focus-visible{outline:2px solid #f4d129;outline-of
 <p>{% if customer.source_request_id %}Origin: reviewed public request{% else %}Origin: owner-created HQ contact{% endif %}. Historical Sheets identity and pricing tier require separate verification.</p>
 <a class="button" href="/hq/customers/{{ customer.id }}/edit">Edit customer details</a>
 <a class="button" href="/hq/customers/{{ customer.id }}/portal-access">Manage customer portal access</a>
+<a class="button" href="/hq/profile-change-requests">Customer correction inbox</a>
 <a class="button" href="/hq/work/new?customer_id={{ customer.id }}">Create quote or job for this customer</a>
 </section>
 <h2>Saved vehicles ({{ vehicles|length }})</h2>
