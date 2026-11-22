@@ -263,6 +263,17 @@ def visit_index(*, customer_id="", show_archived=False):
         return [dict(row) for row in db.execute(sql, args)]
 
 
+def visit_history(visit_id):
+    """Private action history (details remain in owner-only database)."""
+    _reference(visit_id)
+    with connect() as db:
+        _schema(db)
+        _tables(db)
+        return [dict(row) for row in db.execute("""SELECT revision,action,created_at
+            FROM hq_maintenance_visit_audit WHERE visit_id=?
+            ORDER BY revision DESC LIMIT 100""", (visit_id,))]
+
+
 def _options(query="", selected=""):
     if len(query) > 80:
         raise ValueError("Search is too long")
@@ -272,12 +283,12 @@ def _options(query="", selected=""):
             _reference(selected)
         search = "%" + query.strip() + "%"
         customers = [dict(r) for r in db.execute("""SELECT id,name FROM hq_customers
-            WHERE name LIKE ? OR id=? ORDER BY name COLLATE NOCASE LIMIT 100""",
-            (search, selected))]
+            WHERE name LIKE ? OR id=? ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END, name COLLATE NOCASE LIMIT 100""",
+            (search, selected, selected))]
         vehicles = [dict(r) for r in db.execute("""SELECT id,customer_id,make,model,registration
             FROM hq_vehicles WHERE customer_id IN
             (SELECT id FROM hq_customers WHERE name LIKE ? OR id=?)
-            ORDER BY make,model LIMIT 300""", (search, selected))]
+            ORDER BY CASE WHEN customer_id=? THEN 0 ELSE 1 END,make,model LIMIT 300""", (search, selected, selected))]
     return customers, vehicles
 
 
@@ -364,7 +375,8 @@ def owner_edit(visit_id):
         customers, vehicles = _options("", record["customer_id"])
         return render_template("hq_native_maintenance.html", listing=False, new=False,
                                record=record, values=record, customers=customers, vehicles=vehicles,
-                               csrf=session["csrf"], states=STATES, error=None)
+                               csrf=session["csrf"], states=STATES, error=None,
+                               events=visit_history(visit_id))
     except (ValueError, LookupError) as exc:
         if request.method == "GET":
             abort(404)
@@ -373,7 +385,7 @@ def owner_edit(visit_id):
         return render_template("hq_native_maintenance.html", listing=False, new=False,
                                record=record, values=request.form.to_dict(),
                                customers=customers, vehicles=vehicles, csrf=session["csrf"],
-                               states=STATES, error=str(exc)), 409
+                               states=STATES, error=str(exc), events=visit_history(visit_id)), 409
     except (OSError, sqlite3.Error):
         current_app.logger.exception("Maintenance visit unavailable")
         abort(503)
