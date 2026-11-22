@@ -11,7 +11,7 @@
 <p>Customer notes: {{ e.notes or '(none)' }}</p>
 {% if e.approved_total_pence is not none %}<p>Approved quote £{{ '%.2f'|format(e.approved_total_pence/100) }}</p>{% endif %}
 {% if e.linked_work_id %}
-<p><strong>Linked native HQ quote:</strong> <a href="/hq/work/{{ e.linked_work_id }}/edit">{{ e.linked_work_id }}</a> · {{ e.linked_work_status|replace('_',' ')|title }} · owner-confirmed {{ e.confirmed_tier|title }} tier. Edit and approve it in HQ. The original enquiry review is now locked for provenance.</p>
+<p><strong>Linked native HQ quote:</strong> <a href="/hq/work/{{ e.linked_work_id }}/edit">{{ e.linked_work_id }}</a> · {{ e.linked_work_status|replace('_',' ')|title }} · owner-confirmed {{ e.confirmed_tier|title }} tier. Edit and approve it in HQ. <a href="/hq/service-enquiries/{{ e.id }}/lines">Allocate and verify individual service line prices</a>. The original enquiry review is now locked for provenance.</p>
 {% elif e.status == 'quoted' and e.approved_total_pence is not none %}
 <form method="post" action="/hq/service-enquiries/{{ e.id }}/create-work">
 <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="revision" value="{{ e.revision }}">
