@@ -15,7 +15,8 @@ from decimal import Decimal, InvalidOperation
 from flask import Blueprint, abort, current_app, redirect, render_template, request, session
 from customer_request_store import SERVICES, connect, storage_ready
 from hq_auth import required
-from hq_core_records import _schema
+from hq_core_records import _schema, _audit_work, StaleWorkRecordError
+from hq_native_work import _tables
 from hq_customer_portal import active_customer
 
 service_quotes = Blueprint("service_quotes", __name__)
@@ -60,6 +61,13 @@ def _db():
     db.execute("""CREATE TABLE IF NOT EXISTS hq_service_quote_audit (
         id TEXT PRIMARY KEY, request_id TEXT NOT NULL REFERENCES hq_service_quote_requests(id),
         revision INTEGER NOT NULL, action TEXT NOT NULL, actor TEXT NOT NULL, created_at TEXT NOT NULL
+    )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_service_quote_work_links (
+        request_id TEXT PRIMARY KEY REFERENCES hq_service_quote_requests(id),
+        work_id TEXT NOT NULL UNIQUE REFERENCES hq_work_records(id),
+        request_revision INTEGER NOT NULL, customer_tier TEXT NOT NULL,
+        approved_total_pence INTEGER NOT NULL, services_json TEXT NOT NULL,
+        actor TEXT NOT NULL, created_at TEXT NOT NULL
     )""")
     return db
 
@@ -216,6 +224,9 @@ def review_request(ident, revision, status, approved_pounds, public_note, actor=
         if (row["status"], row["approved_total_pence"], row["public_note"]) == (
                 status, approved, note):
             return row["revision"]
+        if db.execute("SELECT 1 FROM hq_service_quote_work_links WHERE request_id=?",
+                      (ident,)).fetchone():
+            raise ValueError("This enquiry already has a native HQ quote; edit the linked quote instead")
         if row["revision"] != revision:
             raise ValueError("Request changed; reload before updating")
         if row["status"] in ("declined", "closed"):
@@ -230,12 +241,82 @@ def review_request(ident, revision, status, approved_pounds, public_note, actor=
         return revision + 1
 
 
+
+def convert_approved_service_quote(ident, revision, confirmed_tier, actor="owner"):
+    """Explicit owner action; canonical IDs, no J number, booking or payment."""
+    _id(ident, "service request")
+    if type(revision) is not int or not 0 <= revision <= 100000000:
+        raise ValueError("Invalid revision")
+    if not isinstance(confirmed_tier, str) or confirmed_tier not in TIERS:
+        raise ValueError("Owner must select the verified pricing tier")
+    with _db() as db:
+        _tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("SELECT * FROM hq_service_quote_requests WHERE id=?",
+                         (ident,)).fetchone()
+        if not row:
+            raise LookupError("Service request not found")
+        linked = db.execute("""SELECT work_id,request_revision,customer_tier
+            FROM hq_service_quote_work_links WHERE request_id=?""",
+            (ident,)).fetchone()
+        if linked:
+            if linked["request_revision"] != revision or linked["customer_tier"] != confirmed_tier:
+                raise StaleWorkRecordError("An HQ quote already exists for this enquiry; open the linked quote")
+            return linked["work_id"]
+        if row["revision"] != revision:
+            raise StaleWorkRecordError("Enquiry changed; reload before creating a quote")
+        if row["status"] != "quoted" or row["approved_total_pence"] is None:
+            raise ValueError("Save an owner-reviewed quoted price before creating an HQ quote")
+        if not 1 <= row["approved_total_pence"] <= 100000000:
+            raise ValueError("Invalid owner-approved price")
+        services = json.loads(row["services_json"])
+        if (not isinstance(services, list) or not 1 <= len(services) <= 5
+                or any(not isinstance(item, str) or item not in SERVICES for item in services)
+                or len(set(services)) != len(services)):
+            raise ValueError("Enquiry services need review")
+        if not db.execute("SELECT 1 FROM hq_vehicles WHERE id=? AND customer_id=?",
+                          (row["vehicle_id"], row["customer_id"])).fetchone():
+            raise ValueError("Enquiry vehicle ownership has changed; review required")
+        now, work_id = _now(), uuid.uuid4().hex
+        notes = ("Source service enquiry: " + ident + "\n"
+                 + "Selected services: " + ", ".join(services) + "\n"
+                 + "Customer scope: " + row["notes"])
+        db.execute("""INSERT INTO hq_work_records
+            (id,source_request_id,customer_id,vehicle_id,kind,service,notes,
+             preferred_date,preferred_time,status,price_pence,deposit_pence,revision,created_at)
+            VALUES (?,?,?,?,?,?,?,?,?,'ready_for_review',?,0,0,?)""",
+            (work_id, "HQ-" + work_id, row["customer_id"], row["vehicle_id"],
+             "quote", services[0], notes, "", "", row["approved_total_pence"], now))
+        db.execute("INSERT INTO hq_native_work_details VALUES (?,?,?)",
+                   (work_id, confirmed_tier, now))
+        db.execute("INSERT INTO hq_native_work_events VALUES (?,?,?,?,?)",
+                   (uuid.uuid4().hex, work_id, "service_enquiry_quote_created", 0, now))
+        db.execute("""INSERT INTO hq_service_quote_work_links
+            (request_id,work_id,request_revision,customer_tier,approved_total_pence,
+             services_json,actor,created_at) VALUES (?,?,?,?,?,?,?,?)""",
+            (ident, work_id, revision, confirmed_tier, row["approved_total_pence"],
+             row["services_json"], str(actor)[:100], now))
+        _audit_work(db, work_id, 0, "service_enquiry_origin", {},
+                    {"request_id": ident, "kind": "quote", "owner_tier": confirmed_tier})
+        db.execute("INSERT INTO hq_service_quote_audit VALUES (?,?,?,?,?,?)",
+                   (uuid.uuid4().hex, ident, revision, "native_quote_created",
+                    str(actor)[:100], now))
+        # New native work is not linked to any Sheet row or sync outbox.
+    return work_id
+
+
 def customer_requests(customer_id):
     _id(customer_id, "customer")
     with _db() as db:
         rows = db.execute("""SELECT q.id,q.requested_tier,q.services_json,q.status,
-            q.approved_total_pence,q.public_note,q.created_at,v.make,v.model,v.registration
+            q.approved_total_pence,q.public_note,q.created_at,v.make,v.model,v.registration,
+            CASE WHEN w.status IN ('approved','in_progress','completed','cancelled')
+                THEN w.status ELSE NULL END AS linked_status,
+            CASE WHEN w.status IN ('approved','in_progress','completed','cancelled')
+                THEN w.price_pence ELSE NULL END AS linked_price_pence
             FROM hq_service_quote_requests q JOIN hq_vehicles v ON v.id=q.vehicle_id
+            LEFT JOIN hq_service_quote_work_links l ON l.request_id=q.id
+            LEFT JOIN hq_work_records w ON w.id=l.work_id
             WHERE q.customer_id=? ORDER BY q.created_at DESC,q.id DESC LIMIT 100""",
             (customer_id,)).fetchall()
         return [{**dict(r), "services": json.loads(r["services_json"])} for r in rows]
@@ -244,9 +325,13 @@ def customer_requests(customer_id):
 def owner_requests():
     with _db() as db:
         rows = db.execute("""SELECT q.*,c.name AS customer_name,
-            v.make,v.model,v.registration FROM hq_service_quote_requests q
+            v.make,v.model,v.registration,l.work_id AS linked_work_id,
+            l.customer_tier AS confirmed_tier,w.status AS linked_work_status
+            FROM hq_service_quote_requests q
             JOIN hq_customers c ON c.id=q.customer_id
             JOIN hq_vehicles v ON v.id=q.vehicle_id
+            LEFT JOIN hq_service_quote_work_links l ON l.request_id=q.id
+            LEFT JOIN hq_work_records w ON w.id=l.work_id
             ORDER BY q.created_at DESC,q.id DESC LIMIT 100""").fetchall()
         return [{**dict(r), "services": json.loads(r["services_json"]),
                  "owner_prices": json.loads(r["owner_prices_json"])} for r in rows]
@@ -369,3 +454,26 @@ def owner_index():
     except (sqlite3.Error, OSError, RuntimeError):
         current_app.logger.exception("Owner service inbox unavailable")
         abort(503)
+
+
+@service_quotes.post("/hq/service-enquiries/<ident>/create-work")
+@required
+def owner_create_service_work(ident):
+    _csrf("csrf")
+    raw_revision = request.form.get("revision", "")
+    if not re.fullmatch(r"(?:0|[1-9][0-9]{0,8})", raw_revision):
+        abort(400)
+    try:
+        work_id = convert_approved_service_quote(
+            ident, int(raw_revision), request.form.get("customer_tier"),
+            session.get("google_sub", "owner"))
+    except (StaleWorkRecordError, ValueError) as exc:
+        return render_template("hq_service_enquiries.html",
+                               enquiries=owner_requests(), csrf=session.get("csrf"),
+                               error=str(exc)), (409 if isinstance(exc, StaleWorkRecordError) else 400)
+    except LookupError:
+        abort(404)
+    except (sqlite3.Error, OSError, RuntimeError):
+        current_app.logger.exception("Service enquiry conversion unavailable")
+        abort(503)
+    return redirect("/hq/work/" + work_id + "/edit?created=1", code=303)
