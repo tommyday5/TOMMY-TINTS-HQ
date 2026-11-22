@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Historical J-series field review | Tommy Tints HQ</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,Arial;background:#090b0f;color:#f4f5f9}
+body{margin:0}main{max-width:1120px;margin:auto;padding:20px}a{color:#ff8088}
+.panel{background:#181d26;border:1px solid #3b4659;padding:19px;border-radius:14px;margin:16px 0}
+h1{font-size:clamp(22px,4vw,32px)}h2{font-size:20px}
+button{background:#bf1426;border:1px solid #ff354d;border-radius:9px;padding:11px 16px;color:white;font-weight:700;cursor:pointer}
+button:focus-visible,a:focus-visible,select:focus-visible{outline:3px solid #ffdc55}
+.warning{padding:12px;border-left:4px solid #f3c437;background:#302a1d}
+small,.muted{color:#c6ced8}table{width:100%;border-collapse:collapse}
+th,td{padding:12px 9px;text-align:left;border-bottom:1px solid #495265;vertical-align:top}
+td.value{white-space:pre-wrap;overflow-wrap:anywhere;min-width:170px}
+select{padding:10px;background:#0d1420;color:white;border:1px solid #718097;border-radius:8px;max-width:100%}
+.scroller{overflow:auto}fieldset{border:none;margin:0;padding:0}
+@media(max-width:680px){main{padding:12px}.panel{padding:13px}}
+</style></head><body><main>
+<p><a href="/hq/migration/preview">Back to migration preview</a> · <a href="/hq/customers">HQ Customers</a></p>
+<h1>Field-by-field historical J-series review</h1>
+<p class="warning"><strong>Inactive candidate only.</strong> The original workbook remains read-only and authoritative for historical fields. No decision here verifies customer identity, reconciles finance, approves production import, links historical IDs or changes a live HQ job. Completion is not proof of payment.</p>
+<div class="panel">
+<h2>{{ candidate.job_ref }} · source row {{ candidate.sheet_row }}</h2>
+<p>Candidate <code>{{ candidate.id }}</code> · proposed native HQ work <code>{{ candidate.work_id }}</code> · recorded work revision {{ candidate.work_revision }}</p>
+<p class="muted">Comparison reads original formulas and effective values again. A changed source row, duplicate J reference or modified native work stops review until the candidate is withdrawn and restaged.</p>
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="inspect">
+<button type="submit">Compare current Sheets and HQ values</button>
+</form>
+{% if saved %}<p role="status">Field assessments saved to HQ with an audit event. No production data was imported or changed.</p>{% endif %}
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+</div>
+{% if candidate.field_review %}
+<div class="panel">
+<h2>Saved owner assessment · revision {{ candidate.field_review.revision }}</h2>
+<p class="muted">Recorded at {{ candidate.field_review.updated_at }}. These decisions are advisory, not verified mapping approvals.</p>
+<table><thead><tr><th>Field</th><th>Recorded assessment</th></tr></thead><tbody>
+{% for key,label in fields %}<tr><td>{{ label }}</td><td>{{ candidate.field_review.assessments.get(key,"needs_evidence").replace("_"," ") }}</td></tr>{% endfor %}
+</tbody></table>
+</div>
+{% endif %}
+{% if comparison %}
+<div class="panel">
+<h2>Fresh comparison — owner review</h2>
+<p class="muted">Source values are shown transiently to the authenticated owner. Neither source values nor personal information are stored in the assessment ledger. Treat matches as provisional, particularly vehicle identity, pricing and lifecycle.</p>
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="save">
+<input type="hidden" name="revision" value="{{ candidate.field_review.revision if candidate.field_review else 0 }}">
+<div class="scroller"><table><thead><tr><th>Field</th><th>Original Sheets field</th><th>Native HQ field</th><th>Owner assessment</th></tr></thead><tbody>
+{% for row in comparison %}
+<tr><th scope="row">{{ row.label }}</th><td class="value">{{ row.source }}</td><td class="value">{{ row.native }}</td><td>
+<label for="review-{{ row.key }}" class="muted">Assess {{ row.label }}</label>
+<select id="review-{{ row.key }}" name="{{ row.key }}" required>
+{% set selected = candidate.field_review.assessments.get(row.key,"needs_evidence") if candidate.field_review else "needs_evidence" %}
+<option value="needs_evidence" {% if selected=="needs_evidence" %}selected{% endif %}>Needs evidence</option>
+<option value="appears_consistent" {% if selected=="appears_consistent" %}selected{% endif %}>Appears consistent — NOT verified</option>
+<option value="conflict" {% if selected=="conflict" %}selected{% endif %}>Conflict / not equivalent</option>
+</select></td></tr>
+{% endfor %}</tbody></table></div>
+<p class="muted">At least one field must be assessed. Saving writes only decisions, a source fingerprint, the native work revision and an immutable audit event. The J mapping remains inactive regardless of assessment.</p>
+<button type="submit">Save field assessments</button>
+</form>
+</div>
+{% endif %}
+</main></body></html>
