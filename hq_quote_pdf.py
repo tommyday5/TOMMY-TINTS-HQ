@@ -12,10 +12,9 @@ from xml.sax.saxutils import escape
 
 from flask import Blueprint, abort, current_app, redirect, send_file
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
-from reportlab.platypus import HRFlowable, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import HRFlowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from hq_auth import required
 from hq_customer_portal import active_customer
@@ -98,7 +97,8 @@ def approved_quote_snapshot(ident, *, customer_id=None):
 
 
 def _money(pence):
-    return "GBP {:,.2f}".format(pence / 100)
+    pounds, pennies = divmod(pence, 100)
+    return "GBP {:,}.{:02d}".format(pounds, pennies)
 
 
 def render_quote_pdf(snapshot):
