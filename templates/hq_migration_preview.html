@@ -20,6 +20,10 @@ select{background:#0d1420;color:white;border:1px solid #69788b;border-radius:8px
 <div class="warning">Google Sheets stays authoritative for unmigrated history. New native HQ records stay authoritative only for their own data. The comparison does not change either system; saving a review candidate writes only an inactive, owner-only HQ proposal and an audit event. Never assume a completed job is paid.</div>
 <div class="panel">
 <form method="post"><input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="action" value="compare">
+<label for="find-ref">Find an exact historical J reference (optional)</label>
+<input id="find-ref" name="find_ref" maxlength="16" pattern="J[0-9]{4,8}" placeholder="J0081"
+ value="{{ result.find_ref if result else '' }}" style="padding:10px;background:#0d1420;color:white;border:1px solid #69788b;border-radius:8px;max-width:180px">
 <button type="submit">Run fresh read-only comparison</button></form>
 <p><small>Manual action only. Scans Jobs and Customers from row 5 through row 1000. Requires active owner consent. No background sync, import, email, booking or payment.</small></p>
 {% if error %}<p role="alert">{{ error }}</p>{% endif %}{% if saved %}<p role="status">The review queue was saved. Historical work remains unchanged and unlinked.</p>{% endif %}
@@ -42,7 +46,10 @@ Native HQ: {{ result.native_customer_count }} customers and {{ result.native_wor
 Possible same-name customer candidates: {{ result.possible_native_customer_rows }} in Customers, {{ result.possible_native_job_rows }} in Jobs.
 {% endif %}
 These candidates are <strong>not</strong> proven matches and require owner review.</p>
-<h2>Historical J-series review queue (up to 60)</h2>
+<h2>Historical J-series review queue — page {{ result.page_index + 1 }} of {{ result.page_count }}</h2>
+<p class="note">Showing {{ result.sample|length }} of {{ result.filtered_count }} matching source rows.
+Counts above cover the entire scanned Jobs and Customers range, not just this page.
+{% if result.find_ref %}Exact reference: <strong>{{ result.find_ref }}</strong>.{% endif %}</p>
 <p class="note">For unique J references, optionally propose a match to an existing HQ work record. This saves an <strong>inactive review candidate only</strong>. The form rechecks the original source on submission. Customer identity, price, status and native record equivalence are NOT verified; no live link or import is made.</p>
 <div class="scroller"><table><thead><tr><th>Source row</th><th>Original J reference</th><th>Review flag</th><th>Quoted price input</th><th>Propose inactive match</th></tr></thead><tbody>
 {% for row in result.sample %}
@@ -51,6 +58,8 @@ These candidates are <strong>not</strong> proven matches and require owner revie
 <form class="inline" method="post">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <input type="hidden" name="action" value="propose">
+<input type="hidden" name="page_index" value="{{ result.page_index }}">
+<input type="hidden" name="find_ref" value="{{ result.find_ref }}">
 <input type="hidden" name="sheet_row" value="{{ row.row }}">
 <input type="hidden" name="job_ref" value="{{ row.ref }}">
 <input type="hidden" name="source_stamp" value="{{ row.source_stamp }}">
@@ -63,7 +72,18 @@ These candidates are <strong>not</strong> proven matches and require owner revie
 {% else %}<small>{% if row.status != "review" %}Resolve J reference first{% else %}No HQ work available{% endif %}</small>{% endif %}</td></tr>
 {% endfor %}
 </tbody></table></div>
-{% if result.sample_truncated %}<p>Additional source rows exist beyond the first 60 displayed. Counts cover the entire scanned range.</p>{% endif %}
+{% if result.page_count > 1 %}
+<nav aria-label="Historical Jobs review pages">
+<form class="inline" method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="action" value="compare">
+<input type="hidden" name="find_ref" value="{{ result.find_ref }}">
+{% if result.page_index > 0 %}<button type="submit" name="page_index" value="{{ result.page_index - 1 }}">Previous 60 rows</button>{% endif %}
+{% if result.page_index + 1 < result.page_count %}<button type="submit" name="page_index" value="{{ result.page_index + 1 }}">Next 60 rows</button>{% endif %}
+</form>
+<p class="note">Each page re-reads and validates the original workbook; no snapshot is imported, cached or written.</p>
+</nav>
+{% endif %}
 </div>
 {% endif %}
 <div class="panel">
