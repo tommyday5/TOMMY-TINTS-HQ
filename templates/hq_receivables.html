@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="hq-csrf" content="{{ csrf }}">
+<title>Receivables · Tommy Tints HQ</title>
+<link rel="stylesheet" href="/static/finance-command.css">
+<script defer src="/static/hq-receivables.js"></script>
+</head>
+<body><main>
+<header><img src="/static/company-logo-header.webp" alt="Tommy Tints"><a href="/hq/finance/command">Back to Finance</a></header>
+<h1>Customer invoices & receivables</h1>
+<p>Editable owner-entered invoices tied to real HQ customers and optional work records. Nothing here creates an external invoice or verifies a payment.</p>
+<p id="notice" role="status">Loading private HQ records…</p>
+<article><h2>Create or edit a receivable</h2>
+<form id="receivable">
+<input type="hidden" name="id"><input type="hidden" name="revision" value="0">
+<label>HQ customer<select name="customer_id" id="customer" required><option value="">Choose customer</option></select></label>
+<label>Linked HQ job or quote (optional)<select name="work_id" id="work"><option value="">No linked work</option></select></label>
+<label>Invoice reference<input name="invoice_ref" required maxlength="40" pattern="[A-Za-z0-9][A-Za-z0-9._/-]*" placeholder="e.g. INV-2026-001"></label>
+<label>Issue date<input name="issue_date" type="date" required></label>
+<label>Due date<input name="due_date" type="date" required></label>
+<label>Face amount (£)<input name="amount_pounds" type="number" min="0.01" step="0.01" required inputmode="decimal"></label>
+<label>Lifecycle<select name="status" required>
+<option value="draft">Draft — not issued</option>
+<option value="issued">Owner-reported issued — no message sent</option>
+<option value="disputed">Disputed — evidence required</option>
+<option value="void">Void — terminal, retain evidence</option>
+</select></label>
+<label>Private note<textarea name="memo" maxlength="500" rows="3"></textarea></label>
+<label><input type="checkbox" name="archived"> Archive from active receivables (retain audit trail)</label>
+<p>Amounts are invoice face values only. No verified payments, outstanding balances, bank deposits or customer messages are inferred.</p>
+<button type="submit">Save in HQ</button>
+<button type="button" id="newRecord">New receivable</button>
+</form></article>
+<h2>Saved receivables</h2><p id="count"></p><div id="records"></div>
+<h2>Revision history</h2><p>Every saved change retains its original reference, value, status and source customer. Recent 200 revisions are shown.</p><div id="history"></div>
+</main></body></html>

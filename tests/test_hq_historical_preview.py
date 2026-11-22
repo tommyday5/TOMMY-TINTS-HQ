@@ -352,7 +352,9 @@ class HistoricalMappingProposalTests(unittest.TestCase):
         self.assertIn(b"J0081",page.data)
         self.assertIn(b"Withdraw candidate",page.data)
         self.assertNotIn(b"Synthetic A",page.data)
-        self.assertNotIn(b"250",page.data)
+        # Match a rendered price token, not random hex IDs which can contain "250".
+        self.assertNotIn(b">250<",page.data)
+        self.assertNotIn(b"250.00",page.data)
         with patch("hq_historical_preview._read_live") as read:
             result = client.post("/hq/migration/preview",data={
                 "action":"withdraw","csrf":"fixed-csrf",
