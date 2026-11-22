@@ -484,10 +484,13 @@ def _field_comparison(formula, computed, candidate):
     with sqlite3.connect("file:" + str(path) + "?mode=ro", uri=True, timeout=3) as db:
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA query_only=ON")
+        has_tiers = db.execute("""SELECT 1 FROM sqlite_master WHERE type='table'
+            AND name='hq_native_work_details'""").fetchone()
+        tier_sql = ("""(SELECT customer_tier FROM hq_native_work_details
+                        WHERE work_id=w.id)""" if has_tiers else "NULL")
         native = db.execute("""SELECT w.revision,w.service,w.status,w.price_pence,
-            c.name AS customer_name,v.make,v.model,v.registration,
-            (SELECT customer_tier FROM hq_native_work_details
-             WHERE work_id=w.id) AS customer_tier
+            c.name AS customer_name,v.make,v.model,v.registration, """ +
+            tier_sql + """ AS customer_tier
             FROM hq_work_records w JOIN hq_customers c ON c.id=w.customer_id
             JOIN hq_vehicles v ON v.id=w.vehicle_id WHERE w.id=?""",
             (candidate["work_id"],)).fetchone()
