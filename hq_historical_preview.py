@@ -244,7 +244,7 @@ def _verified_source_candidate(formula, computed, row_number, expected_ref, expe
         raise ValueError("Source row is outside verified bounds")
     identities = [_cell(row, 0) for row in jobs[1:]]
     if (identities[index - 1] != expected_ref
-            or identities.count(expected_ref) != 1
+            or sum(str(item).casefold() == expected_ref.casefold() for item in identities) != 1
             or _cell(jobs[index], 0) != expected_ref):
         raise ValueError("J reference moved, duplicated, or changed; run a new comparison")
     actual_stamp = _candidate_stamp(formula, computed, row_number)
