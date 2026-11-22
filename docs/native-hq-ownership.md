@@ -13,6 +13,15 @@
 - Customer tiers are classification only; prices require owner review. Planned deposits are not received deposits; approved or completed work is not proof of invoicing or payment.
 - Unlinked native records skip the Google Sheets outbox. Provider adapters, read-only Sheets, public requests and /book remain unchanged.
 
+
+## Historical J-series candidate review — inactive staging
+
+- Owner-only /hq/migration/preview now offers a selectable canonical HQ work record for each correctly formatted, unique historical J reference in the first 60 visible Jobs rows. Owner-initiated POSTs independently re-fetch source formulas and effective values, confirm the full J reference scan contains exactly one matching ID, validate a keyed source-row digest, and check the currently selected native work revision.
+- An approved owner session and CSRF token are required. An explicit stage action records only sheet row/J ID, selected HQ work ID/revision, operation ID, a keyed fingerprint of the source row, hashed actor identity and event history in the existing /data SQLite file. No source customer fields, amounts, formula bodies, email or registration are saved to this review ledger.
+- Active-candidate uniqueness constraints cover historical row, J reference (case-insensitive) and native HQ work ID. Operation retries are idempotent; changed payloads or stale source/work revisions conflict. Withdrawal retains evidence and releases the active candidate slot; neither stage nor withdrawal modifies canonical HQ work.
+- **Not authorised:** A proposal is not a verified identity match, claim of J-series ownership, source lock, historical import, active link, migration approval or basis to sync with Sheets. Even an existing saved proposal requires a fresh source read, independently verified customer/vehicle/scope/pricing mapping, snapshot backup and owner permission before any production migration. Google Sheets remains fully read-only.
+- This release does not modify the public /book app or customer appointment responses; existing end-to-end regression coverage remains required.
+
 ## Field-level authority / migration coverage
 
 | Domain | Local native state | Authority and migration status | Remaining evidence |
