@@ -23,7 +23,7 @@ _ID = re.compile(r"[0-9a-f]{32}\Z")
 _CODE = re.compile(r"[A-Za-z0-9_-]{43,60}\Z")
 _PUBLIC_STATUSES = ("approved", "in_progress", "completed", "cancelled")
 _INVITE_SECONDS = 48 * 3600
-_SESSION_SECONDS = 24 * 3600
+_SESSION_SECONDS = 3600
 _ATTEMPT_WINDOW = 15 * 60
 _MAX_ATTEMPTS = 8
 
