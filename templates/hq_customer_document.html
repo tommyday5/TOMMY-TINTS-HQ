@@ -31,6 +31,7 @@ button:focus-visible,textarea:focus-visible,a:focus-visible{outline:2px solid #f
 <p class="muted">Owner-only editing and print preview. This saves to the canonical HQ job; it does not send a document, book an appointment or create an invoice. Internal notes and costs never appear in the printable section.</p>
 {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
 {% if request.args.get('saved') == '1' %}<p role="status">Customer-facing description saved to HQ.</p>{% endif %}
+{% if request.args.get('updated') == '1' %}<p role="status">Customer portal update saved; publication is controlled separately.</p>{% endif %}
 <form class="panel" method="post">
 <h2>Edit customer-facing description</h2>
 <p class="muted">Describe only work you are authorised to share. The original internal scope and approved price remain unchanged. Changes after job approval are separately audited.</p>
@@ -41,6 +42,20 @@ button:focus-visible,textarea:focus-visible,a:focus-visible{outline:2px solid #f
 <p class="muted">HQ work reference {{ record.id }} · revision {{ record.revision }}</p>
 {% if record.can_edit %}<button type="submit">Save customer-facing description</button>
 {% else %}<p class="warning">Archived/cancelled work is read-only. Restore eligible work before editing.</p>{% endif %}
+</form>
+<form class="panel" method="post">
+<h2>Customer portal progress update</h2>
+<p class="muted">Write a separate customer-safe job update. It stays private until you tick Publish and save. No notification, booking, invoice or payment confirmation is sent or created.</p>
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="revision" value="{{ record.revision }}">
+<input type="hidden" name="action" value="portal_update">
+<label for="portal-update">Customer update (maximum 500 characters)</label>
+<textarea id="portal-update" name="portal_update" maxlength="500" {% if not record.can_edit %}disabled{% endif %}>{{ record.portal_update }}</textarea>
+<p><label><input type="checkbox" name="publish" value="1" {% if record.update_published %}checked{% endif %} {% if not record.can_publish_update %}disabled{% endif %}> Publish to this customer's private account</label></p>
+{% if record.update_published %}<p class="muted">Published to the authenticated portal. Untick and save to withdraw. Last publication: {{ record.update_published_at }}.</p>
+{% elif record.can_publish_update %}<p class="muted">Not published. Saving without the checkbox keeps this an owner-only draft.</p>
+{% else %}<p class="muted">Publication requires approved, non-archived, non-cancelled work.</p>{% endif %}
+{% if record.can_edit %}<button type="submit">Save customer portal update</button>{% endif %}
 </form>
 {% if record.can_print %}<p><button type="button" onclick="window.print()">Print / Save as PDF</button></p>
 {% else %}<p class="warning">The document is preview-only until the job is approved, its price is recorded and a customer-facing description is saved. No customer document has been sent.</p>{% endif %}
