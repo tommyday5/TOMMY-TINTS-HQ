@@ -71,6 +71,41 @@ code{overflow-wrap:anywhere}
 {% if not record or not record.archived %}<button type="submit" name="action" value="save">{% if new %}Create & save plan{% else %}Save plan changes{% endif %}</button>{% else %}<p>This plan is archived; restore it before editing.</p>{% endif %}
 </form>
 {% if record %}
+<div class="panel">
+<h2>Completed visit entitlements (native HQ only)</h2>
+<p><strong>{{ entitlement.used }} linked completed visit{{ '' if entitlement.used == 1 else 's' }}</strong>
+{% if entitlement.included is not none %} out of {{ entitlement.included }} included · <strong>{{ entitlement.remaining }} remaining</strong>{% else %} · no allowance set{% endif %}.</p>
+<p>Only completed visits that you explicitly link count. Historical Sheets cleans, package prices, invoices, deposits and received payments are <strong>not</strong> included in this total. Archiving a completed visit does not erase work delivered.</p>
+{% if not record.archived and record.status != 'ended' %}
+<form method="post" action="/hq/maintenance/plans/{{ record.id }}">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="revision" value="{{ record.revision }}">
+<input type="hidden" name="operation_id" value="{{ link_operation_id }}">
+<label for="visit_id">Choose a completed, matching HQ visit to allocate to this plan</label>
+<select id="visit_id" name="visit_id" required>
+<option value="">Choose a completed visit</option>
+{% for v in candidate_visits %}<option value="{{ v.id }}">{{ v.visit_day }} {{ v.visit_time }} — {{ v.service }} ({{ v.id[:8] }})</option>{% endfor %}
+</select>
+<button type="submit" name="action" value="link_visit" {% if not candidate_visits or entitlement.remaining == 0 %}disabled{% endif %}>Link completed visit to plan</button>
+{% if not candidate_visits %}<p>No unlinked, completed visits match this customer, vehicle and service.</p>{% endif %}
+</form>
+{% endif %}
+<div class="scroll"><table><thead><tr><th>Linked visit</th><th>Status</th><th>Correction</th></tr></thead><tbody>
+{% for v in linked_visits %}
+<tr><td><a href="/hq/maintenance/visits/{{ v.visit_id }}">{{ v.visit_day }} {{ v.visit_time }} — {{ v.service }}</a></td>
+<td>{{ v.status|title }}{% if v.archived %} · Archived{% endif %}</td>
+<td><form method="post" action="/hq/maintenance/plans/{{ record.id }}">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="revision" value="{{ record.revision }}">
+<input type="hidden" name="visit_id" value="{{ v.visit_id }}"><input type="hidden" name="link_revision" value="{{ v.revision }}">
+<input type="hidden" name="operation_id" value="{{ unlink_operations[v.visit_id] }}">
+<button type="submit" name="action" value="unlink_visit">Unlink (audited)</button>
+</form></td></tr>
+{% else %}<tr><td colspan="3">No completed visits linked yet.</td></tr>{% endfor %}
+</tbody></table></div>
+<h3>Entitlement link history</h3>
+<ul>{% for e in link_events %}<li>{{ e.created_at }} — {{ e.action|title }} visit <code>{{ e.visit_id[:10] }}</code> · link revision {{ e.revision }}</li>{% else %}<li>No link decisions recorded.</li>{% endfor %}</ul>
+</div>
+{% endif %}
+{% if record %}
 <div class="panel"><p>Canonical plan ID <code>{{ record.id }}</code> · Customer <code>{{ record.customer_id }}</code> · Revision {{ record.revision }}</p>
 <form method="post" action="/hq/maintenance/plans/{{ record.id }}"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="revision" value="{{ record.revision }}">
 <button type="submit" name="action" value="{% if record.archived %}restore{% else %}archive{% endif %}">{% if record.archived %}Restore plan{% else %}Archive plan{% endif %}</button></form></div>

@@ -9,6 +9,9 @@
 <p>{{ p.make }} {{ p.model }}{% if p.registration %} · {{ p.registration }}{% endif %}</p>
 <p>{{ p.frequency|replace('_',' ')|title }} · <strong>{{ p.status|title }}</strong></p>
 <p>Next indicative due date: {{ p.next_due or 'To be arranged' }} (not booked)</p>
+{% if p.visits_included is not none %}<p>Completed HQ visits allocated: <strong>{{ p.entitlement.used }} of {{ p.visits_included }}</strong>; {{ p.entitlement.remaining }} remaining. Historical visits are not yet reconciled.</p>
+{% else %}<p>Visit allowance has not been specified.</p>{% endif %}
+<p>Linked completed visits do not confirm any payment, invoice or future booking.</p>
 <p>HQ plan reference <code>{{ p.id }}</code></p></article>
 {% else %}<article><p>No maintenance plans have been shared with this account.</p></article>{% endfor %}
 <p>Confirmed bookings appear in <a href="/customer/availability">appointment status</a>, and recorded work in <a href="/customer/maintenance">maintenance visits</a>.</p>

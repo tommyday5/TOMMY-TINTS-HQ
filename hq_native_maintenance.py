@@ -193,6 +193,14 @@ def save_visit(form, *, visit_id=None, expected_revision=None, actor="owner"):
                 after = {**values, "archived": 0}
                 if before == after:
                     return visit_id
+                # A linked visit must remain the same completed service for the
+                # same customer/vehicle, or its allowance accounting would drift.
+                from hq_maintenance_entitlements import active_link
+                if active_link(db, visit_id) and (
+                    any(before[key] != after[key] for key in
+                        ("customer_id", "vehicle_id", "service")) or
+                    after["status"] != "completed"):
+                    raise ValueError("Unlink the maintenance plan before changing a completed linked visit")
                 db.execute("""UPDATE hq_maintenance_visits SET customer_id=?,vehicle_id=?,
                     service=?,visit_day=?,visit_time=?,status=?,planned_price_pence=?,
                     actual_minutes=?,internal_notes=?,portal_visible=?,revision=revision+1,
