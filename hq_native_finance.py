@@ -106,3 +106,7 @@ def api():
 # Additive owner-only receivables routes. Do not merge invoice values with receipts.
 from hq_receivables import register as register_receivable_routes
 register_receivable_routes(finance)
+
+# Additive owner-only reported-payment allocation interface; no bank verification.
+from hq_receivable_payments import register as register_allocation_routes
+register_allocation_routes(finance)
