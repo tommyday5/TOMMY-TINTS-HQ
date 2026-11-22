@@ -25,6 +25,10 @@ class ReceivablesTests(unittest.TestCase):
         })
         environment.start()
         self.addCleanup(environment.stop)
+        # Persistent production requires /data; synthetic fixture uses a temporary directory.
+        storage = patch('hq_receivables.storage_ready', return_value=True)
+        storage.start()
+        self.addCleanup(storage.stop)
         self.client = app.test_client()
         self.url = "/api/hq/finance/receivables"
         self.customer_a, self.customer_b = uuid.uuid4().hex, uuid.uuid4().hex
