@@ -13,6 +13,7 @@ from hq_auth import issue_session
 from hq_auth_store import auth_db
 from hq_commerce import save_product, database
 from hq_core_records import _schema
+from hq_customer_portal import issue_customer_invite
 from hq_shop_enquiries import (create_enquiry, enquiries_for_customer, owner_review)
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,9 +48,19 @@ class ShopEnquiryTests(unittest.TestCase):
     def lines(self, qty=2):
         return [{"id": self.product, "quantity": qty}]
 
-    def customer_login(self, client):
+    def customer_login(self, client, customer_id):
+        # Redeem an actual synthetic invite; exercise canonical login/session isolation.
+        code = issue_customer_invite(customer_id, uuid.uuid4().hex)
         with client.session_transaction() as sess:
-            sess["customer_portal_csrf"] = "synthetic-csrf"
+            sess["customer_portal_login_csrf"] = "synthetic-login-csrf"
+        response = client.post("/customer/login", data={
+            "csrf": "synthetic-login-csrf", "code": code,
+        })
+        self.assertEqual(response.status_code, 303, response.get_data(as_text=True))
+        with client.session_transaction() as sess:
+            self.assertTrue(sess.get("customer_portal_sid"))
+            self.assertTrue(sess.get("customer_portal_csrf"))
+            return sess["customer_portal_csrf"]
 
     def owner_login(self):
         with self.owner.session_transaction() as sess, auth_db() as db:
@@ -85,23 +96,22 @@ class ShopEnquiryTests(unittest.TestCase):
                 "tier": "trade", "total_pence": 1}
         self.assertEqual(self.client.post("/api/shop/enquiries", json=data).status_code, 401)
         self.assertEqual(self.owner.get("/hq/shop/enquiries").status_code, 302)
-        self.customer_login(self.client)
-        with patch("hq_shop_enquiries.active_customer", return_value=self.customer_a):
-            self.assertEqual(self.client.post("/api/shop/enquiries", json=data).status_code, 403)
-            response = self.client.post("/api/shop/enquiries", json=data,
-                                        headers={"X-CSRF-Token": "synthetic-csrf"})
-            self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
-            ident = response.json["id"]
-            self.assertFalse(response.json["payment_collected"])
-            self.assertFalse(response.json["booking_created"])
-            again = self.client.post("/api/shop/enquiries", json=data,
-                                     headers={"X-CSRF-Token": "synthetic-csrf"})
-            self.assertEqual(again.json["id"], ident)
-            view = self.client.get("/customer/shop/enquiries")
-            self.assertEqual(view.status_code, 200)
-            self.assertIn(b"15.99", view.data)
-            self.assertNotIn(b"7.50", view.data)
-            self.assertNotIn(b"4.00", view.data)
+        csrf = self.customer_login(self.client, self.customer_a)
+        self.assertEqual(self.client.post("/api/shop/enquiries", json=data).status_code, 403)
+        response = self.client.post("/api/shop/enquiries", json=data,
+                                    headers={"X-CSRF-Token": csrf})
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        ident = response.json["id"]
+        self.assertFalse(response.json["payment_collected"])
+        self.assertFalse(response.json["booking_created"])
+        again = self.client.post("/api/shop/enquiries", json=data,
+                                 headers={"X-CSRF-Token": csrf})
+        self.assertEqual(again.json["id"], ident)
+        view = self.client.get("/customer/shop/enquiries")
+        self.assertEqual(view.status_code, 200, view.get_data(as_text=True))
+        self.assertIn(b"15.99", view.data)
+        self.assertNotIn(b"7.50", view.data)
+        self.assertNotIn(b"4.00", view.data)
         self.owner_login()
         listing = self.owner.get("/hq/shop/enquiries")
         self.assertEqual(listing.status_code, 200)
@@ -116,14 +126,15 @@ class ShopEnquiryTests(unittest.TestCase):
             "public_note": "Owner-reviewed quote; no payment taken",
         })
         self.assertEqual(decision.status_code, 303)
-        with patch("hq_shop_enquiries.active_customer", return_value=self.customer_a):
-            view = self.client.get("/customer/shop/enquiries")
-            self.assertIn(b"30.00", view.data)
-            self.assertIn(b"Owner-reviewed quote", view.data)
-        with patch("hq_shop_enquiries.active_customer", return_value=self.customer_b):
-            view = self.client.get("/customer/shop/enquiries")
-            self.assertNotIn(ident.encode(), view.data)
-            self.assertNotIn(b"Owner-reviewed quote", view.data)
+        view = self.client.get("/customer/shop/enquiries")
+        self.assertIn(b"30.00", view.data)
+        self.assertIn(b"Owner-reviewed quote", view.data)
+        other_client = app.test_client()
+        self.customer_login(other_client, self.customer_b)
+        other_view = other_client.get("/customer/shop/enquiries")
+        self.assertEqual(other_view.status_code, 200)
+        self.assertNotIn(ident.encode(), other_view.data)
+        self.assertNotIn(b"Owner-reviewed quote", other_view.data)
         with connect() as db:
             audit = db.execute("SELECT revision,action FROM hq_shop_enquiry_audit WHERE enquiry_id=? ORDER BY revision",
                                (ident,)).fetchall()
