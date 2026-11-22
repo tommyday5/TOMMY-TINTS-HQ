@@ -92,7 +92,9 @@ class AllocationTests(unittest.TestCase):
         revised = {**first, "operation_id": uuid.uuid4().hex, "revision": 1,
                    "memo": "Reviewed manual reference"}
         self.assertEqual(self.post(revised).json["revision"], 2)
-        self.assertEqual(self.post(first).status_code, 409)  # stale
+        # Original token is a legitimate idempotent replay; a *new* token is stale.
+        self.assertEqual(self.post(first).json["revision"], 1)
+        self.assertEqual(self.post({**first, "operation_id": uuid.uuid4().hex}).status_code, 409)
         reversed_entry = {**revised, "operation_id": uuid.uuid4().hex,
                           "revision": 2, "status": "reversed"}
         self.assertEqual(self.post(reversed_entry).json["revision"], 3)
