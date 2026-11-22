@@ -39,12 +39,28 @@ button.alt{background:#333842;border-color:#90949b}button:focus-visible,a:focus-
 {% for item in items %}<article class="card">
 <h3>{{ item.service }} · {{ item.registration or 'Vehicle not registered' }}</h3>
 <p>Requested: {{ item.requested_date }} at {{ item.requested_time }} · <strong>{{ item.status|title }}</strong></p>
+{% if item.status == 'offered' and item.customer_decision == 'accepted' %}
+<p role="status"><strong>You accepted this tentative offer.</strong> Tommy Tints still needs to confirm availability separately. This is not a booked appointment.</p>
+{% elif item.status == 'offered' and item.customer_decision == 'declined' %}
+<p role="status"><strong>You declined this offer.</strong> You can request another date for approved work using the form above.</p>
+{% endif %>
 {% if item.note %}<p>{{ item.note }}</p>{% endif %}
 {% if item.offered_date and item.status == 'offered' %}
 <p><strong>Tentative offer:</strong> {{ item.offered_date }} at {{ item.offered_time }}. This remains unconfirmed until Tommy Tints separately confirms the booking.</p>
+{% if not item.customer_decision %}
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="action" value="respond">
+<input type="hidden" name="request_id" value="{{ item.id }}">
+<input type="hidden" name="revision" value="{{ item.revision }}">
+<p>Respond to this offer. Accepting tells us your preference only: it does not reserve the time, contact the workshop or take a deposit.</p>
+<button type="submit" name="decision" value="accepted">Accept tentative offer</button>
+<button type="submit" name="decision" value="declined" class="alt">Decline and request another date</button>
+</form>
+{% endif %}
 {% endif %}
 {% if item.owner_message %}<p>Tommy Tints: {{ item.owner_message }}</p>{% endif %}
-{% if item.status in ('requested','offered') %}
+{% if item.status in ('requested','offered') and item.customer_decision != 'declined' %}
 <form method="post"><input type="hidden" name="csrf" value="{{ csrf }}">
 <input type="hidden" name="action" value="withdraw">
 <input type="hidden" name="request_id" value="{{ item.id }}">
