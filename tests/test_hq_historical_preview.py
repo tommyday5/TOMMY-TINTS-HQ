@@ -532,6 +532,7 @@ class HistoricalMappingProposalTests(unittest.TestCase):
                     formula=self.formula, computed=self.actual, owner_identity="fixture")
             assessment = {key: "needs_evidence" for key in base}
             assessment["customer"] = "conflict"
+            assessment["customer_tier"] = "appears_consistent"
             save_candidate_field_review(
                 candidate_id=cid, expected_revision=0, assessments=assessment,
                 formula=self.formula, computed=self.actual, owner_identity="fixture")
@@ -552,9 +553,7 @@ class HistoricalMappingProposalTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "changed; reload"):
                 save_candidate_field_ownership(
                     candidate_id=cid, expected_revision=0,
-                    selections=dict(plan, services="hold", lifecycle="hold",
-                                    customer_tier="hold", vehicle="hold",
-                                    quoted_price="hold", customer="hold"),
+                    selections=dict(plan, customer_tier="review_hq"),
                     formula=self.formula, computed=self.actual, owner_identity="fixture")
             altered, actual = snapshots()
             altered["valueRanges"][0]["values"][1][5] = "Changed"
