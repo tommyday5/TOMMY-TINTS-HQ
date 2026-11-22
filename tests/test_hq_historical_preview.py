@@ -591,7 +591,7 @@ class HistoricalMappingProposalTests(unittest.TestCase):
         with (patch.dict(app.extensions, {
                 "hq_sheets_connection": lambda: ("fixture",9999999999)}),
               patch("hq_historical_preview._read_live",
-                    return_value=(self.formula,self.actual))) as read:
+                    return_value=(self.formula,self.actual)) as read):
             data = {"csrf":"ownership-csrf","action":"save_ownership",
                     "ownership_revision":"0"}
             for key in assess:
