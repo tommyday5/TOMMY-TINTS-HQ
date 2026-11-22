@@ -47,7 +47,8 @@ class PortalProfileRequestTests(unittest.TestCase):
         with app.app_context():
             return create_native_work({
                 "operation_id": uuid.uuid4().hex, "customer_id": "", "vehicle_id": "",
-                "customer_name": name, "email": email, "phone": "07700 900111",
+                "customer_name": name, "email": email,
+                "phone": "07700 900111" if email == "one@example.invalid" else "07700 900112",
                 "make": "Hyundai", "model": "i30", "model_year": "2021",
                 "registration": reg, "kind": "quote", "service": "Bodywork & Paint",
                 "customer_tier": "retail", "notes": "SECRET MARGIN 500%",
