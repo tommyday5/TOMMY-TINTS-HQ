@@ -11,7 +11,7 @@
 <article>
 <h2>{{ e.customer_name }} · {{ e.status|title }}</h2>
 <p>Enquiry <code>{{ e.id }}</code> · customer <code>{{ e.customer_id }}</code> · {{ e.created_at }}</p>
-<ul>{% for item in e.items %}<li>{{ item.quantity }} × {{ item.name }} {{ item.variant }} at £{{ '%.2f'|format(item.unit_pence/100) }} (snapshot)</li>{% endfor %}</ul>
+<ul>{% for item in e['items'] %}<li>{{ item.quantity }} × {{ item.name }} {{ item.variant }} at £{{ '%.2f'|format(item.unit_pence/100) }} (snapshot)</li>{% endfor %}</ul>
 <p>{{ e.fulfilment|title }} · indicative retail total <strong>£{{ '%.2f'|format(e.indicative_total_pence/100) }}</strong>
 {% if e.approved_total_pence is not none %} · owner-approved quote <strong>£{{ '%.2f'|format(e.approved_total_pence/100) }}</strong>{% endif %}</p>
 {% if e.status not in ('declined','closed') %}
