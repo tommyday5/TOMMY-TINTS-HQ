@@ -11,6 +11,7 @@ from flask import Blueprint, abort, jsonify, redirect, render_template, request,
 
 from customer_request_store import storage_ready
 from hq_auth import required
+from hq_customer_portal import active_customer
 
 commerce = Blueprint("commerce", __name__)
 
@@ -205,7 +206,10 @@ def shop():
     with database() as db:
         products = db.execute("""SELECT id,name,variant,description,retail,stock FROM products
             WHERE published=1 ORDER BY name,variant""").fetchall()
-    return render_template("commerce_shop.html", products=products)
+    return render_template("commerce_shop.html", products=products,
+                           customer_active=bool(active_customer()),
+                           customer_csrf=session.get("customer_portal_csrf", ""),
+                           operation_id=uuid.uuid4().hex)
 
 
 @commerce.post("/api/shop/basket")

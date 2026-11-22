@@ -5,5 +5,8 @@
 <button data-product="{{ product.id }}" data-name="{{ product.name }} {{ product.variant }}" {{ 'disabled' if product.stock<1 else '' }}>Add to basket</button></article>
 {% else %}<article><h2>Products coming soon</h2><p>Our catalogue will appear here when products are ready.</p></article>{% endfor %}
 </section><section><h2>Your basket</h2><div id="basket"></div><label>Fulfilment<select id="fulfilment"><option value="collection">Collection</option><option value="delivery">Delivery</option></select></label>
-<button id="checkBasket">Check basket total</button><p id="basketResult" role="status"></p><p>Checkout is currently unavailable. Adding to the basket does not reserve stock.</p></section>
+<button id="checkBasket">Check basket total</button><p id="basketResult" role="status"></p>
+{% if customer_active %}<p><button id="requestBasket" type="button" data-operation="{{ operation_id }}" data-csrf="{{ customer_csrf }}">Send basket for owner-reviewed quote</button></p>
+<p id="requestResult" role="status"></p><p><a href="/customer/shop/enquiries">Track my shop requests</a></p>
+{% else %}<p><a href="/customer/login">Sign in to your verified customer account</a> to send this basket for a quote. You can still check prices without signing in.</p>{% endif %}<p>Checkout is currently unavailable. Adding to the basket does not reserve stock.</p></section>
 </main></body></html>
