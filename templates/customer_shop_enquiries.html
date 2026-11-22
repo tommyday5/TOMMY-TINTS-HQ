@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>My Shop Requests · Tommy Tints</title>
+<link rel="stylesheet" href="/static/commerce.css"></head><body><main>
+<p><a href="/customer/account">← My account</a> · <a href="/book/shop">Shop</a></p>
+<h1>My shop quote requests</h1>
+<p>These are enquiries, not confirmed purchases or bookings. Indicative prices are snapshots from when you submitted your basket. Only an owner-reviewed quote is approved; no stock is reserved and no payment has been taken.</p>
+{% for e in enquiries %}<article>
+<h2>{{ e.status|replace('_',' ')|title }} · {{ e.created_at[:10] }}</h2>
+<p>Reference <code>{{ e.id }}</code> · {{ e.fulfilment|title }}</p>
+<ul>{% for item in e.items %}<li>{{ item.quantity }} × {{ item.name }} {{ item.variant }}</li>{% endfor %}</ul>
+<p>Original basket estimate £{{ '%.2f'|format(e.indicative_total_pence/100) }}</p>
+{% if e.status=='quoted' and e.approved_total_pence is not none %}
+<p><strong>Tommy Tints reviewed quote: £{{ '%.2f'|format(e.approved_total_pence/100) }}</strong></p>
+{% if e.public_note %}<p>{{ e.public_note }}</p>{% endif %}
+{% endif %}
+</article>{% else %}<p>No requests saved yet. <a href="/book/shop">Browse products</a>.</p>{% endfor %}
+</main></body></html>
