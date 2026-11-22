@@ -13,7 +13,7 @@ button.alt{background:#333842;border-color:#90949b}button:focus-visible,a:focus-
 <nav><a href="/customer/account">← My account</a> · <a href="/book">Tommy Tints Bookings</a></nav>
 <h1>Request an appointment preference</h1>
 <p>You can request a preferred date for approved work. This does <strong>not</strong> reserve an appointment. Tommy Tints must review it, check actual availability, and confirm any booking separately. No payment is taken.</p>
-{% if saved %}<div class="card" role="status">Request updated. It is not a confirmed appointment.</div>{% endif %}
+{% if saved %}<div class="card" role="status">Your response has been saved. Only the owner can confirm an appointment in HQ.</div>{% endif %}
 {% if error %}<div class="card alert" role="alert">{{ error }}</div>{% endif %}
 <section class="card"><h2>New availability request</h2>
 {% if works %}
@@ -39,15 +39,19 @@ button.alt{background:#333842;border-color:#90949b}button:focus-visible,a:focus-
 {% for item in items %}<article class="card">
 <h3>{{ item.service }} · {{ item.registration or 'Vehicle not registered' }}</h3>
 <p>Requested: {{ item.requested_date }} at {{ item.requested_time }} · <strong>{{ item.status|title }}</strong></p>
-{% if item.status == 'offered' and item.customer_decision == 'accepted' %}
+{% if item.booking_status == 'confirmed' %}
+<p role="status"><strong>Your appointment is confirmed in Tommy Tints HQ</strong> for {{ item.offered_date }} at {{ item.offered_time }} for {{ item.duration_hours }} hour(s). {% if item.confirmation_note %}{{ item.confirmation_note }}{% endif %}</p>
+{% elif item.booking_status == 'cancelled' %}
+<p role="status"><strong>Your HQ appointment was cancelled.</strong> {{ item.cancel_reason }}. Please request another preferred date if needed.</p>
+{% elif item.status == 'offered' and item.customer_decision == 'accepted' %}
 <p role="status"><strong>You accepted this tentative offer.</strong> Tommy Tints still needs to confirm availability separately. This is not a booked appointment.</p>
 {% elif item.status == 'offered' and item.customer_decision == 'declined' %}
 <p role="status"><strong>You declined this offer.</strong> You can request another date for approved work using the form above.</p>
 {% endif %}
 {% if item.note %}<p>{{ item.note }}</p>{% endif %}
 {% if item.offered_date and item.status == 'offered' %}
-<p><strong>Tentative offer:</strong> {{ item.offered_date }} at {{ item.offered_time }}. This remains unconfirmed until Tommy Tints separately confirms the booking.</p>
-{% if not item.customer_decision %}
+{% if not item.booking_status %}<p><strong>Tentative offer:</strong> {{ item.offered_date }} at {{ item.offered_time }}. This remains unconfirmed until Tommy Tints separately confirms the booking.</p>{% endif %}
+{% if not item.customer_decision and not item.booking_status %}
 <form method="post">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <input type="hidden" name="action" value="respond">
@@ -60,7 +64,7 @@ button.alt{background:#333842;border-color:#90949b}button:focus-visible,a:focus-
 {% endif %}
 {% endif %}
 {% if item.owner_message %}<p>Tommy Tints: {{ item.owner_message }}</p>{% endif %}
-{% if item.status in ('requested','offered') and item.customer_decision != 'declined' %}
+{% if item.status in ('requested','offered') and item.customer_decision != 'declined' and not item.booking_status %}
 <form method="post"><input type="hidden" name="csrf" value="{{ csrf }}">
 <input type="hidden" name="action" value="withdraw">
 <input type="hidden" name="request_id" value="{{ item.id }}">
