@@ -8,7 +8,7 @@
 {% for e in enquiries %}<article>
 <h2>{{ e.status|replace('_',' ')|title }} · {{ e.created_at[:10] }}</h2>
 <p>Reference <code>{{ e.id }}</code> · {{ e.fulfilment|title }}</p>
-<ul>{% for item in e['items'] %}<li>{{ item.quantity }} × {{ item.name }} {{ item.variant }}</li>{% endfor %}</ul>
+<ul>{% for item in e['items'] %}<li>{{ item.quantity }} × {{ item.name }} {{ item.variant }} · £{{ '%.2f'|format(item.unit_pence/100) }} each</li>{% endfor %}</ul>
 <p>Original basket estimate £{{ '%.2f'|format(e.indicative_total_pence/100) }}</p>
 {% if e.status=='quoted' and e.approved_total_pence is not none %}
 <p><strong>Tommy Tints reviewed quote: £{{ '%.2f'|format(e.approved_total_pence/100) }}</strong></p>
