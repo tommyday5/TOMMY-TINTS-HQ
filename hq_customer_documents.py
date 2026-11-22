@@ -31,6 +31,21 @@ def _tables(db):
         public_description TEXT NOT NULL,
         updated_at TEXT NOT NULL
     )""")
+    # Separately drafted, explicitly published customer progress.
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_work_customer_updates (
+        work_id TEXT PRIMARY KEY REFERENCES hq_work_records(id),
+        message TEXT NOT NULL,
+        is_published INTEGER NOT NULL DEFAULT 0 CHECK(is_published IN (0,1)),
+        updated_at TEXT NOT NULL,
+        published_at TEXT
+    )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_work_customer_update_events (
+        event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        work_id TEXT NOT NULL REFERENCES hq_work_records(id),
+        revision INTEGER NOT NULL,
+        published INTEGER NOT NULL CHECK(published IN (0,1)),
+        changed_at TEXT NOT NULL
+    )""")
 
 
 def document_snapshot(work_id):
@@ -45,12 +60,16 @@ def document_snapshot(work_id):
             c.name AS customer_name,v.make,v.model,v.registration,
             COALESCE(a.is_archived,0) AS is_archived,
             COALESCE(doc.public_description,'') AS public_description,
-            doc.updated_at AS description_updated_at
+            doc.updated_at AS description_updated_at,
+            COALESCE(upd.message,'') AS portal_update,
+            COALESCE(upd.is_published,0) AS update_published,
+            upd.published_at AS update_published_at
             FROM hq_work_records w
             JOIN hq_customers c ON c.id=w.customer_id
             JOIN hq_vehicles v ON v.id=w.vehicle_id
             LEFT JOIN hq_work_archive_state a ON a.work_id=w.id
             LEFT JOIN hq_work_customer_documents doc ON doc.work_id=w.id
+            LEFT JOIN hq_work_customer_updates upd ON upd.work_id=w.id
             WHERE w.id=?""", (work_id,)).fetchone()
     if row is None:
         raise LookupError("HQ work not found")
@@ -61,6 +80,7 @@ def document_snapshot(work_id):
         if row["status"] in _APPROVED and price is not None else None
     )
     result["can_edit"] = not bool(row["is_archived"]) and row["status"] != "cancelled"
+    result["can_publish_update"] = result["can_edit"] and row["status"] in _APPROVED
     result["can_print"] = bool(result["approved_price"] is not None
                                and row["public_description"].strip()
                                and not row["is_archived"])
@@ -115,6 +135,63 @@ def save_public_description(work_id, description, expected_revision):
     return revision
 
 
+def save_portal_update(work_id, message, publish, expected_revision):
+    """Owner-drafted, explicitly published progress; never creates a booking."""
+    _validate_work_id(work_id)
+    if (not isinstance(message, str) or len(message.strip()) > 500
+            or any(ord(char) < 32 and char not in "\n\t" for char in message)):
+        raise ValueError("Customer update must be 500 characters or fewer and contain no control characters")
+    if type(publish) is not bool:
+        raise ValueError("Invalid publication flag")
+    if type(expected_revision) is not int or not 0 <= expected_revision < 2**63 - 1:
+        raise ValueError("Invalid work revision")
+    cleaned = message.strip()
+    if publish and not cleaned:
+        raise ValueError("A published customer update cannot be blank")
+    with connect() as db:
+        db.execute("PRAGMA foreign_keys=ON")
+        _schema(db)
+        _tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("""SELECT w.revision,w.status,
+            COALESCE(a.is_archived,0) AS is_archived,
+            COALESCE(u.message,'') AS message,
+            COALESCE(u.is_published,0) AS is_published
+            FROM hq_work_records w
+            LEFT JOIN hq_work_archive_state a ON a.work_id=w.id
+            LEFT JOIN hq_work_customer_updates u ON u.work_id=w.id
+            WHERE w.id=?""", (work_id,)).fetchone()
+        if row is None:
+            raise LookupError("HQ work not found")
+        if row["is_archived"] or row["status"] == "cancelled":
+            raise ValueError("Archived or cancelled work is read-only")
+        if publish and row["status"] not in _APPROVED:
+            raise ValueError("Only approved work updates can be published")
+        if cleaned == row["message"] and publish == bool(row["is_published"]):
+            return row["revision"]
+        if row["revision"] != expected_revision:
+            raise StaleWorkRecordError("This work changed. Reload before saving the customer update.")
+        revision = row["revision"] + 1
+        now = datetime.now(timezone.utc).isoformat()
+        db.execute("""INSERT INTO hq_work_customer_updates
+            (work_id,message,is_published,updated_at,published_at) VALUES (?,?,?,?,?)
+            ON CONFLICT(work_id) DO UPDATE SET
+                message=excluded.message,is_published=excluded.is_published,
+                updated_at=excluded.updated_at,published_at=excluded.published_at""",
+            (work_id, cleaned, int(publish), now, now if publish else None))
+        updated = db.execute("""UPDATE hq_work_records SET revision=revision+1
+            WHERE id=? AND revision=?""", (work_id, expected_revision))
+        if updated.rowcount != 1:
+            raise StaleWorkRecordError("This work changed. Reload before saving the customer update.")
+        db.execute("""INSERT INTO hq_work_customer_update_events
+            (work_id,revision,published,changed_at) VALUES (?,?,?,?)""",
+            (work_id, revision, int(publish), now))
+        _audit_work(db, work_id, revision, "customer_portal_update",
+                    {"changed_fields": ["portal_update", "published"], "revision": expected_revision},
+                    {"changed_fields": ["portal_update", "published"], "revision": revision})
+    return revision
+
+
 @customer_documents.after_request
 def no_cache(response):
     response.headers["Cache-Control"] = "private, no-store"
@@ -138,8 +215,17 @@ def work_document(work_id):
         if not re.fullmatch(r"(?:0|[1-9][0-9]{0,17})", raw_revision):
             abort(400)
         try:
-            save_public_description(work_id, request.form.get("public_description", ""),
-                                    int(raw_revision))
+            if request.form.get("action") == "portal_update":
+                flag = request.form.get("publish", "0")
+                if flag not in ("0", "1"):
+                    abort(400)
+                save_portal_update(work_id, request.form.get("portal_update", ""),
+                                   flag == "1", int(raw_revision))
+            elif request.form.get("action", "description") == "description":
+                save_public_description(work_id, request.form.get("public_description", ""),
+                                        int(raw_revision))
+            else:
+                abort(400)
         except LookupError:
             abort(404)
         except (ValueError, StaleWorkRecordError) as exc:
@@ -153,7 +239,8 @@ def work_document(work_id):
         except (OSError, sqlite3.Error):
             current_app.logger.exception("Customer work document write unavailable")
             abort(503)
-        return redirect(url_for(".work_document", work_id=work_id, saved="1"), code=303)
+        outcome = "updated" if request.form.get("action") == "portal_update" else "saved"
+        return redirect(url_for(".work_document", work_id=work_id, **{outcome: "1"}), code=303)
     try:
         snapshot = document_snapshot(work_id)
     except LookupError:
