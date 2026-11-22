@@ -101,3 +101,8 @@ def api():
   return jsonify(saved=True,bank_verified=False)
  except (ValueError,TypeError):return jsonify(error='Check amounts, dates and required fields. Review does not verify a bank receipt.'),400
  except sqlite3.Error:return jsonify(error='Finance storage unavailable. Nothing confirmed saved.'),503
+
+
+# Additive owner-only receivables routes. Do not merge invoice values with receipts.
+from hq_receivables import register as register_receivable_routes
+register_receivable_routes(finance)
