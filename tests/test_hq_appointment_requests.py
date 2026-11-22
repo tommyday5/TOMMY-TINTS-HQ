@@ -194,5 +194,80 @@ class AvailabilityRequestTests(unittest.TestCase):
         self.assertEqual(len(owner_availability_snapshot()),2)
 
 
+    def test_customer_accepts_offer_without_creating_booking(self):
+        self.owner_login()
+        csrf=self.signin(self.customer,self.customer_id)
+        other_csrf=self.signin(self.other,self.other_id)
+        self.assertEqual(self.customer.post("/customer/availability",
+                        data=self.payload(csrf)).status_code,303)
+        ref=owner_availability_snapshot()[0]["id"]
+        offered={"csrf":"availability-owner-csrf","request_id":ref,
+                 "revision":"0","decision":"offered","date":self.next_day,
+                 "time":"13:00","message":"Proposed date subject to calendar"}
+        self.assertEqual(self.owner.post("/hq/availability-requests",data=offered).status_code,303)
+        reply={"csrf":csrf,"action":"respond","request_id":ref,
+               "revision":"1","decision":"accepted"}
+        self.assertIn(b"Accept tentative offer",self.customer.get("/customer/availability").data)
+        self.assertEqual(self.customer.post("/customer/availability",
+                         data={**reply,"csrf":"invalid"}).status_code,403)
+        self.assertEqual(self.other.post("/customer/availability",
+                         data={**reply,"csrf":other_csrf}).status_code,404)
+        self.assertEqual(self.customer.post("/customer/availability",data=reply).status_code,303)
+        self.assertEqual(self.customer.post("/customer/availability",data=reply).status_code,303)
+        self.assertEqual(self.customer.post("/customer/availability",
+                         data={**reply,"decision":"declined"}).status_code,409)
+        customer_page=self.customer.get("/customer/availability")
+        self.assertIn(b"You accepted this tentative offer",customer_page.data)
+        self.assertIn(b"not a booked appointment",customer_page.data)
+        self.assertNotIn(b"PRIVATE COST DATA",customer_page.data)
+        self.assertNotIn(ref.encode(),self.other.get("/customer/availability").data)
+        owner_page=self.owner.get("/hq/availability-requests")
+        self.assertIn(b"Customer accepted the tentative offer",owner_page.data)
+        self.assertIn(b"not a confirmed booking",owner_page.data)
+        self.assertNotIn(b"Save tentative offer",owner_page.data)
+        self.assertEqual(self.owner.post("/hq/availability-requests",
+                         data={**offered,"revision":"1","message":"Changed date"}).status_code,409)
+        with connect() as db:
+            rows=db.execute("""SELECT decision,offer_revision FROM
+                hq_portal_availability_offer_responses WHERE request_id=?""",
+                (ref,)).fetchall()
+            self.assertEqual(len(rows),1)
+            self.assertEqual((rows[0]["decision"],rows[0]["offer_revision"]),("accepted",1))
+            self.assertEqual(db.execute("""SELECT status FROM
+                hq_portal_availability_requests WHERE id=?""",(ref,)).fetchone()[0],"offered")
+        # Customer can still withdraw an accepted-but-unconfirmed preference.
+        self.assertEqual(self.customer.post("/customer/availability",data={
+            "csrf":csrf,"action":"withdraw","request_id":ref,"revision":"1",
+        }).status_code,303)
+        self.assertEqual(owner_availability_snapshot()[0]["status"],"withdrawn")
+
+    def test_customer_decline_reopens_request_and_stale_offer_is_rejected(self):
+        self.owner_login()
+        csrf=self.signin(self.customer,self.customer_id)
+        self.assertEqual(self.customer.post("/customer/availability",
+                         data=self.payload(csrf)).status_code,303)
+        ref=owner_availability_snapshot()[0]["id"]
+        proposed={"csrf":"availability-owner-csrf","request_id":ref,
+                  "revision":"0","decision":"offered",
+                  "date":self.day,"time":"11:00"}
+        self.assertEqual(self.owner.post("/hq/availability-requests",data=proposed).status_code,303)
+        self.assertEqual(self.owner.post("/hq/availability-requests",
+                         data={**proposed,"revision":"1","date":self.next_day}).status_code,303)
+        response={"csrf":csrf,"action":"respond","request_id":ref,
+                  "revision":"1","decision":"declined"}
+        self.assertEqual(self.customer.post("/customer/availability",data=response).status_code,409)
+        self.assertEqual(self.customer.post("/customer/availability",
+                         data={**response,"revision":"2","decision":"unknown"}).status_code,409)
+        self.assertEqual(self.customer.post("/customer/availability",
+                         data={**response,"revision":"2"}).status_code,303)
+        self.assertIn(b"You declined this offer",self.customer.get("/customer/availability").data)
+        self.assertEqual(self.customer.post("/customer/availability",
+                         data=self.payload(csrf)).status_code,303)
+        self.assertEqual(len(owner_availability_snapshot()),2)
+        with connect() as db:
+            self.assertEqual(db.execute("""SELECT COUNT(*) FROM
+                hq_portal_availability_offer_responses""").fetchone()[0],1)
+
+
 if __name__=="__main__":
     unittest.main()
