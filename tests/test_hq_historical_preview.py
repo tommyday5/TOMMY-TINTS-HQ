@@ -12,7 +12,8 @@ from hq_auth_store import auth_db
 from hq_core_records import _schema
 from customer_request_store import connect
 from hq_historical_preview import (build_preview, _read_live, _native_inventory,
-    _candidate_stamp, stage_j_candidate, withdraw_j_candidate, _current_candidates)
+    _candidate_stamp, stage_j_candidate, withdraw_j_candidate, _current_candidates,
+    _candidate_for_review, _field_comparison, save_candidate_field_review)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -297,6 +298,131 @@ class HistoricalMappingProposalTests(unittest.TestCase):
                 "candidate_id":_current_candidates()[0]["id"],"revision":"0"})
             self.assertEqual(result.status_code,303)
             read.assert_not_called()
+
+
+    def test_field_comparison_is_owner_only_and_read_only(self):
+        cid = self._stage()
+        with app.app_context():
+            staged = _candidate_for_review(cid)
+            fields = _field_comparison(self.formula, self.actual, staged)
+        self.assertEqual([f["key"] for f in fields],
+                         ["customer", "customer_tier", "vehicle", "services",
+                          "quoted_price", "lifecycle"])
+        self.assertEqual(fields[0]["source"], "Synthetic A")
+        self.assertEqual(fields[0]["native"], "Fixture Customer")
+        self.assertIn("250", fields[4]["source"])
+        self.assertIn("unrecorded", fields[4]["native"])
+        self.assertNotIn("field_review", staged)
+        with connect() as db:
+            self.assertEqual(db.execute("""SELECT COUNT(*) FROM hq_historical_j_candidates
+                WHERE withdrawn_at IS NULL""").fetchone()[0], 1)
+            self.assertIsNone(db.execute("""SELECT 1 FROM sqlite_master WHERE
+                name='hq_historical_candidate_field_reviews'""").fetchone())
+
+    def test_field_assessments_persist_audit_and_replay_safely(self):
+        cid = self._stage()
+        fields = {"customer": "conflict", "customer_tier": "needs_evidence",
+                  "vehicle": "appears_consistent", "services": "conflict",
+                  "quoted_price": "needs_evidence", "lifecycle": "needs_evidence"}
+        with app.app_context():
+            rev = save_candidate_field_review(
+                candidate_id=cid, expected_revision=0, assessments=fields,
+                formula=self.formula, computed=self.actual, owner_identity="fixture")
+            self.assertEqual(rev, 1)
+            self.assertEqual(save_candidate_field_review(
+                candidate_id=cid, expected_revision=0, assessments=fields,
+                formula=self.formula, computed=self.actual, owner_identity="fixture"), 1)
+        stored = _candidate_for_review(cid)["field_review"]
+        self.assertEqual(stored["assessments"], fields)
+        self.assertEqual(stored["revision"], 1)
+        with connect() as db:
+            self.assertEqual(db.execute("""SELECT COUNT(*) FROM
+                hq_historical_candidate_field_events WHERE candidate_id=?""",
+                (cid,)).fetchone()[0], 1)
+            self.assertEqual(tuple(db.execute("""SELECT status,revision,price_pence
+                FROM hq_work_records WHERE id=?""", (self.work_id,)).fetchone()),
+                ("approved", 0, None))
+            row = db.execute("""SELECT * FROM hq_historical_candidate_field_reviews
+                WHERE candidate_id=?""", (cid,)).fetchone()
+            self.assertNotIn("Synthetic A", str(dict(row)))
+            self.assertNotIn("Fixture Customer", str(dict(row)))
+
+    def test_field_assessment_validation_concurrency_and_withdrawal(self):
+        cid = self._stage()
+        assessments = {k: "needs_evidence" for k in
+                       ("customer", "customer_tier", "vehicle", "services",
+                        "quoted_price", "lifecycle")}
+        with app.app_context():
+            with self.assertRaisesRegex(ValueError, "Review at least one"):
+                save_candidate_field_review(
+                    candidate_id=cid, expected_revision=0, assessments=assessments,
+                    formula=self.formula, computed=self.actual, owner_identity="fixture")
+            assessments["customer"] = "conflict"
+            self.assertEqual(save_candidate_field_review(
+                candidate_id=cid, expected_revision=0, assessments=assessments,
+                formula=self.formula, computed=self.actual, owner_identity="fixture"), 1)
+            changed = dict(assessments, customer="appears_consistent")
+            with self.assertRaisesRegex(ValueError, "changed; reload"):
+                save_candidate_field_review(
+                    candidate_id=cid, expected_revision=0, assessments=changed,
+                    formula=self.formula, computed=self.actual, owner_identity="fixture")
+            altered, _ = snapshots()
+            altered["valueRanges"][0]["values"][1][5] = "Altered scope"
+            with self.assertRaisesRegex(ValueError, "Source row changed"):
+                save_candidate_field_review(
+                    candidate_id=cid, expected_revision=1, assessments=changed,
+                    formula=altered, computed=self.actual, owner_identity="fixture")
+            with connect() as db:
+                db.execute("UPDATE hq_work_records SET revision=revision+1 WHERE id=?",
+                           (self.work_id,))
+            with self.assertRaisesRegex(ValueError, "Native work changed"):
+                save_candidate_field_review(
+                    candidate_id=cid, expected_revision=1, assessments=changed,
+                    formula=self.formula, computed=self.actual, owner_identity="fixture")
+            withdraw_j_candidate(cid, 0, "fixture")
+            with self.assertRaisesRegex(ValueError, "withdrawn"):
+                save_candidate_field_review(
+                    candidate_id=cid, expected_revision=1, assessments=changed,
+                    formula=self.formula, computed=self.actual, owner_identity="fixture")
+
+    def test_owner_field_review_route_get_never_fetches_source_and_save_is_explicit(self):
+        cid = self._stage()
+        endpoint = "/hq/migration/candidates/" + cid + "/review"
+        client = app.test_client()
+        self.assertEqual(client.get(endpoint).status_code, 302)
+        with client.session_transaction() as sess, auth_db() as db:
+            sess.update(hq_sid=issue_session(db, "owner-fixture"),
+                        csrf="field-csrf", google_sub="owner-fixture")
+        with patch("hq_historical_preview._read_live") as read:
+            page = client.get(endpoint)
+            self.assertEqual(page.status_code, 200)
+            self.assertIn(b"Compare current Sheets and HQ values", page.data)
+            self.assertNotIn(b"Synthetic A", page.data)
+            self.assertIn("no-store", page.headers.get("Cache-Control", ""))
+            read.assert_not_called()
+            self.assertEqual(client.post(endpoint, data={"action": "inspect",
+                "csrf": "wrong"}).status_code, 403)
+            read.assert_not_called()
+        with (patch.dict(app.extensions,
+                         {"hq_sheets_connection": lambda: ("fixture", 9999999999)}),
+              patch("hq_historical_preview._read_live",
+                    return_value=(self.formula, self.actual)) as read):
+            inspected = client.post(endpoint, data={"action": "inspect",
+                                                   "csrf": "field-csrf"})
+            self.assertEqual(inspected.status_code, 200)
+            self.assertIn(b"Synthetic A", inspected.data)
+            self.assertIn(b"Fixture Customer", inspected.data)
+            data = {"action": "save", "csrf": "field-csrf", "revision": "0",
+                    "customer": "conflict", "customer_tier": "needs_evidence",
+                    "vehicle": "needs_evidence", "services": "needs_evidence",
+                    "quoted_price": "needs_evidence", "lifecycle": "needs_evidence"}
+            saved = client.post(endpoint, data=data)
+            self.assertEqual(saved.status_code, 303)
+            self.assertEqual(read.call_count, 2)
+        refreshed = client.get(endpoint)
+        self.assertIn(b"revision 1", refreshed.data)
+        self.assertIn(b"conflict", refreshed.data)
+        self.assertNotIn(b"Synthetic A", refreshed.data)
 
 
 if __name__ == "__main__":
