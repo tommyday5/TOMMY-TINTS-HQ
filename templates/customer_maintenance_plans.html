@@ -1,0 +1,15 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>My maintenance plan — Tommy Tints</title>
+<style>:root{color-scheme:dark;background:#090b10;color:#fafafa;font-family:system-ui,sans-serif}body{padding:clamp(12px,3vw,30px)}main{max-width:850px;margin:auto}a{color:#ff7684}article{background:#181a21;border:1px solid #474a52;border-radius:13px;padding:20px;margin:15px 0}p{color:#c9cbd3;line-height:1.5}code{overflow-wrap:anywhere}</style></head>
+<body><main><p><a href="/customer/account">← My account</a> · <a href="/customer/maintenance">My visits</a> · <a href="/book">Request work</a></p>
+<h1>My maintenance plans</h1>
+<p>Only plans expressly shared by Tommy Tints appear here. Indicative next-due dates are not confirmed appointments. Package details are not payment receipts.</p>
+{% for p in plans %}
+<article><h2>{{ p.plan_name }}</h2><p>{{ p.service }}</p>
+<p>{{ p.make }} {{ p.model }}{% if p.registration %} · {{ p.registration }}{% endif %}</p>
+<p>{{ p.frequency|replace('_',' ')|title }} · <strong>{{ p.status|title }}</strong></p>
+<p>Next indicative due date: {{ p.next_due or 'To be arranged' }} (not booked)</p>
+<p>HQ plan reference <code>{{ p.id }}</code></p></article>
+{% else %}<article><p>No maintenance plans have been shared with this account.</p></article>{% endfor %}
+<p>Confirmed bookings appear in <a href="/customer/availability">appointment status</a>, and recorded work in <a href="/customer/maintenance">maintenance visits</a>.</p>
+</main></body></html>
