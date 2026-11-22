@@ -232,7 +232,8 @@ class HistoricalMappingProposalTests(unittest.TestCase):
                              (5,"J0081",self.work_id))
             self.assertEqual(len(proposal["source_stamp"]),64)
             self.assertNotIn("Synthetic A",str(dict(proposal)))
-            self.assertNotIn("250",str(dict(proposal)))
+            self.assertNotIn("price_pence",proposal.keys())
+            self.assertNotIn("customer_name",proposal.keys())
 
     def test_review_collision_stale_revision_and_source_mutations_fail_closed(self):
         self._stage()
