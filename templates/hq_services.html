@@ -1,0 +1,17 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Service prices · Tommy Tints HQ</title><link rel="stylesheet" href="/static/commerce.css"></head><body><main>
+<p><a href="/">← HQ Dashboard</a> · <a href="/hq/service-enquiries">Review service requests</a> · <a href="/book/services">Customer preview</a></p>
+<h1>Service catalogue &amp; owner prices</h1>
+<p>Create or edit the native service tariff for Retail, Trade and Maintenance. Prices are in <strong>pounds</strong>, not pence. These are new owner-entered records: the historical Cost Library remains read-only and has <strong>not</strong> been imported or reconciled. Empty prices are unknown, never zero. No quote is sent and no money is collected here.</p>
+<p>Only services you publish will appear in the public enquiry selector. Public customers may see a retail reference price; Trade and Maintenance prices are never exposed. Account tier is always subject to owner approval.</p>
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+{% if request.args.get('saved') %}<p role="status">Service pricing saved in persistent HQ storage.</p>{% endif %}
+{% for s in services %}<details><summary>{{ s.service }} — {{ 'Published' if s.published else 'Hidden' }} (revision {{ s.revision }})</summary>
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="service" value="{{ s.service }}"><input type="hidden" name="revision" value="{{ s.revision }}">
+<label>Retail reference £ <input name="retail" inputmode="decimal" value="{{ '%.2f'|format(s.retail_pence/100) if s.retail_pence is not none else '' }}" placeholder="Unknown until verified"></label>
+<label>Trade tariff £ (private) <input name="trade" inputmode="decimal" value="{{ '%.2f'|format(s.trade_pence/100) if s.trade_pence is not none else '' }}" placeholder="Unknown until verified"></label>
+<label>Maintenance tariff £ (private) <input name="maintenance" inputmode="decimal" value="{{ '%.2f'|format(s.maintenance_pence/100) if s.maintenance_pence is not none else '' }}" placeholder="Unknown until verified"></label>
+<label><input type="checkbox" name="published" value="1" {{ 'checked' if s.published else '' }}> Publish for customer enquiry requests</label>
+<button type="submit">Save service tariff</button>
+</form></details>{% endfor %}
+</main></body></html>

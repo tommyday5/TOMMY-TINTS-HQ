@@ -1,0 +1,28 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Vehicle service quote · Tommy Tints</title><link rel="stylesheet" href="/static/commerce.css"></head><body><main>
+<p><a href="/book">← Bookings</a> · <a href="/book/shop">Products</a> · <a href="/customer/service-enquiries">Track my service requests</a></p>
+<h1>Request a vehicle service quote</h1>
+<p>Choose up to five services for a vehicle in your existing Tommy Tints account. This submits an enquiry for an individual owner-approved quotation. No date, booking, deposit, payment, stock reservation or message is created.</p>
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+{% if not services %}<p>Services will appear once their pricing has been checked and published by Tommy Tints.</p>{% endif %}
+{% for s in services %}<article><strong>{{ s.service }}</strong>
+{% if s.retail_pence is not none %}<p>Indicative Retail reference: £{{ '%.2f'|format(s.retail_pence/100) }} — final scope and price subject to approval</p>{% endif %}</article>{% endfor %}
+{% if customer_active and services and vehicles %}
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="operation_id" value="{{ operation_id }}">
+<label>Your vehicle<select name="vehicle_id" required><option value="">Choose a saved vehicle</option>
+{% for v in vehicles %}<option value="{{ v.id }}">{{ v.make }} {{ v.model }} — {{ v.registration or 'No registration recorded' }}</option>{% endfor %}
+</select></label>
+<fieldset><legend>Services (select 1–5)</legend>
+{% for s in services %}<label><input type="checkbox" name="services" value="{{ s.service }}"> {{ s.service }}</label>{% endfor %}
+</fieldset>
+<label>Requested customer account type<select name="requested_tier"><option value="retail">Retail</option><option value="trade">Trade — subject to account verification</option><option value="maintenance">Maintenance — subject to package verification</option></select></label>
+<p>Choosing Trade or Maintenance does not grant discounted pricing. Private tariffs will be checked by Tommy Tints before quotation.</p>
+<label>Vehicle work details / requirements<textarea name="notes" maxlength="1000" rows="4" placeholder="Tell us what you need"></textarea></label>
+<button type="submit">Send service quote enquiry</button>
+</form>
+{% else %}
+{% if not customer_active %}<p><a href="/customer/login">Sign in with your verified customer account</a> to submit a service enquiry.</p>
+{% elif not vehicles %}<p>No vehicle is linked to your account yet. Contact Tommy Tints to add or confirm one before requesting a quote.</p>{% endif %}
+{% endif %}
+<p>Displayed Retail references are not a fixed quote. A request never confirms an appointment.</p>
+</main></body></html>
