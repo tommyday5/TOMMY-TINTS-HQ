@@ -248,6 +248,8 @@ def _privacy_headers(response):
 @customer_portal.route("/hq/customers/<customer_id>/portal-access", methods=["GET", "POST"])
 @required
 def owner_portal_access(customer_id):
+    if not _enabled():
+        return "Persistent customer access is not configured.", 503
     try:
         _customer_id(customer_id)
     except ValueError:
