@@ -61,6 +61,8 @@ app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SECURE=os.environ
 app.config['GOOGLE_CLIENT_ID'] = os.environ.get('GOOGLE_CLIENT_ID', '')
 app.config['GOOGLE_CLIENT_SECRET'] = os.environ.get('GOOGLE_CLIENT_SECRET', '')
 oauth.init_app(app)
+from hq_native_finance import finance as native_finance
+app.register_blueprint(native_finance)
 app.register_blueprint(auth)
 app.register_blueprint(passkeys)
 app.register_blueprint(visual_routes)
@@ -1072,7 +1074,12 @@ def hq_maintenance():
 @app.get("/hq/finance")
 @required
 def hq_finance_page():
-    return render_template("finance.html")
+    return render_template('finance_command.html',csrf=session.get('csrf',''))
+
+@app.get('/hq/finance/sheets')
+@required
+def hq_finance_sheets_reference():
+    return render_template('finance.html')
 
 @app.get("/api/hq/finance")
 @required
