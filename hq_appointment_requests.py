@@ -6,6 +6,9 @@ This module never writes Google Sheets, Calendar, Square, finance or messages.
 import re
 import secrets
 import sqlite3
+import time
+
+import requests
 import uuid
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -16,6 +19,8 @@ from customer_request_store import connect
 from hq_auth import required
 from hq_core_records import _schema
 from hq_customer_portal import active_customer
+from hq_google_connections import stored_grant_present
+from maintenance_calendar_google import live_conflicts
 
 availability_requests = Blueprint("availability_requests", __name__)
 _ID = re.compile(r"[0-9a-f]{32}\Z")
@@ -114,6 +119,15 @@ def _tables(db):
         revision INTEGER NOT NULL,
         action TEXT NOT NULL CHECK(action IN ('confirmed','cancelled')),
         occurred_at TEXT NOT NULL
+    )""")
+    # Optional evidence attached only to an owner-confirmed booking after a
+    # successful, fresh, read-only Google primary-calendar check.
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_portal_booking_calendar_evidence (
+        request_id TEXT PRIMARY KEY REFERENCES hq_portal_booking_confirmations(request_id),
+        provider TEXT NOT NULL CHECK(provider='google_calendar_primary'),
+        checked_at TEXT NOT NULL,
+        slot_start TEXT NOT NULL,
+        slot_end TEXT NOT NULL
     )""")
 
 
@@ -216,10 +230,12 @@ def owner_availability_snapshot():
             a.owner_message,a.created_at,c.name AS customer_name,w.service,v.registration,
             r.decision AS customer_decision,r.responded_at AS customer_responded_at,
             b.status AS booking_status,b.duration_hours,b.confirmed_at,b.cancelled_at,
-            b.revision AS booking_revision,b.confirmation_note,b.cancel_reason
+            b.revision AS booking_revision,b.confirmation_note,b.cancel_reason,
+            ce.checked_at AS primary_calendar_checked_at
             FROM hq_portal_availability_requests a
             LEFT JOIN hq_portal_availability_offer_responses r ON r.request_id=a.id
             LEFT JOIN hq_portal_booking_confirmations b ON b.request_id=a.id
+            LEFT JOIN hq_portal_booking_calendar_evidence ce ON ce.request_id=a.id
             JOIN hq_work_records w ON w.id=a.work_id AND w.customer_id=a.customer_id
             JOIN hq_vehicles v ON v.id=w.vehicle_id AND v.customer_id=a.customer_id
             JOIN hq_customers c ON c.id=a.customer_id
@@ -321,7 +337,55 @@ def respond_to_tentative_offer(customer_id, ref, expected_revision, decision):
 
 
 
-def confirm_accepted_offer(ref, expected_revision, duration_hours, external_checked, note=""):
+def _google_calendar_preflight(ref, expected_revision, duration_hours):
+    """Check the primary calendar at submission time when owner consent exists.
+
+    Fail closed when a stored grant cannot be used. Without any connected
+    calendar, preserve the existing explicitly manual attestation pathway.
+    This point-in-time read cannot reserve external capacity.
+    """
+    _id(ref)
+    if not isinstance(duration_hours, str) or not re.fullmatch(r"[1-8]", duration_hours):
+        raise ValueError("Choose a duration of 1 to 8 hours")
+    with connect() as db:
+        _schema(db)
+        _tables(db)
+        row = db.execute("""SELECT a.status,a.revision,a.offered_date,a.offered_time,
+                r.decision,b.status AS booking_status
+            FROM hq_portal_availability_requests a
+            LEFT JOIN hq_portal_availability_offer_responses r ON r.request_id=a.id
+            LEFT JOIN hq_portal_booking_confirmations b ON b.request_id=a.id
+            WHERE a.id=?""", (ref,)).fetchone()
+    if row is None:
+        raise LookupError("Availability request not found")
+    if row["booking_status"] == "confirmed":
+        return None  # A replay is evaluated for idempotency by the writer.
+    if (row["status"] != "offered" or row["revision"] != expected_revision
+            or row["decision"] != "accepted"):
+        raise ValueError("Only a current accepted offer can be confirmed")
+    day, hour = _slot(row["offered_date"], row["offered_time"])
+    begin = datetime.fromisoformat(day + "T" + hour).replace(tzinfo=ZoneInfo("Europe/London"))
+    end = begin + timedelta(hours=int(duration_hours))
+    if begin <= datetime.now(ZoneInfo("Europe/London")) or end.hour > 17 or end.date() != begin.date():
+        raise ValueError("Appointment must be in the future and finish by 17:00 UK time")
+    resolve = current_app.extensions.get("hq_calendar_connection")
+    entry = resolve() if callable(resolve) else None
+    if (not entry or not isinstance(entry, tuple) or len(entry) != 2
+            or not isinstance(entry[1], (int, float)) or entry[1] <= time.time()):
+        if stored_grant_present("calendar", session.get("google_sub")):
+            raise ValueError("Google Calendar permission cannot be used. Reconnect it before confirming.")
+        return None
+    try:
+        check = live_conflicts(entry[0], begin.isoformat(), end.isoformat())
+    except (requests.RequestException, RuntimeError, ValueError, TypeError):
+        current_app.logger.warning("Primary Calendar could not be checked at booking confirmation")
+        raise ValueError("Live Google Calendar could not be verified. No HQ booking was made.") from None
+    if not isinstance(check, dict) or check.get("available") is not True:
+        raise ValueError("Primary Google Calendar is busy or could not prove the slot is free. No HQ booking was made.")
+    return {"checked_at": _now(), "start": begin.isoformat(), "end": end.isoformat()}
+
+
+def confirm_accepted_offer(ref, expected_revision, duration_hours, external_checked, note="", calendar_evidence=None):
     """Owner action only. Local conflicts checked atomically; external check attested.
 
     Does not write Google Calendar/Square or send customer messages.
@@ -367,6 +431,18 @@ def confirm_accepted_offer(ref, expected_revision, duration_hours, external_chec
                                 tzinfo=ZoneInfo("Europe/London"))
         if begins <= datetime.now(ZoneInfo("Europe/London")):
             raise ValueError("A past appointment cannot be confirmed")
+        if calendar_evidence is not None:
+            if (not isinstance(calendar_evidence, dict)
+                    or calendar_evidence.get("start") != begins.isoformat()
+                    or calendar_evidence.get("end") != (begins + timedelta(hours=duration)).isoformat()):
+                raise ValueError("Calendar evidence is for a different appointment slot")
+            try:
+                verified_at = datetime.fromisoformat(calendar_evidence["checked_at"])
+                age = (datetime.now(timezone.utc) - verified_at).total_seconds()
+                if verified_at.tzinfo is None or not 0 <= age <= 180:
+                    raise ValueError()
+            except (KeyError, TypeError, ValueError):
+                raise ValueError("Calendar evidence is expired or invalid") from None
         start=int(hour[:2])
         if start+duration>17:
             raise ValueError("The appointment must finish by 17:00 UK time")
@@ -386,6 +462,12 @@ def confirm_accepted_offer(ref, expected_revision, duration_hours, external_chec
             VALUES (?,?,?,?,?,?,?,'confirmed',?,1,?)""",
             (ref,row["customer_id"],row["work_id"],expected_revision,day,hour,
              duration,note,now))
+        if calendar_evidence is not None:
+            db.execute("""INSERT INTO hq_portal_booking_calendar_evidence
+                (request_id,provider,checked_at,slot_start,slot_end)
+                VALUES (?,'google_calendar_primary',?,?,?)""",
+                (ref,calendar_evidence["checked_at"],calendar_evidence["start"],
+                 calendar_evidence["end"]))
         db.execute("""INSERT INTO hq_portal_booking_events
             (request_id,revision,action,occurred_at) VALUES (?,0,'confirmed',?)""",
             (ref,now))
@@ -524,11 +606,15 @@ def owner_availability():
         try:
             decision=request.form.get("decision","")
             if decision=="confirm":
-                confirm_accepted_offer(request.form.get("request_id",""),
-                                       _revision(request.form.get("revision","")),
-                                       request.form.get("duration_hours",""),
-                                       request.form.get("external_checked")=="yes",
-                                       request.form.get("message",""))
+                ref = request.form.get("request_id","")
+                revision = _revision(request.form.get("revision",""))
+                duration = request.form.get("duration_hours","")
+                attested = request.form.get("external_checked") == "yes"
+                if not attested:
+                    raise ValueError("Check other calendars and acknowledge that review")
+                evidence = _google_calendar_preflight(ref, revision, duration)
+                confirm_accepted_offer(ref, revision, duration, attested,
+                                       request.form.get("message",""), evidence)
             elif decision=="cancel":
                 cancel_confirmed_booking(request.form.get("request_id",""),
                                          _revision(request.form.get("booking_revision","")),
