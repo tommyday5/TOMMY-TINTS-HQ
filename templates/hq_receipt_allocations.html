@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="hq-csrf" content="{{ csrf }}">
+<title>Payment allocation review · Tommy Tints HQ</title>
+<link rel="stylesheet" href="/static/finance-command.css">
+<script defer src="/static/hq-receipt-allocations.js"></script>
+</head>
+<body><main>
+<header><img src="/static/company-logo-header.webp" alt="Tommy Tints"><a href="/hq/finance/receivables">Back to Customer Invoices</a></header>
+<h1>Invoice payment allocations</h1>
+<p>Log an owner-reported cash, card, bank or other payment against an issued HQ invoice. These entries are <strong>not verified bank receipts</strong>, and cannot be counted as confirmed income or verified outstanding balances.</p>
+<p id="notice" role="status">Loading owner-only records…</p>
+<article><h2>Record or correct a reported allocation</h2>
+<form id="allocation">
+<input name="id" type="hidden"><input name="revision" type="hidden" value="0">
+<label>Issued HQ invoice<select name="invoice_id" required id="invoice"><option value="">Choose invoice</option></select></label>
+<p id="allocation-limit"></p>
+<label>Reported amount (£)<input type="number" name="amount_pounds" min="0.01" step="0.01" inputmode="decimal" required></label>
+<label>Date reported received<input type="date" name="received_on" required></label>
+<label>Claimed payment method<select name="method" required>
+<option value="bank_reported">Bank transfer (owner reported)</option>
+<option value="card_reported">Card (owner reported)</option>
+<option value="cash_reported">Cash (owner reported)</option>
+<option value="other_reported">Other (owner reported)</option>
+</select></label>
+<label>Payment reference / supporting evidence ID (optional)<input name="evidence_ref" maxlength="120" placeholder="e.g. bank reference, receipt ID, card reference"></label>
+<label>Private audit note<textarea name="memo" rows="3" maxlength="500"></textarea></label>
+<label>Allocation state<select name="status" id="status"><option value="reported">Owner reported — not verified</option><option value="reversed">Reversed — correction required</option></select></label>
+<p>To correct an amount or invoice, reverse its existing allocation and add a new one. Past revisions are retained. Reversing does not refund anyone or change an external account.</p>
+<button type="submit">Save reported allocation in HQ</button>
+<button type="button" id="newRecord">New allocation</button>
+</form>
+</article>
+<h2>Saved allocations</h2><div id="records"></div>
+<h2>Audit history</h2><div id="history"></div>
+</main></body></html>

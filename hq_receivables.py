@@ -131,6 +131,15 @@ def save(data):
                 raise ValueError("Linked work belongs to a different customer")
         if existing and existing["customer_id"] != fields["customer_id"]:
             raise ValueError("To preserve invoice evidence, the customer cannot be changed")
+        # Prevent subsequent invoice edits invalidating owner-reported payment evidence.
+        # Older HQ databases may not have the additive allocations table yet.
+        if existing and db.execute("""SELECT 1 FROM sqlite_master
+            WHERE type='table' AND name='hq_receivable_allocations'""").fetchone():
+            total = db.execute("""SELECT COALESCE(SUM(amount_pence),0)
+                FROM hq_receivable_allocations WHERE invoice_id=? AND status='reported'""",
+                (fields["id"],)).fetchone()[0]
+            if total and (fields["amount_pence"] < total or fields["status"] in ("draft", "void")):
+                raise ValueError("Reverse reported allocations before reducing or voiding this invoice")
         revision = fields["revision"] + 1
         if existing:
             db.execute("""UPDATE hq_receivables SET work_id=?,invoice_ref=?,issue_date=?,
