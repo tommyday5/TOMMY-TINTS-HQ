@@ -10,5 +10,8 @@
 {% if e.status == 'quoted' and e.approved_total_pence is not none %}
 <p><strong>Owner-reviewed quote: £{{ '%.2f'|format(e.approved_total_pence/100) }}</strong></p><p>{{ e.public_note }}</p>
 {% else %}<p>Price requires owner review. No payment has been taken.</p>{% endif %}
+{% if e.linked_status %}
+<p><strong>HQ work status: {{ e.linked_status|replace('_',' ')|title }}</strong>{% if e.linked_price_pence is not none %} · Current owner-approved work amount £{{ '%.2f'|format(e.linked_price_pence/100) }}{% endif %}. This does not confirm an appointment or payment.</p>
+{% endif %}
 </article>{% else %}<p>You have no service enquiries yet.</p>{% endfor %}
 </main></body></html>
