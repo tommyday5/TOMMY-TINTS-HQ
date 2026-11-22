@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Native HQ Maintenance Visits — Tommy Tints</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#090b10;color:#f7f8fa}
+*{box-sizing:border-box}body{margin:0;padding:clamp(12px,3vw,32px)}
+main{max-width:1050px;margin:auto}h1{font-size:clamp(24px,4vw,34px)}
+p{color:#bfc4ce;line-height:1.5}a{color:#ff727c}code{overflow-wrap:anywhere}
+.panel{background:#171a21;border:1px solid #3b3f48;border-radius:14px;padding:clamp(14px,2vw,24px);margin:14px 0}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px}
+label{display:block;font-weight:650;margin:12px 0 5px}input,select,textarea{background:#0d1118;border:1px solid #565b64;border-radius:8px;padding:12px;width:100%;min-width:0;color:#fff;font:inherit}
+button,.button{display:inline-block;background:#c91128;color:white;border:1px solid #fa3145;padding:11px 15px;border-radius:8px;font-weight:700;text-decoration:none;cursor:pointer}
+.muted{color:#c8ccd5}.warning{padding:12px;background:#302719;border-left:4px solid #e7c72d}
+.error{padding:12px;background:#401b23;border-left:4px solid #ff586a}
+.success{padding:12px;background:#1d3424;border-left:4px solid #76d696}
+.actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:12px;border-bottom:1px solid #41454d} .scroll{overflow-x:auto}
+@media(max-width:640px){.grid{grid-template-columns:1fr}}
+</style></head><body><main>
+<p><a href="/?page=maintenance">← HQ maintenance</a> · <a href="/hq/customers">Customer directory</a> · <a href="/hq/maintenance/routes">Route planner</a></p>
+<h1>Native HQ maintenance visit ledger</h1>
+<p class="warning">These are private HQ visit records, not Calendar/Square bookings or verified receipts. A completed visit does <strong>not</strong> mean invoiced or paid. Planned prices are estimates, not bank transactions. Historical Google Sheets records are not imported or altered.</p>
+{% if listing %}
+<p><a class="button" href="/hq/maintenance/visits/new">＋ Create maintenance visit</a> ·
+<a href="/hq/maintenance/visits">Active</a> · <a href="/hq/maintenance/visits?archived=1">Archived</a></p>
+<div class="panel scroll"><table><thead><tr><th>Visit</th><th>HQ customer</th><th>Vehicle</th><th>Stage</th><th>Action</th></tr></thead><tbody>
+{% for v in visits %}
+<tr><td>{{ v.visit_day }} {{ v.visit_time }}<br>{{ v.service }}</td>
+<td>{{ v.customer_name }}</td><td>{{ v.make }} {{ v.model }} · {{ v.registration }}</td>
+<td>{{ v.status|replace('_',' ')|title }}{% if v.portal_visible %}<br><small>Visible to customer</small>{% endif %}</td>
+<td><a href="/hq/maintenance/visits/{{ v.id }}">Edit / archive</a></td></tr>
+{% else %}<tr><td colspan="5">No native HQ visits in this view. Historical Sheets visits have not been migrated.</td></tr>{% endfor %}
+</tbody></table></div>
+{% else %}
+<h2>{% if new %}Create a new visit{% else %}Edit visit {{ record.id[:10] }} · revision {{ record.revision }}{% endif %}</h2>
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+{% if request.args.get("saved") %}<p class="success" role="status">Saved in persistent HQ storage. Reload to verify the record.</p>{% endif %}
+{% if new %}<div class="panel"><form method="get" action="/hq/maintenance/visits/new">
+<label for="q">Find a saved HQ customer</label><input id="q" name="q" value="{{ query }}" maxlength="80" placeholder="Search customer name"><button type="submit">Search</button>
+</form><p class="muted">Need a new contact or vehicle? <a href="/hq/work/new">Create a customer and vehicle in HQ</a> first. This ledger does not import unverified Sheets customer identities.</p></div>{% endif %}
+{% set chosen_customer = values.get('customer_id', request.args.get('customer_id', '')) %}
+{% set chosen_vehicle = values.get('vehicle_id', '') %}
+{% set chosen_price = values.get('planned_price', '%.2f' % (record.planned_price_pence / 100) if record and record.planned_price_pence is not none else '') %}
+<form class="panel" method="post" action="{% if new %}/hq/maintenance/visits/new{% else %}/hq/maintenance/visits/{{ record.id }}{% endif %}">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+{% if new %}<input type="hidden" name="operation_id" value="{{ operation_id }}">{% else %}<input type="hidden" name="revision" value="{{ record.revision }}">{% endif %}
+<div class="grid">
+<div><label for="customer_id">HQ customer</label>
+<select required id="customer_id" name="customer_id"><option value="">Select customer</option>
+{% for c in customers %}<option value="{{ c.id }}" {% if c.id == chosen_customer %}selected{% endif %}>{{ c.name }}</option>{% endfor %}
+</select></div>
+<div><label for="vehicle_id">Saved customer vehicle</label>
+<select required id="vehicle_id" name="vehicle_id"><option value="">Select vehicle</option>
+{% for v in vehicles %}<option value="{{ v.id }}" data-owner="{{ v.customer_id }}" {% if v.id == chosen_vehicle %}selected{% endif %}>{{ v.make }} {{ v.model }} — {{ v.registration or 'No registration' }}</option>{% endfor %}
+</select></div>
+<div><label for="service">Maintenance service / scope</label><input id="service" name="service" maxlength="120" required value="{{ values.get('service', '') }}" placeholder="Maintenance valeting"></div>
+<div><label for="status">Visit stage</label>
+<select id="status" name="status">{% for state in states %}
+<option value="{{ state }}" {% if state == values.get('status', 'planned') %}selected{% endif %}>{{ state|replace('_',' ')|title }}</option>
+{% endfor %}</select></div>
+<div><label for="visit_day">Visit date</label><input id="visit_day" name="visit_day" type="date" required value="{{ values.get('visit_day', '') }}"></div>
+<div><label for="visit_time">Visit time (UK local)</label><input id="visit_time" name="visit_time" type="time" required value="{{ values.get('visit_time', '') }}"></div>
+<div><label for="planned_price">Planned price £ (optional)</label><input id="planned_price" name="planned_price" type="number" min="0" max="100000" step="0.01" value="{{ chosen_price }}"><small>Never interpreted as an invoice or receipt</small></div>
+<div><label for="actual_minutes">Actual work minutes (optional)</label><input id="actual_minutes" name="actual_minutes" type="number" min="0" max="1440" step="1" value="{{ values.get('actual_minutes', '') if values.get('actual_minutes') is not none else '' }}"></div>
+</div>
+<label for="internal_notes">Private workshop notes</label><textarea id="internal_notes" name="internal_notes" maxlength="1200" rows="4">{{ values.get('internal_notes','') }}</textarea>
+<label><input style="width:auto" type="checkbox" name="portal_visible" value="1" {% if values.get('portal_visible') in (1,'1','on') %}checked{% endif %}> Explicitly display this visit's date, stage and vehicle to the linked customer</label>
+<p class="warning">A planned visit is always shown as provisional in the customer portal. This does not reserve a time, confirm a booking, send a message or charge a payment.</p>
+{% if not record or not record.archived %}<button type="submit" name="action" value="save">{% if new %}Create and save visit{% else %}Save visit changes{% endif %}</button>{% else %}<p>Archived. Restore before editing.</p>{% endif %}
+</form>
+{% if record %}
+<div class="panel">
+<p>HQ visit ID <code>{{ record.id }}</code> · linked customer <code>{{ record.customer_id }}</code></p>
+<p>Revision {{ record.revision }}. Changes are recorded in an owner-only audit history. Save requires a current revision.</p>
+<form method="post" action="/hq/maintenance/visits/{{ record.id }}">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="revision" value="{{ record.revision }}">
+<button type="submit" name="action" value="{% if record.archived %}restore{% else %}archive{% endif %}">{% if record.archived %}Restore visit{% else %}Archive visit{% endif %}</button>
+</form></div>{% endif %}
+<script>
+(() => {
+ const customer=document.getElementById('customer_id'), vehicle=document.getElementById('vehicle_id');
+ const update=()=>{for(const opt of vehicle.options){if(opt.value)opt.disabled=opt.dataset.owner!==customer.value;}
+ if(vehicle.selectedOptions[0]?.disabled)vehicle.value='';};
+ customer.addEventListener('change',update);update();
+})();
+</script>
+{% endif %}
+</main></body></html>
