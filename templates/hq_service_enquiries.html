@@ -1,0 +1,21 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Service Enquiries · Tommy Tints HQ</title><link rel="stylesheet" href="/static/commerce.css"></head><body><main>
+<p><a href="/">← HQ dashboard</a> · <a href="/hq/services">Edit service tariffs</a> · <a href="/hq/shop/enquiries">Product enquiries</a></p>
+<h1>Customer service quote inbox</h1>
+<p>Requests use canonical HQ customer and vehicle IDs. Customer-selected tiers are unverified. Owner tariffs shown here are submission-time snapshots, not a guaranteed price; check vehicle, scope, current costs and entitlement before approving. Quoting here does not automatically create a native job, reserve an appointment, send messages or collect a payment.</p>
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+{% if request.args.get('saved') %}<p role="status">Owner review saved and audited.</p>{% endif %}
+{% for e in enquiries %}<article>
+<h2>{{ e.customer_name }} · {{ e.status|title }}</h2><p>{{ e.make }} {{ e.model }} · {{ e.registration }}</p>
+<p>Request <code>{{ e.id }}</code> · customer <code>{{ e.customer_id }}</code> · vehicle <code>{{ e.vehicle_id }}</code> · requested {{ e.requested_tier|title }} · {{ e.created_at }}</p>
+<ul>{% for service in e.services %}<li>{{ service }} — {{ '£%.2f'|format(e.owner_prices[service]/100) if e.owner_prices[service] is not none else 'Private tier price unknown' }}</li>{% endfor %}</ul>
+<p>Customer notes: {{ e.notes or '(none)' }}</p>
+{% if e.approved_total_pence is not none %}<p>Approved quote £{{ '%.2f'|format(e.approved_total_pence/100) }}</p>{% endif %}
+{% if e.status not in ('closed','declined') %}<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="request_id" value="{{ e.id }}"><input type="hidden" name="revision" value="{{ e.revision }}">
+<label>Status<select name="status">{% for st in ('reviewing','quoted','declined','closed') %}<option value="{{ st }}" {{ 'selected' if st == e.status else '' }}>{{ st|title }}</option>{% endfor %}</select></label>
+<label>Owner-approved total £ (required to quote)<input name="approved_pounds" inputmode="decimal" value="{{ '%.2f'|format(e.approved_total_pence/100) if e.approved_total_pence is not none else '' }}"></label>
+<label>Customer-visible note (maximum 400 characters)<textarea name="public_note" maxlength="400" rows="2">{{ e.public_note }}</textarea></label>
+<button type="submit">Save owner review</button></form>
+{% else %}<p>Final decision; audit preserved.</p>{% endif %}
+</article>{% else %}<p>No service enquiries received yet.</p>{% endfor %}
+</main></body></html>
