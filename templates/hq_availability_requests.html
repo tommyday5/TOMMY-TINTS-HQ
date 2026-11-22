@@ -24,7 +24,11 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 <p><a href="/hq/customers/{{ item.customer_id }}">Customer and linked work</a>
  · <a href="/hq/work/{{ item.work_id }}/customer-document">Work document</a>
  · Reference <code>{{ item.id[:8] }}</code></p>
-{% if item.status in ('requested','offered') %}
+{% if item.status == 'offered' and item.customer_decision %}
+<p role="status"><strong>Customer {{ item.customer_decision }} the tentative offer on {{ item.customer_responded_at }}.</strong>
+{% if item.customer_decision == 'accepted' %}This is not a confirmed booking. Verify Calendar capacity and use the separately authorised confirmation process before committing to an appointment.{% else %}The customer can submit a new preference. The declined offer remains in history.{% endif %}</p>
+{% endif %}
+{% if item.status in ('requested','offered') and not item.customer_decision %}
 <form method="post">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <input type="hidden" name="request_id" value="{{ item.id }}">
