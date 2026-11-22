@@ -233,8 +233,8 @@ def review_request(ident, revision, status, approved_pounds, public_note, actor=
 def customer_requests(customer_id):
     _id(customer_id, "customer")
     with _db() as db:
-        rows = db.execute("""SELECT id,requested_tier,services_json,status,
-            approved_total_pence,public_note,created_at,v.make,v.model,v.registration
+        rows = db.execute("""SELECT q.id,q.requested_tier,q.services_json,q.status,
+            q.approved_total_pence,q.public_note,q.created_at,v.make,v.model,v.registration
             FROM hq_service_quote_requests q JOIN hq_vehicles v ON v.id=q.vehicle_id
             WHERE q.customer_id=? ORDER BY q.created_at DESC,q.id DESC LIMIT 100""",
             (customer_id,)).fetchall()
