@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>Shop Quote Enquiries · Tommy Tints HQ</title>
+<link rel="stylesheet" href="/static/commerce.css"></head><body><main>
+<p><a href="/hq/shop">← Product catalogue</a> · <a href="/">HQ dashboard</a></p>
+<h1>Shop quote enquiries</h1>
+<p>Customer-submitted basket requests use verified native HQ customer IDs. Each amount is a historical retail estimate, not a payment, booking or stock reservation. Owner-approved quotes are visible to that customer only; no emails or checkout actions are triggered.</p>
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+{% if request.args.get('saved') %}<p role="status">Review saved to HQ.</p>{% endif %}
+{% for e in enquiries %}
+<article>
+<h2>{{ e.customer_name }} · {{ e.status|title }}</h2>
+<p>Enquiry <code>{{ e.id }}</code> · customer <code>{{ e.customer_id }}</code> · {{ e.created_at }}</p>
+<ul>{% for item in e.items %}<li>{{ item.quantity }} × {{ item.name }} {{ item.variant }} at £{{ '%.2f'|format(item.unit_pence/100) }} (snapshot)</li>{% endfor %}</ul>
+<p>{{ e.fulfilment|title }} · indicative retail total <strong>£{{ '%.2f'|format(e.indicative_total_pence/100) }}</strong>
+{% if e.approved_total_pence is not none %} · owner-approved quote <strong>£{{ '%.2f'|format(e.approved_total_pence/100) }}</strong>{% endif %}</p>
+{% if e.status not in ('declined','closed') %}
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="enquiry_id" value="{{ e.id }}"><input type="hidden" name="revision" value="{{ e.revision }}">
+<label>Review decision<select name="status">
+{% for stage in ('reviewing','quoted','declined','closed') %}<option value="{{ stage }}" {% if e.status==stage %}selected{% endif %}>{{ stage|title }}</option>{% endfor %}
+</select></label>
+<label>Approved customer quote total £ (required for quoted)
+<input name="approved_pounds" inputmode="decimal" placeholder="e.g. 95.00" value="{{ '%.2f'|format(e.approved_total_pence/100) if e.approved_total_pence is not none else '' }}"></label>
+<label>Customer-visible note (no private margins, 400 characters)
+<textarea name="public_note" maxlength="400" rows="3">{{ e.public_note }}</textarea></label>
+<button>Save review</button>
+</form>{% else %}<p>Final decision. The audit trail is preserved.</p>{% endif %}
+</article>
+{% else %}<p>No native shop quote enquiries yet.</p>{% endfor %}
+</main></body></html>
