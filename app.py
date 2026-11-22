@@ -38,6 +38,7 @@ from hq_workflow_readiness import build_workflow_readiness
 from hq_version import ICON_VERSION, UPDATE_SCRIPT_VERSION, build_version
 from hq_commerce import commerce
 from hq_shop_enquiries import shop_enquiries
+from hq_service_quotes import service_quotes
 from customer_edits import customer_edits
 from hq_customer_directory import customer_directory
 from hq_customer_documents import customer_documents
@@ -73,6 +74,7 @@ app.register_blueprint(native_maintenance)
 app.register_blueprint(maintenance_plans)
 app.register_blueprint(commerce)
 app.register_blueprint(shop_enquiries)
+app.register_blueprint(service_quotes)
 app.register_blueprint(square_payments.payment_evidence)
 app.register_blueprint(payment_review)
 app.register_blueprint(transaction_preview)
