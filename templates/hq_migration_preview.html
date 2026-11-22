@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Historical migration dry run | Tommy Tints HQ</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,Arial;background:#090b0f;color:#f4f5f9}
+body{margin:0}main{max-width:1060px;padding:22px;margin:auto}a{color:#ff707b}
+.panel{background:#181d26;border:1px solid #3b4659;padding:20px;border-radius:14px;margin:16px 0}
+button{background:#bf1426;border:1px solid #ff334a;border-radius:8px;padding:13px 20px;color:white;font-weight:750;cursor:pointer}
+button:focus-visible,a:focus-visible{outline:3px solid #ffda38}
+small,.note{color:#c1c9d3}h1{font-size:clamp(23px,4vw,34px)}h2{font-size:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+.metric{background:#242c38;padding:15px;border-radius:9px}.metric strong{display:block;font-size:26px}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;border-bottom:1px solid #455064;padding:9px}
+.scroller{overflow:auto} .warning{border-left:4px solid #efc42b;padding:10px 15px;background:#342e1a}
+@media(max-width:600px){main{padding:14px}.panel{padding:14px}}
+</style></head><body><main>
+<p><a href="/hq/customers">HQ Customers</a> · <a href="/hq/sheets/job-link-preflight">Single-row Jobs inspection</a> · <a href="/auth/sheets/connect">Connect Sheets read-only</a></p>
+<h1>Historical Jobs &amp; Customers — migration dry run</h1>
+<p>This owner-only report reads the <strong>existing</strong> Google workbook and compares candidate customer names with native HQ records without importing, linking or editing anything. It does not establish customer identity from a shared name.</p>
+<div class="warning">Google Sheets stays authoritative for unmigrated history. New native HQ records stay authoritative only for their own data. Neither the observed source nor the HQ database is changed by this report. Never assume a completed job is paid.</div>
+<div class="panel">
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}">
+<button type="submit">Run fresh read-only comparison</button></form>
+<p><small>Manual action only. Scans Jobs and Customers from row 5 through row 1000. Requires active owner consent. No background sync, import, email, booking or payment.</small></p>
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+</div>
+{% if result %}
+<div class="panel">
+<h2>Snapshot taken {{ result.generated_at }}</h2>
+<div class="grid">
+<div class="metric"><strong>{{ result.jobs_rows }}</strong>Nonblank historical Jobs rows</div>
+<div class="metric"><strong>{{ result.valid_unique_j_refs }}</strong>Unique, correctly formatted J references</div>
+<div class="metric"><strong>{{ result.duplicate_j_rows }}</strong>Rows with repeated J references</div>
+<div class="metric"><strong>{{ result.missing_or_invalid_j_rows }}</strong>Rows with missing/invalid J IDs</div>
+<div class="metric"><strong>{{ result.customers_named_rows }}</strong>Historical customer-name rows</div>
+<div class="metric"><strong>{{ result.duplicate_customer_name_rows }}</strong>Rows sharing a name within Customers</div>
+</div>
+<p class="note">Customer-name formulas requiring review: {{ result.formula_customer_name_rows }}. Existing HQ database accessible for comparison:
+<strong>{{ "yes" if result.native_available else "no" }}</strong>.
+{% if result.native_available %}
+Native HQ: {{ result.native_customer_count }} customers and {{ result.native_work_count }} work records.
+Possible same-name customer candidates: {{ result.possible_native_customer_rows }} in Customers, {{ result.possible_native_job_rows }} in Jobs.
+{% endif %}
+These candidates are <strong>not</strong> proven matches and require owner review.</p>
+<h2>Historical J-series review queue (up to 60)</h2>
+<div class="scroller"><table><thead><tr><th>Source row</th><th>Original J reference</th><th>Review flag</th><th>Quoted price input</th></tr></thead><tbody>
+{% for row in result.sample %}
+<tr><td>{{ row.row }}</td><td>{{ row.ref or "Missing / invalid" }}</td><td>{{ row.status }}</td><td>{{ row.price_kind }}</td></tr>
+{% endfor %}
+</tbody></table></div>
+{% if result.sample_truncated %}<p>Additional source rows exist beyond the first 60 displayed. Counts cover the entire scanned range.</p>{% endif %}
+</div>
+{% endif %}
+<div class="panel">
+<h2>Field ownership before migration</h2>
+<div class="scroller"><table><thead><tr><th>Source field</th><th>Native candidate</th><th>Current authority</th><th>Requirement before import</th></tr></thead><tbody>
+<tr><td>Jobs A — Job ID</td><td>Historical J-series link</td><td>Sheets historical</td><td>Owner-verified exact ID, unique whole-sheet match</td></tr>
+<tr><td>Jobs B–E — date, customer, tier, vehicle</td><td>Work and customer/vehicle records</td><td>Sheets historical</td><td>Identity and field-by-field semantic review</td></tr>
+<tr><td>Jobs F–J — services</td><td>Native work scope</td><td>Sheets historical</td><td>Service equivalence and pricing-tier mapping</td></tr>
+<tr><td>Jobs Q/R — quoted price/status</td><td>Quote and lifecycle</td><td>Sheets historical</td><td>Preserve source price, currency, formula and status</td></tr>
+<tr><td>Jobs AG–AJ — actual expenses</td><td>Cost ledgers</td><td>Sheets historical</td><td>Evidence, cost completeness, no double-counting</td></tr>
+<tr><td>Customers A–C — name, type, postcode</td><td>Native customer</td><td>Sheets historical</td><td>Verified identity; name alone is insufficient</td></tr>
+</tbody></table></div>
+<p class="note">Provenance: workbook <code>{{ result.workbook_id if result else "1B0XULUDiMlVuW9u0kUOYem8WelBtOH-Xey_wWVYdb2M" }}</code>, Jobs tab ID 330634230, Customers tab ID 378990021; headers row 4. Independent formula/value reads are advisory, not a transactional source lock. Source changes between checks require a new review. No approval, rollback baseline or production import exists yet.</p>
+</div>
+</main></body></html>
