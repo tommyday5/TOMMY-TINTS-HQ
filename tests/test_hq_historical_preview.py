@@ -277,8 +277,9 @@ class HistoricalMappingProposalTests(unittest.TestCase):
         data = {"action":"propose","csrf":"fixed-csrf","sheet_row":"5",
                 "job_ref":"J0081","source_stamp":stamp,"work_token":self.work_id+":0",
                 "operation_id":"f"*32}
-        with patch.dict(app.extensions,{"hq_sheets_connection":lambda:("fixture",9999999999)}), \\
-             patch("hq_historical_preview._read_live",return_value=(self.formula,self.actual)) as read:
+        with (patch.dict(app.extensions,{"hq_sheets_connection":lambda:("fixture",9999999999)}),
+              patch("hq_historical_preview._read_live",
+                    return_value=(self.formula,self.actual)) as read):
             self.assertEqual(client.post("/hq/migration/preview",
                                          data={**data,"csrf":"wrong"}).status_code,403)
             ok = client.post("/hq/migration/preview",data=data)
