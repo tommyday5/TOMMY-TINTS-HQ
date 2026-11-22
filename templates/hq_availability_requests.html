@@ -33,6 +33,9 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 {% endif %}
 {% if item.booking_status == 'confirmed' %}
 <p role="status"><strong>HQ-confirmed appointment:</strong> {{ item.offered_date }} at {{ item.offered_time }} for {{ item.duration_hours }} hour(s). Confirmed {{ item.confirmed_at }}.</p>
+{% if item.primary_calendar_checked_at %}
+<p>Primary Google Calendar was checked live at {{ item.primary_calendar_checked_at }} (read-only, point-in-time verification). Square and other calendars were manually attested.</p>
+{% else %}<p>External availability was manually attested; no automated primary Google Calendar verification is recorded.</p>{% endif %}
 {% if item.confirmation_note %}<p>Customer-facing note: {{ item.confirmation_note }}</p>{% endif %}
 <form method="post">
 <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="request_id" value="{{ item.id }}">
@@ -56,7 +59,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 <label for="confirmation-note-{{ item.id }}">Customer-facing confirmation note (optional)</label>
 <textarea id="confirmation-note-{{ item.id }}" name="message" maxlength="500" rows="2"></textarea>
 <label><input type="checkbox" name="external_checked" value="yes" required style="width:auto"> I have personally checked Google Calendar, Square and other appointments for this full duration, including existing bookings outside HQ.</label>
-<p>HQ also rejects overlaps with other HQ-confirmed slots. This checkbox records your manual review; HQ does not validate live external availability. No external appointment, payment or message will be created.</p>
+<p>HQ rejects overlaps with HQ-confirmed slots. If your primary Google Calendar is connected, HQ also checks it live at the moment you confirm and refuses conflicting or unverifiable slots. If not connected, this remains a manual confirmation. Square and other calendars always require your personal review. Calendar reads are point-in-time only: no external appointment, payment or message is created.</p>
 <button type="submit" name="decision" value="confirm">Confirm appointment in HQ</button>
 </form>
 {% endif %}
@@ -82,5 +85,5 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 <p>Owner response: {{ item.owner_message or 'None recorded' }}</p>
 {% endif %}
 </article>{% else %}<div class="card"><p>No customer availability requests have been saved in HQ.</p></div>{% endfor %}
-<p>HQ confirmation is a native internal booking record only. Unmigrated Sheets dates and live external calendars are not checked automatically. The owner must update any external appointment and notify customers separately.</p>
+<p>HQ confirmation is a native internal booking record only. Connected primary Google Calendar is read-only checked at confirmation, but unmigrated Sheets dates, Square and other calendars are not checked automatically. The owner must update external appointments and notify customers separately.</p>
 </main></body></html>
