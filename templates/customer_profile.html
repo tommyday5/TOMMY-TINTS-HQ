@@ -32,7 +32,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <input type="hidden" name="operation_id" value="{{ operation_id }}">
 <label for="vehicle_id">Record to correct</label>
-<select id="vehicle_id" name="vehicle_id" required>
+<select id="vehicle_id" name="vehicle_id">
 <option value="">My customer contact details</option>
 {% for v in vehicles %}<option value="{{ v.id }}">{{ v.registration or v.make ~ ' ' ~ v.model }} — {{ v.make }} {{ v.model }}</option>{% endfor %}
 </select>
