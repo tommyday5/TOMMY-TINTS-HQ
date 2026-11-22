@@ -790,6 +790,7 @@ def _google_connection(provider):
 
 
 app.extensions["hq_sheets_connection"] = lambda: _google_connection("sheets")
+app.extensions["hq_calendar_connection"] = lambda: _google_connection("calendar")
 
 
 @app.get("/auth/sheets/connect")
