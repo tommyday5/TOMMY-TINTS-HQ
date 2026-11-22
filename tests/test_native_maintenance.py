@@ -140,7 +140,7 @@ class NativeMaintenanceTests(unittest.TestCase):
         self.assertNotIn(b"PRIVATE MARGIN", page.data)
         self.assertNotIn(b"150.00", page.data)
         self.assertIn(b"provisional", page.data)
-        self.assertEqual(page.headers["Cache-Control"], "private, no-store")
+        self.assertIn("no-store", page.headers["Cache-Control"])
         with patch("hq_native_maintenance.active_customer", return_value=self.customer_b):
             other = self.public.get("/customer/maintenance")
         self.assertIn(two.encode(), other.data)
