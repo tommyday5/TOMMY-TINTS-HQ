@@ -20,7 +20,8 @@ from hq_job_sync import status as sheet_sync_status
 from hq_customer_portal import issue_customer_invite
 from hq_service_quotes import (save_service_price, catalogue, create_request,
                                review_request, customer_requests, owner_requests,
-                               convert_approved_service_quote)
+                               convert_approved_service_quote,
+                               linked_quote_lines, save_linked_quote_lines)
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVICE = "Window Tinting"
@@ -249,6 +250,100 @@ class ServiceQuoteTests(unittest.TestCase):
         self.assertIn(b"Current owner-approved work amount", own.data)
         self.assertNotIn(ident.encode(), self.other_client.get("/customer/service-enquiries").data)
         self.assertEqual(sheet_sync_status(work_id)["state"], "not_linked")
+
+
+    def test_itemised_services_are_editable_reconciled_and_customer_private(self):
+        save_service_price("Bodywork & Paint", "250.00", "", "", True, 0)
+        ident = create_request(self.customer_a, uuid.uuid4().hex, self.vehicle_a,
+                               "retail", [SERVICE, "Bodywork & Paint"], "Synthetic paint and tint")
+        review_request(ident, 0, "quoted", "350.00", "Approved total")
+        work_id = convert_approved_service_quote(ident, 1, "retail")
+        path = "/hq/service-enquiries/" + ident + "/lines"
+        original = linked_quote_lines(ident)
+        self.assertEqual(original["work_revision"], 0)
+        self.assertEqual(len(original["lines"]), 2)
+        self.assertTrue(all(line["amount_pence"] is None for line in original["lines"]))
+        self.assertFalse(original["fully_allocated"])
+        self.assertEqual(self.customer_client.get(path).status_code, 302)
+        self.login_owner()
+        self.assertEqual(self.owner_client.get(path).status_code, 200)
+        self.assertIn(b"350.00", self.owner_client.get(path).data)
+        form = {"csrf": "owner-csrf", "revision": "0",
+                "price_0": "200.00", "price_1": "150.00",
+                "description_0": "PRIVATE: internal paint workflow",
+                "description_1": "Internal tint assessment"}
+        self.assertEqual(self.owner_client.post(path, data={**form, "csrf": "wrong"}).status_code, 403)
+        self.assertEqual(self.owner_client.post(path, data={**form, "price_1": "149.99"}).status_code, 409)
+        self.assertEqual(self.owner_client.post(path, data={**form, "price_1": "not-money"}).status_code, 409)
+        self.assertEqual(linked_quote_lines(ident)["work_revision"], 0)
+        saved = self.owner_client.post(path, data=form)
+        self.assertEqual(saved.status_code, 303, saved.get_data(as_text=True))
+        snapshot = linked_quote_lines(ident)
+        self.assertTrue(snapshot["fully_allocated"])
+        self.assertEqual(snapshot["work_revision"], 1)
+        self.assertEqual([x["amount_pence"] for x in snapshot["lines"]], [20000, 15000])
+        self.assertIn(b"PRIVATE: internal paint workflow", self.owner_client.get(path).data)
+        self.assertEqual(self.owner_client.post(path, data=form).status_code, 303)  # idempotent retry
+        with connect() as db:
+            self.assertEqual(db.execute("""SELECT count(*) FROM hq_work_audit
+                WHERE work_id=? AND action='service_line_allocation'""",
+                (work_id,)).fetchone()[0], 1)
+            self.assertEqual(db.execute("""SELECT count(*) FROM hq_service_quote_lines
+                WHERE work_id=?""", (work_id,)).fetchone()[0], 2)
+            self.assertEqual(db.execute("SELECT price_pence FROM hq_work_records WHERE id=?",
+                                        (work_id,)).fetchone()[0], 35000)
+        self.assertEqual(self.owner_client.post(path, data={
+            **form, "price_0": "195.00", "price_1": "155.00"
+        }).status_code, 409)  # stale revision, no lost update
+        updated = {**form, "revision": "1", "price_0": "210.00", "price_1": "140.00"}
+        self.assertEqual(self.owner_client.post(path, data=updated).status_code, 303)
+        self.assertEqual(linked_quote_lines(ident)["work_revision"], 2)
+        self.assertEqual(save_linked_quote_lines(ident, 1, [
+            {"service": item["service"], "price": updated["price_" + str(i)],
+             "description": updated.get("description_" + str(i), "")}
+            for i, item in enumerate(original["lines"])
+        ]), 2)  # same retry through a fresh SQLite connection
+
+        self.login_customer(self.customer_client, self.customer_a)
+        self.login_customer(self.other_client, self.customer_b)
+        draft = self.customer_client.get("/customer/service-enquiries").data
+        self.assertNotIn(b"210.00", draft)
+        self.assertNotIn(b"PRIVATE:", draft)
+        change_work_status(work_id, "approved", expected_revision=2)
+        approved = self.customer_client.get("/customer/service-enquiries").data
+        self.assertIn(b"Approved itemised services", approved)
+        self.assertIn(b"210.00", approved)
+        self.assertIn(b"140.00", approved)
+        self.assertNotIn(b"PRIVATE:", approved)
+        self.assertNotIn(ident.encode(), self.other_client.get("/customer/service-enquiries").data)
+        self.assertEqual(self.owner_client.post(path, data={
+            **updated, "revision": "3", "price_0": "220.00", "price_1": "130.00"
+        }).status_code, 409)
+        self.assertEqual(linked_quote_lines(ident)["work_revision"], 3)
+        self.assertEqual(sheet_sync_status(work_id)["state"], "not_linked")
+
+    def test_old_linked_quote_reads_without_backfill_and_detects_work_price_drift(self):
+        save_service_price("Bodywork & Paint", "100.00", "", "", True, 0)
+        ident = create_request(self.customer_a, uuid.uuid4().hex, self.vehicle_a,
+                               "retail", ["Bodywork & Paint", SERVICE], "")
+        review_request(ident, 0, "quoted", "300.00", "")
+        work_id = convert_approved_service_quote(ident, 1, "retail")
+        # Simulate PR #214's pre-line-ledger linked quote, without a data migration.
+        with connect() as db:
+            db.execute("DELETE FROM hq_service_quote_lines WHERE work_id=?", (work_id,))
+        virtual = linked_quote_lines(ident)
+        self.assertEqual(len(virtual["lines"]), 2)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_service_quote_lines").fetchone()[0], 0)
+        from hq_core_records import set_draft_financials
+        set_draft_financials(work_id, 29000, 0, expected_revision=0)
+        with self.assertRaisesRegex(ValueError, "differs"):
+            save_linked_quote_lines(ident, 1, [
+                {"service": item["service"], "price": "150.00", "description": ""}
+                for item in virtual["lines"]])
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_service_quote_lines").fetchone()[0], 0)
+        self.assertEqual(linked_quote_lines(ident)["work_revision"], 1)
 
     def test_parallel_conversion_replays_one_work_record(self):
         ident = create_request(self.customer_a, uuid.uuid4().hex, self.vehicle_a,
