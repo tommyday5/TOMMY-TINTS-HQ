@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Allocate Service Quote · Tommy Tints HQ</title>
+<link rel="stylesheet" href="/static/commerce.css">
+<style>
+main{max-width:900px;margin:auto;padding:clamp(12px,3vw,25px)}
+article{padding:16px;margin:12px 0;border:1px solid #555;border-radius:12px}
+label{display:block;margin:8px 0;font-weight:600}
+input,textarea{display:block;max-width:100%;width:100%;box-sizing:border-box;padding:10px}
+button{padding:12px 18px;cursor:pointer}
+.notice{border-left:3px solid #d4ab3a;padding:10px 14px;margin:12px 0}
+</style></head><body><main>
+<p><a href="/hq/service-enquiries">← Service quote inbox</a> · <a href="/hq/work/{{ quote.work_id }}/edit">Open native HQ quote</a></p>
+<h1>Allocate a multi-service HQ quote</h1>
+<p><strong>{{ quote.customer_name }}</strong> · {{ quote.make }} {{ quote.model }} · {{ quote.registration }}</p>
+<p>Enquiry <code>{{ quote.request_id }}</code> · Work <code>{{ quote.work_id }}</code> · {{ quote.customer_tier|title }} · {{ quote.work_status|replace('_',' ')|title }}</p>
+<p>Original owner-reviewed total: <strong>£{{ '%.2f'|format(quote.approved_total_pence/100) }}</strong>.
+Current HQ work price: <strong>{% if quote.work_price_pence is not none %}£{{ '%.2f'|format(quote.work_price_pence/100) }}{% else %}unpriced{% endif %}</strong>.</p>
+<p class="notice">Allocate the existing approved quote across its original services. Every amount must be independently checked and all lines must total exactly the approved quote. No guessed cost, automatic tariff calculation, new booking, invoice, payment or Sheets write. Customer-visible item prices appear only after the native quote is approved as work.</p>
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+{% if request.args.get('saved') %}<p role="status">Line allocations saved, audited and retained on reload.</p>{% endif %}
+{% if quote.fully_allocated %}<p role="status">Verified: service line prices reconcile with the customer quote and HQ work amount.</p>
+{% else %}<p class="notice">Unallocated or unbalanced: this is not yet a verified itemised price breakdown.</p>{% endif %}
+{% if quote.work_price_pence != quote.approved_total_pence %}
+<p role="alert">HQ's current work price differs from the original customer-reviewed quote. Reconcile this discrepancy before saving an itemised breakdown.</p>
+{% endif %}
+{% if quote.editable %}
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="revision" value="{{ quote.work_revision }}">
+{% for line in quote.lines %}
+{% set i = loop.index0 %}
+<article>
+<h2>{{ loop.index }}. {{ line.service }}</h2>
+<p>Requested service category is preserved from the customer enquiry and cannot be removed or renamed here.</p>
+<label for="price_{{ i }}">Owner-reviewed allocated price (£)</label>
+{% set submitted_price = form_values.get('price_' ~ i) %}
+<input id="price_{{ i }}" name="price_{{ i }}" inputmode="decimal" required
+ value="{{ submitted_price if submitted_price is not none else ('%.2f'|format(line.amount_pence/100) if line.amount_pence is not none else '') }}"
+ placeholder="0.00">
+<label for="description_{{ i }}">Optional private scope breakdown (not shown to customers)</label>
+{% set submitted_description = form_values.get('description_' ~ i) %}
+<textarea id="description_{{ i }}" name="description_{{ i }}" maxlength="200" rows="2">{{ submitted_description if submitted_description is not none else line.description }}</textarea>
+</article>
+{% endfor %}
+<button type="submit">Save and verify service line prices</button>
+</form>
+{% else %}
+<p class="notice">The quote is approved, no longer an editable draft, or archived. The original breakdown remains available for review, but line prices are locked.</p>
+{% for line in quote.lines %}
+<article><h2>{{ line.service }}</h2><p>{% if line.amount_pence is not none %}£{{ '%.2f'|format(line.amount_pence/100) }}{% else %}Not allocated{% endif %}</p><p>{{ line.description }}</p></article>
+{% endfor %}
+{% endif %}
+</main></body></html>
