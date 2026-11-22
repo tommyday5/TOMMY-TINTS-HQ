@@ -111,8 +111,16 @@ def _native_inventory():
         return None
 
 
-def build_preview(formula, computed, *, native=None):
-    """Pure, bounded advisory result. All comparisons are unapproved candidates."""
+def build_preview(formula, computed, *, native=None, page_index=0, find_ref=""):
+    """Pure, bounded advisory result with full-source, owner-selected page access.
+
+    The full Jobs/Customers range is validated on every call; pagination only
+    limits the PII-free review queue returned for rendering. No import occurs.
+    """
+    if type(page_index) is not int or not 0 <= page_index <= 16:
+        raise ValueError("Invalid historical review page")
+    if not isinstance(find_ref, str) or (find_ref and not J_REF.fullmatch(find_ref)):
+        raise ValueError("Enter an exact uppercase J-series reference")
     jobs, customers = _check_source(formula, computed)
     known = native["names"] if native is not None else set()
     if not isinstance(known, set):
@@ -157,6 +165,11 @@ def build_preview(formula, computed, *, native=None):
             if name in known:
                 customers_hq_candidates += 1
     counts = Counter(names)
+    display_rows = ([entry for entry in job_out if entry["ref"] == find_ref]
+                    if find_ref else job_out)
+    page_count = max(1, (len(display_rows) + 59) // 60)
+    if page_index >= page_count:
+        raise ValueError("Historical review page changed; start a fresh comparison")
     return {
         "workbook_id": WORKBOOK, "jobs_sheet_id": 330634230,
         "customers_sheet_id": 378990021, "first_data_row": 5,
@@ -174,7 +187,10 @@ def build_preview(formula, computed, *, native=None):
         "native_work_count": native["works"] if native else None,
         "possible_native_customer_rows": customers_hq_candidates if native else None,
         "possible_native_job_rows": jobs_hq_candidates if native else None,
-        "sample": job_out[:60], "sample_truncated": len(job_out) > 60,
+        "sample": display_rows[page_index * 60:(page_index + 1) * 60],
+        "sample_truncated": len(display_rows) > 60,
+        "page_index": page_index, "page_count": page_count,
+        "filtered_count": len(display_rows), "find_ref": find_ref,
         "import_authorised": False, "identity_verified": False,
         "source_of_truth_changed": False, "reconciled": False,
     }
@@ -666,6 +682,22 @@ def page():
             else:
                 return redirect(url_for(".page", saved="1"), code=303)
         elif action in ("compare", "propose"):
+            # Pagination and exact J lookup are always fresh, owner-initiated
+            # provider reads; never cache historical source cells in sessions.
+            try:
+                page_index = int(request.form.get("page_index", "0"))
+                find_ref = request.form.get("find_ref", "").strip()
+                if type(page_index) is not int or not 0 <= page_index <= 16:
+                    raise ValueError("Invalid historical review page")
+                if find_ref and not J_REF.fullmatch(find_ref):
+                    raise ValueError("Enter an exact uppercase J-series reference")
+            except (ValueError, TypeError):
+                error = "Invalid historical review page or J reference."
+                page_index, find_ref = 0, ""
+            if error:
+                return render_template("hq_migration_preview.html",
+                    result=None, error=error, csrf=session.get("csrf", ""),
+                    candidates=_current_candidates(), work_options=[], saved=False), 400
             # Google Sheets is fetched only after a deliberate owner POST.
             provider = current_app.extensions["hq_sheets_connection"]()
             if not provider or provider[1] <= time.time():
@@ -673,7 +705,8 @@ def page():
             else:
                 try:
                     formula, computed = _read_live(provider[0])
-                    result = build_preview(formula, computed, native=_native_inventory())
+                    result = build_preview(formula, computed, native=_native_inventory(),
+                                           page_index=page_index, find_ref=find_ref)
                     for entry in result["sample"]:
                         if entry["status"] == "review":
                             entry["source_stamp"] = _candidate_stamp(formula, computed, entry["row"])
