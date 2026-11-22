@@ -239,7 +239,7 @@ class CustomerPortalTests(unittest.TestCase):
         self.assertIn(work_id.encode(), page.data)
         self.assertIn(b"Reviewed and approved rear window tint", page.data)
         self.assertNotIn(b"PRIVATE ENQUIRY NOTES", page.data)
-        self.assertIn(b"not a confirmed booking", page.data)
+        self.assertIn(b"appointment confirmation", page.data)
 
 
 if __name__ == "__main__":
