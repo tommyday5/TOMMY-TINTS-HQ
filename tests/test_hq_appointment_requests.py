@@ -374,6 +374,68 @@ class AvailabilityRequestTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_portal_booking_confirmations").fetchone()[0],0)
 
 
+    def test_live_primary_calendar_blocks_conflicts_then_records_auditable_clear_check(self):
+        self.owner_login()
+        csrf = self.signin(self.customer, self.customer_id)
+        self.assertEqual(self.customer.post("/customer/availability", data=self.payload(csrf)).status_code, 303)
+        ref = owner_availability_snapshot()[0]["id"]
+        offer = {"csrf":"availability-owner-csrf","request_id":ref,"revision":"0",
+                 "decision":"offered","date":self.next_day,"time":"12:00"}
+        self.assertEqual(self.owner.post("/hq/availability-requests", data=offer).status_code, 303)
+        self.assertEqual(self.customer.post("/customer/availability", data={
+            "csrf":csrf,"action":"respond","request_id":ref,"revision":"1",
+            "decision":"accepted"}).status_code, 303)
+        confirm = {"csrf":"availability-owner-csrf","request_id":ref,"revision":"1",
+                   "decision":"confirm","duration_hours":"2","external_checked":"yes"}
+        with patch.dict(app.extensions, {"hq_calendar_connection":lambda:("synthetic",float("inf"))}):
+            with patch("hq_appointment_requests.live_conflicts",
+                       return_value={"available":False,"conflicts":[{"id":"private"}]}) as check:
+                response = self.owner.post("/hq/availability-requests", data=confirm)
+                self.assertEqual(response.status_code,409)
+                self.assertNotIn(b"private", response.data)
+                self.assertEqual(check.call_count,1)
+            with connect() as db:
+                self.assertEqual(db.execute("SELECT count(*) FROM hq_portal_booking_confirmations").fetchone()[0],0)
+            with patch("hq_appointment_requests.live_conflicts",
+                       return_value={"available":True,"conflicts":[]}) as check:
+                self.assertEqual(self.owner.post("/hq/availability-requests", data=confirm).status_code,303)
+                self.assertEqual(check.call_count,1)
+                self.assertEqual(check.call_args.args[0],"synthetic")
+        with connect() as db:
+            evidence = db.execute("""SELECT provider,checked_at,slot_start,slot_end
+                FROM hq_portal_booking_calendar_evidence WHERE request_id=?""",(ref,)).fetchone()
+            self.assertEqual(evidence["provider"],"google_calendar_primary")
+            self.assertIn(self.next_day,evidence["slot_start"])
+            self.assertIn("14:00",evidence["slot_end"])
+            self.assertTrue(evidence["checked_at"])
+        self.assertIsNotNone(owner_availability_snapshot()[0]["primary_calendar_checked_at"])
+        self.assertEqual(self.owner.post("/hq/availability-requests",data=confirm).status_code,303)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_portal_booking_calendar_evidence").fetchone()[0],1)
+
+    def test_connected_calendar_failure_or_expired_grant_cannot_silently_fall_back_to_manual(self):
+        self.owner_login()
+        csrf=self.signin(self.customer,self.customer_id)
+        self.customer.post("/customer/availability",data=self.payload(csrf))
+        ref=owner_availability_snapshot()[0]["id"]
+        self.owner.post("/hq/availability-requests",data={
+            "csrf":"availability-owner-csrf","request_id":ref,"revision":"0",
+            "decision":"offered","date":self.next_day,"time":"11:00"})
+        self.customer.post("/customer/availability",data={
+            "csrf":csrf,"action":"respond","request_id":ref,"revision":"1","decision":"accepted"})
+        confirm={"csrf":"availability-owner-csrf","request_id":ref,"revision":"1",
+                 "decision":"confirm","duration_hours":"1","external_checked":"yes"}
+        with patch.dict(app.extensions,{"hq_calendar_connection":lambda:("synthetic",float("inf"))}):
+            with patch("hq_appointment_requests.live_conflicts",side_effect=RuntimeError("down")):
+                response=self.owner.post("/hq/availability-requests",data=confirm)
+                self.assertEqual(response.status_code,409)
+                self.assertIn(b"could not be verified",response.data)
+        with patch.dict(app.extensions,{"hq_calendar_connection":lambda:None}):
+            with patch("hq_appointment_requests.stored_grant_present",return_value=True):
+                self.assertEqual(self.owner.post("/hq/availability-requests",data=confirm).status_code,409)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_portal_booking_confirmations").fetchone()[0],0)
+
 
 if __name__=="__main__":
     unittest.main()
