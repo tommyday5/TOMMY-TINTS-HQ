@@ -210,8 +210,8 @@ def _read_live(token):
 # These are owner-curated, INACTIVE candidate mappings. Nothing below alters
 # hq_work_records, source J references, Sheets, or source-of-truth ownership.
 # Fresh provider reads prove only the momentary source snapshot, not identity.
-_HEX = re.compile(r"[0-9a-f]{32}\\Z")
-_STAMP = re.compile(r"[0-9a-f]{64}\\Z")
+_HEX = re.compile(r"[0-9a-f]{32}\Z")
+_STAMP = re.compile(r"[0-9a-f]{64}\Z")
 
 
 def _candidate_stamp(formula, computed, row_number):
