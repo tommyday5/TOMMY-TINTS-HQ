@@ -67,6 +67,32 @@ class HistoricalPreviewTests(unittest.TestCase):
         self.assertNotIn("FAKE", str(result))
         self.assertNotIn("250", str(result))
 
+    def test_full_range_paginated_without_exposing_customer_data(self):
+        formula, actual = snapshots()
+        for i in range(90):
+            row = [f"J{i + 1000:04d}", "2026-03-01", f"Private Person {i}",
+                   "Retail", "PRIVATE", "Tinting"] + [""] * 10 + [150, "Quoted"]
+            formula["valueRanges"][0]["values"].append(row[:])
+            actual["valueRanges"][0]["values"].append(row[:])
+        first = build_preview(formula, actual)
+        second = build_preview(formula, actual, page_index=1)
+        self.assertEqual(first["jobs_rows"], 94)
+        self.assertEqual(first["page_count"], 2)
+        self.assertEqual(len(first["sample"]), 60)
+        self.assertEqual(len(second["sample"]), 34)
+        self.assertEqual(second["sample"][0]["row"], 65)
+        self.assertNotIn("Private Person", str(second))
+        self.assertNotIn("PRIVATE", str(second))
+        self.assertEqual(second["jobs_rows"], first["jobs_rows"])
+        exact = build_preview(formula, actual, find_ref="J1089")
+        self.assertEqual(exact["filtered_count"], 1)
+        self.assertEqual(exact["sample"][0]["ref"], "J1089")
+        self.assertEqual(build_preview(formula, actual, find_ref="J9999")["sample"], [])
+        for kwargs in ({"page_index": -1}, {"page_index": 2},
+                       {"find_ref": "j1000"}, {"find_ref": "J1000' OR 1=1"}):
+            with self.assertRaises(ValueError):
+                build_preview(formula, actual, **kwargs)
+
     def test_no_native_db_does_not_create_one_or_invent_matches(self):
         formula, actual = snapshots()
         with tempfile.TemporaryDirectory() as directory, patch.dict(
@@ -131,6 +157,40 @@ class HistoricalPreviewTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "bounds"):
                 _read_live("fixture-token")
             self.assertEqual(get.call_count, 1)
+
+    def test_page_navigation_and_reference_lookup_are_explicit_and_read_only(self):
+        formula, actual = snapshots()
+        for i in range(80):
+            row = [f"J{i + 1000:04d}", "2026-03-01", f"Private Person {i}",
+                   "Retail", "PRIVATE", "Tinting"] + [""] * 10 + [150, "Quoted"]
+            formula["valueRanges"][0]["values"].append(row[:])
+            actual["valueRanges"][0]["values"].append(row[:])
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory, patch.dict(
+            os.environ, {"HQ_DATA_DIR": directory, "HQ_SESSION_SECRET": "fixture",
+                         "GOOGLE_CLIENT_ID": "fixture",
+                         "GOOGLE_CLIENT_SECRET": "fixture",
+                         "HQ_ALLOWED_GOOGLE_EMAIL": "owner@example.invalid"}):
+            client = app.test_client()
+            with client.session_transaction() as sess, auth_db() as db:
+                sess.update(hq_sid=issue_session(db, "synthetic-subject"),
+                            csrf="page-csrf", google_sub="synthetic-subject")
+            with patch.dict(app.extensions, {
+                    "hq_sheets_connection": lambda: ("fixture", 9999999999)}), \\
+                 patch("hq_historical_preview._read_live", return_value=(formula, actual)) as read:
+                response = client.post("/hq/migration/preview", data={
+                    "csrf": "page-csrf", "action": "compare", "page_index": "1"})
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(b"page 2 of 2", response.data)
+                self.assertIn(b"J1079", response.data)
+                self.assertNotIn(b"Private Person", response.data)
+                self.assertIn(b"Previous 60 rows", response.data)
+                exact = client.post("/hq/migration/preview", data={
+                    "csrf": "page-csrf", "action": "compare", "find_ref": "J1079"})
+                self.assertIn(b"Showing 1 of 1", exact.data)
+                bad = client.post("/hq/migration/preview", data={
+                    "csrf": "page-csrf", "action": "compare", "page_index": "99"})
+                self.assertEqual(bad.status_code, 400)
+                self.assertEqual(read.call_count, 2)
 
     def test_owner_only_csrf_and_get_never_calls_provider(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as directory:
