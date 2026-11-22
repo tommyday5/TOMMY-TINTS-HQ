@@ -43,7 +43,7 @@ class CustomerPortalTests(unittest.TestCase):
             return create_native_work({
                 "operation_id": uuid.uuid4().hex, "customer_id": "",
                 "vehicle_id": "", "customer_name": name,
-                "email": email, "phone": "07700 900111",
+                "email": email, "phone": "07700 900111" if name == "Portal Customer" else "07700 900112",
                 "make": "Hyundai", "model": "i30", "model_year": "2021",
                 "registration": reg, "kind": "quote",
                 "service": "Bodywork & Paint", "customer_tier": "retail",
