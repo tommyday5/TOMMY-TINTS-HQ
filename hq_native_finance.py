@@ -13,6 +13,11 @@ def schema(db):
  db.execute('CREATE TABLE IF NOT EXISTS finance_bills (id TEXT PRIMARY KEY, name TEXT NOT NULL, amount INTEGER NOT NULL, due TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0)')
  db.execute('CREATE TABLE IF NOT EXISTS finance_transactions (id TEXT PRIMARY KEY, day TEXT NOT NULL, description TEXT NOT NULL, amount INTEGER NOT NULL, category TEXT NOT NULL, reviewed INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0)')
  db.execute('CREATE TABLE IF NOT EXISTS finance_edit_audit (id TEXT PRIMARY KEY, entity TEXT NOT NULL, record_id TEXT NOT NULL, revision INTEGER NOT NULL, created TEXT NOT NULL)')
+ # Additive migration: preserve every existing bill, identity, value and revision.
+ columns={r['name'] for r in db.execute('PRAGMA table_info(finance_bills)')}
+ for name,definition in [('status',"TEXT NOT NULL DEFAULT 'planned'"),('status_date','TEXT'),('archived','INTEGER NOT NULL DEFAULT 0')]:
+  if name not in columns:db.execute('ALTER TABLE finance_bills ADD COLUMN '+name+' '+definition)
+ db.execute('CREATE TABLE IF NOT EXISTS finance_bill_history (id TEXT PRIMARY KEY, bill_id TEXT NOT NULL, revision INTEGER NOT NULL, snapshot TEXT NOT NULL, created TEXT NOT NULL, UNIQUE(bill_id,revision))')
 
 def money(v,nullable=False,signed=False):
  if nullable and v is None:return None
@@ -34,10 +39,11 @@ def snapshot():
  with connect() as db:
   schema(db)
   plan=db.execute('SELECT * FROM finance_plan WHERE id=1').fetchone()
-  bills=[dict(r) for r in db.execute('SELECT * FROM finance_bills ORDER BY due,id')]
+  bills=[dict(r) for r in db.execute('SELECT * FROM finance_bills ORDER BY archived,due,id')]
+  bill_history=[dict(id=r['id'],bill_id=r['bill_id'],revision=r['revision'],snapshot=json.loads(r['snapshot']),created=r['created']) for r in db.execute('SELECT * FROM finance_bill_history ORDER BY created DESC,id DESC LIMIT 250')]
   transactions=[dict(r) for r in db.execute('SELECT * FROM finance_transactions ORDER BY day DESC,id LIMIT 200')]
   count=db.execute('SELECT COUNT(*) FROM finance_transactions').fetchone()[0]
- return dict(plan=dict(plan) if plan else dict(balance=None,balance_date=None,target=None,revision=0),bills=bills,transactions=transactions,transaction_count=count,categories=CATEGORIES,bank_verified=False,source='Owner-entered HQ records',received_income=None)
+ return dict(plan=dict(plan) if plan else dict(balance=None,balance_date=None,target=None,revision=0),bills=bills,bill_history=bill_history,transactions=transactions,transaction_count=count,categories=CATEGORIES,bank_verified=False,source='Owner-entered HQ records',received_income=None)
 
 @finance.get('/hq/finance/command')
 @required
@@ -72,8 +78,18 @@ def api():
     if row and row['revision']!=rev:return jsonify(error='Changed elsewhere. Reload before editing.'),409
     if not row and rev!=0:return jsonify(error='Changed elsewhere. Reload.'),409
     if kind=='bill':
-     values=(text(d.get('name')),money(d.get('amount')),day(d.get('due')))
-     db.execute('INSERT OR REPLACE INTO finance_bills VALUES(?,?,?,?,?)',(ref,*values,rev+1))
+     name=text(d.get('name'));amount=money(d.get('amount'));due=day(d.get('due'))
+     status=d.get('status',row['status'] if row else 'planned')
+     if status not in ('planned','reported_paid','cancelled'):raise ValueError('Unknown bill status')
+     archived=d.get('archived',bool(row['archived']) if row else False)
+     if type(archived) is not bool:raise ValueError('Archive flag must be boolean')
+     # Owner-reported paid is NOT a verified bank settlement.
+     status_date=day(d.get('status_date')) if status=='reported_paid' else None
+     db.execute('INSERT OR REPLACE INTO finance_bills (id,name,amount,due,revision,status,status_date,archived) VALUES(?,?,?,?,?,?,?,?)',
+      (ref,name,amount,due,rev+1,status,status_date,int(archived)))
+     bill_state=dict(name=name,amount=amount,due=due,status=status,status_date=status_date,archived=archived)
+     db.execute('INSERT INTO finance_bill_history (id,bill_id,revision,snapshot,created) VALUES(?,?,?,?,?)',
+      (uuid.uuid4().hex,ref,rev+1,json.dumps(bill_state,sort_keys=True),datetime.now(timezone.utc).isoformat()))
     else:
      category=d.get('category');reviewed=d.get('reviewed',False)
      if category not in CATEGORIES or type(reviewed) is not bool:raise ValueError('Choose a valid classification')
