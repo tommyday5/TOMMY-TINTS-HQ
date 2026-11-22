@@ -12,7 +12,7 @@ from customer_request_store import connect
 from hq_auth import issue_session
 from hq_auth_store import auth_db
 from hq_core_records import read_work_record, set_draft_financials, change_work_status
-from hq_customer_documents import save_public_description
+from hq_customer_documents import save_public_description, save_portal_update, document_snapshot
 from hq_native_work import create_native_work, native_work_record
 from hq_customer_portal import (
     active_customer, customer_portal_snapshot, issue_customer_invite,
@@ -240,6 +240,82 @@ class CustomerPortalTests(unittest.TestCase):
         self.assertIn(b"Reviewed and approved rear window tint", page.data)
         self.assertNotIn(b"PRIVATE ENQUIRY NOTES", page.data)
         self.assertIn(b"appointment confirmation", page.data)
+
+    def test_owner_published_updates_are_explicit_and_customer_isolated(self):
+        self.login_owner()
+        code, _ = self.invite()
+        self.assertEqual(self.customer_signin(code).status_code, 303)
+        path = f"/hq/work/{self.work_id}/customer-document"
+        self.assertEqual(self.owner.get(path).status_code, 200)
+        self.assertEqual(self.owner.post(path, data={
+            "csrf": "portal-test-csrf", "action": "portal_update",
+            "revision": "0", "portal_update": "Private draft: collecting parts",
+        }).status_code, 303)
+        self.assertEqual(document_snapshot(self.work_id)["revision"], 1)
+        self.assertEqual(self.owner.post(path, data={
+            "csrf": "portal-test-csrf", "action": "portal_update",
+            "revision": "1", "portal_update": "Premature notice", "publish": "1",
+        }).status_code, 400)
+        self.assertNotIn(b"Private draft: collecting parts", self.customer.get("/customer/account").data)
+        save_public_description(self.work_id, "Bonnet repair and repaint", 1)
+        set_draft_financials(self.work_id, 35000, 5000, expected_revision=2)
+        change_work_status(self.work_id, "ready_for_review", expected_revision=3)
+        change_work_status(self.work_id, "approved", expected_revision=4)
+        self.assertNotIn(b"Private draft: collecting parts", self.customer.get("/customer/account").data)
+
+        anonymous = app.test_client()
+        self.assertEqual(anonymous.get(path).status_code, 302)
+        self.assertEqual(anonymous.post(path, data={
+            "revision": "5", "action": "portal_update", "publish": "1",
+            "portal_update": "Forged update",
+        }).status_code, 302)
+        self.assertEqual(self.owner.post(path, data={
+            "csrf": "wrong", "revision": "5", "action": "portal_update",
+            "portal_update": "Forged update", "publish": "1",
+        }).status_code, 403)
+        safe_message = "Bonnet prepared — awaiting quality check. <script>alert(1)</script>"
+        self.assertEqual(self.owner.post(path, data={
+            "csrf": "portal-test-csrf", "revision": "5", "action": "portal_update",
+            "portal_update": safe_message, "publish": "1",
+        }).status_code, 303)
+        page = self.customer.get("/customer/account")
+        self.assertIn(b"Bonnet prepared", page.data)
+        self.assertIn(b"&lt;script&gt;", page.data)
+        self.assertNotIn(b"<script>alert(1)</script>", page.data)
+        self.assertNotIn(b"PRIVATE ACTUAL MATERIAL COST", page.data)
+        self.assertNotIn(b"9999", page.data)
+        self.assertEqual(document_snapshot(self.work_id)["revision"], 6)
+        self.assertEqual(self.owner.post(path, data={
+            "csrf": "portal-test-csrf", "revision": "5", "action": "portal_update",
+            "portal_update": "Different stale message", "publish": "1",
+        }).status_code, 409)
+        self.assertEqual(self.owner.post(path, data={
+            "csrf": "portal-test-csrf", "revision": "5", "action": "portal_update",
+            "portal_update": safe_message, "publish": "1",
+        }).status_code, 303)
+        self.assertEqual(document_snapshot(self.work_id)["revision"], 6)
+        other_id = self.create_work("Portal Other", "otherportal@example.invalid", "GG22 GGG")
+        self.approve(other_id, "Other customer description.")
+        save_portal_update(other_id, "Other customer's private update", True, 4)
+        self.assertNotIn(b"Other customer's private update", self.customer.get("/customer/account").data)
+
+        self.assertEqual(self.owner.post(path, data={
+            "csrf": "portal-test-csrf", "revision": "6", "action": "portal_update",
+            "portal_update": safe_message,
+        }).status_code, 303)
+        self.assertNotIn(b"Bonnet prepared", self.customer.get("/customer/account").data)
+        with connect() as db:
+            row = db.execute("""SELECT is_published FROM hq_work_customer_updates
+                WHERE work_id=?""", (self.work_id,)).fetchone()
+            self.assertEqual(row["is_published"], 0)
+            self.assertEqual(db.execute("""SELECT COUNT(*) FROM hq_work_customer_update_events
+                WHERE work_id=?""", (self.work_id,)).fetchone()[0], 3)
+            audit = db.execute("""SELECT before_value,after_value FROM hq_work_audit
+                WHERE work_id=? AND action='customer_portal_update'""",
+                (self.work_id,)).fetchall()
+            self.assertEqual(len(audit), 3)
+            self.assertTrue(all("Bonnet prepared" not in str(row) for row in audit))
+        self.assertEqual(document_snapshot(self.work_id)["revision"], 7)
 
 
 if __name__ == "__main__":
