@@ -13,8 +13,8 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .alert{border-color:#fbd434}code{overflow-wrap:anywhere}</style></head><body><main>
 <nav><a href="/hq/customers">← Customer directory</a> · <a href="/hq/profile-change-requests">Profile corrections</a></nav>
 <h1>Customer availability request inbox</h1>
-<p>Review preferences against your actual calendar and workload. An offer is <strong>tentative only</strong>. This screen never books Calendar or Square, sends messages, takes deposits, or promises a confirmed time.</p>
-{% if saved %}<div class="card" role="status">Owner response saved in HQ. No appointment was confirmed or message sent.</div>{% endif %}
+<p>Review preferences against your actual calendar and workload. Offers are tentative. After customer acceptance, only the owner may confirm a one-hour or longer HQ appointment, following a separate check of Google Calendar, Square and other commitments. <strong>HQ confirmation never creates or changes external calendar appointments, sends messages or takes payments.</strong></p>
+{% if saved %}<div class="card" role="status">Owner decision saved in the HQ database. No external calendar entry, message or payment was created.</div>{% endif %}
 {% if error %}<div class="card alert" role="alert">{{ error }}</div>{% endif %}
 {% for item in items %}<article class="card">
 <h2>{{ item.customer_name }} · {{ item.service }}</h2>
@@ -26,7 +26,39 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
  · Reference <code>{{ item.id[:8] }}</code></p>
 {% if item.status == 'offered' and item.customer_decision %}
 <p role="status"><strong>Customer {{ item.customer_decision }} the tentative offer on {{ item.customer_responded_at }}.</strong>
-{% if item.customer_decision == 'accepted' %}This is not a confirmed booking. Verify Calendar capacity and use the separately authorised confirmation process before committing to an appointment.{% else %}The customer can submit a new preference. The declined offer remains in history.{% endif %}</p>
+{% if item.customer_decision == 'accepted' and item.booking_status == 'confirmed' %}This is now confirmed in HQ; external calendars must be managed separately.
+{% elif item.customer_decision == 'accepted' and item.booking_status == 'cancelled' %}The HQ booking was cancelled and a new request is required.
+{% elif item.customer_decision == 'accepted' %}This is not a confirmed booking. Verify all calendars and use the explicit confirmation form below.
+{% else %}The customer can submit a new preference. The declined offer remains in history.{% endif %}</p>
+{% endif %}
+{% if item.booking_status == 'confirmed' %}
+<p role="status"><strong>HQ-confirmed appointment:</strong> {{ item.offered_date }} at {{ item.offered_time }} for {{ item.duration_hours }} hour(s). Confirmed {{ item.confirmed_at }}.</p>
+{% if item.confirmation_note %}<p>Customer-facing note: {{ item.confirmation_note }}</p>{% endif %}
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="request_id" value="{{ item.id }}">
+<input type="hidden" name="booking_revision" value="{{ item.booking_revision }}">
+<label for="cancel-{{ item.id }}">Customer-safe cancellation reason</label>
+<input id="cancel-{{ item.id }}" name="cancel_reason" maxlength="500" required>
+<button type="submit" name="decision" value="cancel" class="alt">Cancel HQ booking</button>
+<p>Cancellation is recorded in HQ only; remove external calendar events and contact the customer separately.</p>
+</form>
+{% elif item.booking_status == 'cancelled' %}
+<p role="status"><strong>HQ appointment cancelled:</strong> {{ item.cancelled_at }}. {{ item.cancel_reason }}. Ask the customer to request a new date.</p>
+{% elif item.status == 'offered' and item.customer_decision == 'accepted' %}
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="request_id" value="{{ item.id }}">
+<input type="hidden" name="revision" value="{{ item.revision }}">
+<p><strong>Awaiting owner confirmation:</strong> {{ item.offered_date }} at {{ item.offered_time }}.</p>
+<label for="duration-{{ item.id }}">Workshop time reserved (whole hours, 1–8)</label>
+<select id="duration-{{ item.id }}" name="duration_hours">
+{% for hours in range(1,9) %}<option value="{{ hours }}">{{ hours }} hour(s)</option>{% endfor %}
+</select>
+<label for="confirmation-note-{{ item.id }}">Customer-facing confirmation note (optional)</label>
+<textarea id="confirmation-note-{{ item.id }}" name="message" maxlength="500" rows="2"></textarea>
+<label><input type="checkbox" name="external_checked" value="yes" required style="width:auto"> I have personally checked Google Calendar, Square and other appointments for this full duration, including existing bookings outside HQ.</label>
+<p>HQ also rejects overlaps with other HQ-confirmed slots. This checkbox records your manual review; HQ does not validate live external availability. No external appointment, payment or message will be created.</p>
+<button type="submit" name="decision" value="confirm">Confirm appointment in HQ</button>
+</form>
 {% endif %}
 {% if item.status in ('requested','offered') and not item.customer_decision %}
 <form method="post">
@@ -50,5 +82,5 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 <p>Owner response: {{ item.owner_message or 'None recorded' }}</p>
 {% endif %}
 </article>{% else %}<div class="card"><p>No customer availability requests have been saved in HQ.</p></div>{% endfor %}
-<p>Historical Sheets dates and live external calendars are not reconciled on this screen. Confirm an appointment only using your separately authorised scheduling process.</p>
+<p>HQ confirmation is a native internal booking record only. Unmigrated Sheets dates and live external calendars are not checked automatically. The owner must update any external appointment and notify customers separately.</p>
 </main></body></html>

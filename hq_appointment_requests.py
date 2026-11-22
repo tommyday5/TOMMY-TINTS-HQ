@@ -92,6 +92,29 @@ def _tables(db):
         decision TEXT NOT NULL CHECK(decision IN ('accepted','declined')),
         responded_at TEXT NOT NULL
     )""")
+    # Separate native ledger: historical tentative-offer constraints remain intact.
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_portal_booking_confirmations (
+        request_id TEXT PRIMARY KEY REFERENCES hq_portal_availability_requests(id),
+        customer_id TEXT NOT NULL REFERENCES hq_customers(id),
+        work_id TEXT NOT NULL REFERENCES hq_work_records(id),
+        offered_revision INTEGER NOT NULL,
+        booked_date TEXT NOT NULL, booked_time TEXT NOT NULL,
+        duration_hours INTEGER NOT NULL CHECK(duration_hours BETWEEN 1 AND 8),
+        status TEXT NOT NULL CHECK(status IN ('confirmed','cancelled')),
+        confirmation_note TEXT NOT NULL, cancel_reason TEXT NOT NULL DEFAULT '',
+        external_calendar_attested INTEGER NOT NULL CHECK(external_calendar_attested=1),
+        revision INTEGER NOT NULL DEFAULT 0,
+        confirmed_at TEXT NOT NULL, cancelled_at TEXT
+    )""")
+    db.execute("""CREATE INDEX IF NOT EXISTS hq_booking_day
+        ON hq_portal_booking_confirmations(booked_date,status)""")
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_portal_booking_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        request_id TEXT NOT NULL REFERENCES hq_portal_booking_confirmations(request_id),
+        revision INTEGER NOT NULL,
+        action TEXT NOT NULL CHECK(action IN ('confirmed','cancelled')),
+        occurred_at TEXT NOT NULL
+    )""")
 
 
 def submit_availability_request(customer_id, work_id, day, hour, note, operation_id):
@@ -122,8 +145,13 @@ def submit_availability_request(customer_id, work_id, day, hour, note, operation
             (work_id,customer_id)).fetchone()
         if eligible is None:
             raise ValueError("Only your approved active work can have an availability request")
+        if db.execute("""SELECT 1 FROM hq_portal_booking_confirmations
+            WHERE work_id=? AND status='confirmed'""",(work_id,)).fetchone():
+            raise ValueError("This work already has an HQ-confirmed appointment")
         count = db.execute("""SELECT COUNT(*) FROM hq_portal_availability_requests a
             WHERE a.customer_id=? AND a.status IN ('requested','offered')
+              AND NOT EXISTS (SELECT 1 FROM hq_portal_booking_confirmations b
+                  WHERE b.request_id=a.id)
               AND NOT EXISTS (SELECT 1 FROM hq_portal_availability_offer_responses r
                   WHERE r.request_id=a.id AND r.decision='declined')""",
             (customer_id,)).fetchone()[0]
@@ -131,6 +159,8 @@ def submit_availability_request(customer_id, work_id, day, hour, note, operation
             raise ValueError("Too many open availability requests")
         existing = db.execute("""SELECT a.id FROM hq_portal_availability_requests a
             WHERE a.customer_id=? AND a.work_id=? AND a.status IN ('requested','offered')
+              AND NOT EXISTS (SELECT 1 FROM hq_portal_booking_confirmations b
+                  WHERE b.request_id=a.id)
               AND NOT EXISTS (SELECT 1 FROM hq_portal_availability_offer_responses r
                   WHERE r.request_id=a.id AND r.decision='declined')""",
             (customer_id,work_id)).fetchone()
@@ -163,9 +193,12 @@ def customer_availability_snapshot(customer_id):
         requests = [dict(r) for r in db.execute("""SELECT a.id,a.work_id,a.requested_date,
             a.requested_time,a.note,a.status,a.offered_date,a.offered_time,a.owner_message,
             a.revision,a.created_at,w.service,v.registration,
-            r.decision AS customer_decision,r.responded_at AS customer_responded_at
+            r.decision AS customer_decision,r.responded_at AS customer_responded_at,
+            b.status AS booking_status,b.duration_hours,b.confirmed_at,b.cancelled_at,
+            b.revision AS booking_revision,b.confirmation_note,b.cancel_reason
             FROM hq_portal_availability_requests a
             LEFT JOIN hq_portal_availability_offer_responses r ON r.request_id=a.id
+            LEFT JOIN hq_portal_booking_confirmations b ON b.request_id=a.id
             JOIN hq_work_records w ON w.id=a.work_id AND w.customer_id=a.customer_id
             JOIN hq_vehicles v ON v.id=w.vehicle_id AND v.customer_id=a.customer_id
             WHERE a.customer_id=? ORDER BY a.created_at DESC,a.id DESC LIMIT 100""",
@@ -181,9 +214,12 @@ def owner_availability_snapshot():
         rows = db.execute("""SELECT a.id,a.work_id,a.customer_id,a.status,a.revision,
             a.requested_date,a.requested_time,a.note,a.offered_date,a.offered_time,
             a.owner_message,a.created_at,c.name AS customer_name,w.service,v.registration,
-            r.decision AS customer_decision,r.responded_at AS customer_responded_at
+            r.decision AS customer_decision,r.responded_at AS customer_responded_at,
+            b.status AS booking_status,b.duration_hours,b.confirmed_at,b.cancelled_at,
+            b.revision AS booking_revision,b.confirmation_note,b.cancel_reason
             FROM hq_portal_availability_requests a
             LEFT JOIN hq_portal_availability_offer_responses r ON r.request_id=a.id
+            LEFT JOIN hq_portal_booking_confirmations b ON b.request_id=a.id
             JOIN hq_work_records w ON w.id=a.work_id AND w.customer_id=a.customer_id
             JOIN hq_vehicles v ON v.id=w.vehicle_id AND v.customer_id=a.customer_id
             JOIN hq_customers c ON c.id=a.customer_id
@@ -284,6 +320,109 @@ def respond_to_tentative_offer(customer_id, ref, expected_revision, decision):
             VALUES (?,?,?,?)""",(ref,expected_revision,decision,_now()))
 
 
+
+def confirm_accepted_offer(ref, expected_revision, duration_hours, external_checked, note=""):
+    """Owner action only. Local conflicts checked atomically; external check attested.
+
+    Does not write Google Calendar/Square or send customer messages.
+    """
+    _id(ref)
+    if not isinstance(duration_hours,str) or not re.fullmatch(r"[1-8]",duration_hours):
+        raise ValueError("Choose a duration of 1 to 8 hours")
+    duration=int(duration_hours)
+    if external_checked is not True:
+        raise ValueError("Check external calendars and acknowledge that review")
+    note=_note(note)
+    with connect() as db:
+        db.execute("PRAGMA foreign_keys=ON")
+        _schema(db)
+        _tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        row=db.execute("""SELECT a.*,r.offer_revision,r.decision AS customer_decision,
+            w.status AS work_status
+            FROM hq_portal_availability_requests a
+            LEFT JOIN hq_portal_availability_offer_responses r ON r.request_id=a.id
+            JOIN hq_work_records w ON w.id=a.work_id AND w.customer_id=a.customer_id
+            WHERE a.id=? AND NOT EXISTS (SELECT 1 FROM hq_work_archive_state z
+                WHERE z.work_id=w.id AND z.is_archived=1)""",(ref,)).fetchone()
+        if row is None:
+            raise LookupError("Active availability request not found")
+        prior=db.execute("""SELECT * FROM hq_portal_booking_confirmations
+            WHERE request_id=?""",(ref,)).fetchone()
+        if prior is not None:
+            if (prior["status"]=="confirmed" and prior["offered_revision"]==expected_revision
+                and prior["booked_date"]==row["offered_date"]
+                and prior["booked_time"]==row["offered_time"]
+                and prior["duration_hours"]==duration and prior["confirmation_note"]==note):
+                return
+            raise ValueError("This request already has a booking decision; reload")
+        if (row["status"]!="offered" or row["revision"]!=expected_revision
+            or row["work_status"] not in ("approved","in_progress")
+            or row["customer_decision"]!="accepted"
+            or row["offer_revision"]!=expected_revision):
+            raise ValueError("Only a current accepted, approved offer can be confirmed")
+        day,hour=_slot(row["offered_date"],row["offered_time"])
+        begins=datetime.combine(datetime.strptime(day,"%Y-%m-%d").date(),
+                                datetime.strptime(hour,"%H:%M").time(),
+                                tzinfo=ZoneInfo("Europe/London"))
+        if begins <= datetime.now(ZoneInfo("Europe/London")):
+            raise ValueError("A past appointment cannot be confirmed")
+        start=int(hour[:2])
+        if start+duration>17:
+            raise ValueError("The appointment must finish by 17:00 UK time")
+        busy=db.execute("""SELECT booked_time,duration_hours
+            FROM hq_portal_booking_confirmations
+            WHERE status='confirmed' AND booked_date=?""",(day,)).fetchall()
+        if any(start < int(b["booked_time"][:2])+b["duration_hours"]
+               and int(b["booked_time"][:2]) < start+duration for b in busy):
+            raise ValueError("Overlaps another HQ-confirmed appointment")
+        if db.execute("""SELECT 1 FROM hq_portal_booking_confirmations
+            WHERE work_id=? AND status='confirmed'""",(row["work_id"],)).fetchone():
+            raise ValueError("This work already has an HQ-confirmed appointment")
+        now=_now()
+        db.execute("""INSERT INTO hq_portal_booking_confirmations
+            (request_id,customer_id,work_id,offered_revision,booked_date,booked_time,
+             duration_hours,status,confirmation_note,external_calendar_attested,confirmed_at)
+            VALUES (?,?,?,?,?,?,?,'confirmed',?,1,?)""",
+            (ref,row["customer_id"],row["work_id"],expected_revision,day,hour,
+             duration,note,now))
+        db.execute("""INSERT INTO hq_portal_booking_events
+            (request_id,revision,action,occurred_at) VALUES (?,0,'confirmed',?)""",
+            (ref,now))
+
+
+def cancel_confirmed_booking(ref, expected_booking_revision, reason):
+    """Cancels only the native HQ record, never an external booking."""
+    _id(ref)
+    reason=_note(reason)
+    if not reason:
+        raise ValueError("A customer-safe cancellation reason is required")
+    with connect() as db:
+        db.execute("PRAGMA foreign_keys=ON")
+        _schema(db)
+        _tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        row=db.execute("""SELECT status,revision,cancel_reason
+            FROM hq_portal_booking_confirmations WHERE request_id=?""",(ref,)).fetchone()
+        if row is None:
+            raise LookupError("HQ booking not found")
+        if (row["status"]=="cancelled" and row["revision"]==expected_booking_revision+1
+            and row["cancel_reason"]==reason):
+            return
+        if row["status"]!="confirmed" or row["revision"]!=expected_booking_revision:
+            raise ValueError("Booking changed. Reload before cancelling")
+        now=_now()
+        changed=db.execute("""UPDATE hq_portal_booking_confirmations
+            SET status='cancelled',cancel_reason=?,cancelled_at=?,revision=revision+1
+            WHERE request_id=? AND status='confirmed' AND revision=?""",
+            (reason,now,ref,expected_booking_revision))
+        if changed.rowcount!=1:
+            raise ValueError("Booking changed. Reload before cancelling")
+        db.execute("""INSERT INTO hq_portal_booking_events
+            (request_id,revision,action,occurred_at) VALUES (?,?,'cancelled',?)""",
+            (ref,expected_booking_revision+1,now))
+
+
 def withdraw_availability_request(customer_id, ref, expected_revision):
     """A customer may withdraw only their own unconfirmed request."""
     _id(customer_id)
@@ -297,6 +436,9 @@ def withdraw_availability_request(customer_id, ref, expected_revision):
             WHERE id=? AND customer_id=?""",(ref,customer_id)).fetchone()
         if row is None:
             raise LookupError("Request not found")
+        if db.execute("""SELECT 1 FROM hq_portal_booking_confirmations
+            WHERE request_id=? AND status='confirmed'""",(ref,)).fetchone():
+            raise ValueError("The owner must cancel an HQ-confirmed appointment")
         if row["revision"] == expected_revision + 1 and row["status"] == "withdrawn":
             return
         if row["revision"] != expected_revision or row["status"] not in ("requested","offered"):
@@ -380,11 +522,23 @@ def owner_availability():
                                       session.get("csrf","unset")):
             abort(403)
         try:
-            owner_decide_availability(request.form.get("request_id",""),
-                                      _revision(request.form.get("revision","")),
-                                      request.form.get("decision",""),
-                                      request.form.get("date",""),request.form.get("time",""),
-                                      request.form.get("message",""))
+            decision=request.form.get("decision","")
+            if decision=="confirm":
+                confirm_accepted_offer(request.form.get("request_id",""),
+                                       _revision(request.form.get("revision","")),
+                                       request.form.get("duration_hours",""),
+                                       request.form.get("external_checked")=="yes",
+                                       request.form.get("message",""))
+            elif decision=="cancel":
+                cancel_confirmed_booking(request.form.get("request_id",""),
+                                         _revision(request.form.get("booking_revision","")),
+                                         request.form.get("cancel_reason",""))
+            else:
+                owner_decide_availability(request.form.get("request_id",""),
+                                          _revision(request.form.get("revision","")),
+                                          decision,request.form.get("date",""),
+                                          request.form.get("time",""),
+                                          request.form.get("message",""))
         except LookupError:
             abort(404)
         except ValueError as exc:

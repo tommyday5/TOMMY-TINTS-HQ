@@ -269,5 +269,111 @@ class AvailabilityRequestTests(unittest.TestCase):
                 hq_portal_availability_offer_responses""").fetchone()[0],1)
 
 
+    def test_owner_confirms_accepted_offer_and_customer_sees_only_their_booking(self):
+        self.owner_login()
+        customer_csrf=self.signin(self.customer,self.customer_id)
+        other_csrf=self.signin(self.other,self.other_id)
+        self.assertEqual(self.customer.post("/customer/availability",
+                         data=self.payload(customer_csrf)).status_code,303)
+        ref=owner_availability_snapshot()[0]["id"]
+        offered={"csrf":"availability-owner-csrf","request_id":ref,"revision":"0",
+                 "decision":"offered","date":self.next_day,"time":"13:00"}
+        self.assertEqual(self.owner.post("/hq/availability-requests",data=offered).status_code,303)
+        confirm={"csrf":"availability-owner-csrf","request_id":ref,"revision":"1",
+                 "decision":"confirm","duration_hours":"2","external_checked":"yes",
+                 "message":"Arrive at reception"}
+        self.assertEqual(self.owner.post("/hq/availability-requests",data=confirm).status_code,409)
+        self.assertEqual(self.owner.post("/hq/availability-requests",
+                         data={**confirm,"external_checked":""}).status_code,409)
+        self.assertEqual(self.customer.post("/customer/availability",data={
+            "csrf":customer_csrf,"action":"respond","request_id":ref,
+            "revision":"1","decision":"accepted",
+        }).status_code,303)
+        self.assertIn(b"Confirm appointment in HQ",self.owner.get("/hq/availability-requests").data)
+        self.assertEqual(self.owner.post("/hq/availability-requests",
+                         data={**confirm,"duration_hours":"5"}).status_code,409)
+        self.assertEqual(self.owner.post("/hq/availability-requests",data=confirm).status_code,303)
+        self.assertEqual(self.owner.post("/hq/availability-requests",data=confirm).status_code,303)
+        customer_page=self.customer.get("/customer/availability")
+        self.assertIn(b"Your appointment is confirmed in Tommy Tints HQ",customer_page.data)
+        self.assertIn(b"Arrive at reception",customer_page.data)
+        self.assertNotIn(b"PRIVATE COST DATA",customer_page.data)
+        self.assertNotIn(b"confirmed in Tommy Tints HQ",self.other.get("/customer/availability").data)
+        self.assertEqual(self.customer.post("/customer/availability",data={
+            "csrf":customer_csrf,"action":"withdraw","request_id":ref,"revision":"1",
+        }).status_code,409)
+        self.assertEqual(self.customer.post("/customer/availability",
+                         data=self.payload(customer_csrf)).status_code,409)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_portal_booking_confirmations").fetchone()[0],1)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_portal_booking_events").fetchone()[0],1)
+            self.assertEqual(db.execute("SELECT external_calendar_attested FROM hq_portal_booking_confirmations").fetchone()[0],1)
+
+        # Another customer's approved work cannot reserve an overlapping HQ interval.
+        self.approve(self.other_work)
+        self.assertEqual(self.other.post("/customer/availability",data=self.payload(
+                         other_csrf,work_id=self.other_work)).status_code,303)
+        other_ref=[r["id"] for r in owner_availability_snapshot() if r["work_id"]==self.other_work][0]
+        self.assertEqual(self.owner.post("/hq/availability-requests",data={
+            **offered,"request_id":other_ref,"date":self.next_day,"time":"14:00"
+        }).status_code,303)
+        self.assertEqual(self.other.post("/customer/availability",data={
+            "csrf":other_csrf,"action":"respond","request_id":other_ref,
+            "revision":"1","decision":"accepted",
+        }).status_code,303)
+        conflict={**confirm,"request_id":other_ref,"duration_hours":"1","message":""}
+        self.assertEqual(self.owner.post("/hq/availability-requests",data=conflict).status_code,409)
+        self.assertEqual(self.owner.post("/hq/availability-requests",data={
+            **confirm,"request_id":other_ref,"revision":"0"
+        }).status_code,409)
+
+        # Owner cancellation is versioned; does not cancel calendar/provider appointments.
+        cancel={"csrf":"availability-owner-csrf","request_id":ref,"decision":"cancel",
+                "booking_revision":"0","cancel_reason":"Workshop unavailable"}
+        self.assertEqual(self.owner.post("/hq/availability-requests",data=cancel).status_code,303)
+        self.assertEqual(self.owner.post("/hq/availability-requests",data=cancel).status_code,303)
+        self.assertEqual(self.owner.post("/hq/availability-requests",data={
+            **cancel,"cancel_reason":"Different reason"
+        }).status_code,409)
+        self.assertIn(b"Your HQ appointment was cancelled",self.customer.get("/customer/availability").data)
+        self.assertEqual(self.customer.post("/customer/availability",
+                         data=self.payload(customer_csrf)).status_code,303)
+        self.assertEqual(self.owner.post("/hq/availability-requests",data=conflict).status_code,303)
+        with connect() as db:
+            events=[tuple(r) for r in db.execute(
+                "SELECT action,revision FROM hq_portal_booking_events WHERE request_id=? ORDER BY id",(ref,))]
+            self.assertEqual(events,[("confirmed",0),("cancelled",1)])
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_portal_booking_confirmations").fetchone()[0],2)
+
+    def test_owner_confirmation_requires_owner_session_and_prevents_invalid_saves(self):
+        self.owner_login()
+        csrf=self.signin(self.customer,self.customer_id)
+        self.assertEqual(self.customer.post("/customer/availability",
+                         data=self.payload(csrf)).status_code,303)
+        ref=owner_availability_snapshot()[0]["id"]
+        self.assertEqual(self.owner.post("/hq/availability-requests",data={
+            "csrf":"availability-owner-csrf","request_id":ref,"revision":"0",
+            "decision":"offered","date":self.next_day,"time":"15:00",
+        }).status_code,303)
+        self.assertEqual(self.customer.post("/customer/availability",data={
+            "csrf":csrf,"action":"respond","request_id":ref,
+            "revision":"1","decision":"accepted",
+        }).status_code,303)
+        form={"csrf":"availability-owner-csrf","request_id":ref,"revision":"1",
+              "decision":"confirm","duration_hours":"3","external_checked":"yes"}
+        self.assertEqual(self.owner.post("/hq/availability-requests",data=form).status_code,409)
+        self.assertEqual(self.owner.post("/hq/availability-requests",
+                         data={**form,"duration_hours":"0"}).status_code,409)
+        self.assertEqual(self.owner.post("/hq/availability-requests",
+                         data={**form,"revision":"2","duration_hours":"1"}).status_code,409)
+        self.assertEqual(self.owner.post("/hq/availability-requests",
+                         data={**form,"csrf":"wrong","duration_hours":"1"}).status_code,403)
+        self.assertEqual(self.other.post("/hq/availability-requests",
+                         data={**form,"duration_hours":"1"}).status_code,302)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_portal_booking_confirmations").fetchone()[0],0)
+
+
+
 if __name__=="__main__":
     unittest.main()
