@@ -72,7 +72,7 @@ These candidates are <strong>not</strong> proven matches and require owner revie
 {% if candidates %}
 <div class="scroller"><table><thead><tr><th>Source row / J ID</th><th>Proposed HQ work ID</th><th>Recorded (UTC)</th><th>Decision</th></tr></thead><tbody>
 {% for item in candidates %}
-<tr><td>{{ item.sheet_row }} / {{ item.job_ref }}</td><td><code>{{ item.work_id }}</code> (revision {{ item.work_revision }})</td><td>{{ item.created_at }}</td><td>
+<tr><td>{{ item.sheet_row }} / {{ item.job_ref }}</td><td><code>{{ item.work_id }}</code> (revision {{ item.work_revision }})<p><a href="{{ url_for('.candidate_field_review_page',candidate_id=item.id) }}">Review six historical fields</a></p></td><td>{{ item.created_at }}</td><td>
 <form method="post" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}">
 <input type="hidden" name="action" value="withdraw">
 <input type="hidden" name="candidate_id" value="{{ item.id }}">
