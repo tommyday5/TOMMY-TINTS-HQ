@@ -10,6 +10,7 @@
 <p>{{ work.make }} {{ work.model }}{% if work.registration %} · {{ work.registration }}{% endif %}</p>
 <p>HQ work reference <code>{{ work.id }}</code></p>
 {% if work.public_description %}<p class="description">{{ work.public_description }}</p>{% endif %}
+{% if work.portal_update %}<p><strong>Update from Tommy Tints:</strong></p><p class="description">{{ work.portal_update }}</p>{% endif %}
 {% if work.approved_price %}<p>Owner-approved work price: <strong>{{ work.approved_price }}</strong></p>{% endif %}
 {% if work.preferred_date %}<p>Requested date: {{ work.preferred_date }} {{ work.preferred_time }} (not a confirmed booking)</p>{% endif %}
 </article>{% else %}<div class="card"><p>No approved work is currently visible. An enquiry or draft alone does not become an appointment.</p></div>{% endfor %}
