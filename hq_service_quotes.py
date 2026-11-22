@@ -69,6 +69,13 @@ def _db():
         approved_total_pence INTEGER NOT NULL, services_json TEXT NOT NULL,
         actor TEXT NOT NULL, created_at TEXT NOT NULL
     )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_service_quote_lines (
+        work_id TEXT NOT NULL REFERENCES hq_work_records(id),
+        position INTEGER NOT NULL CHECK(position BETWEEN 0 AND 4),
+        service TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+        amount_pence INTEGER CHECK(amount_pence BETWEEN 1 AND 100000000),
+        PRIMARY KEY(work_id,position), UNIQUE(work_id,service)
+    )""")
     return db
 
 
@@ -289,6 +296,12 @@ def convert_approved_service_quote(ident, revision, confirmed_tier, actor="owner
              "quote", services[0], notes, "", "", row["approved_total_pence"], now))
         db.execute("INSERT INTO hq_native_work_details VALUES (?,?,?)",
                    (work_id, confirmed_tier, now))
+        # Preserve every selected service without guessing its price allocation.
+        # Unpriced lines require an explicit, balanced owner save before display.
+        db.executemany("""INSERT INTO hq_service_quote_lines
+            (work_id,position,service,description,amount_pence)
+            VALUES (?,?,?,'',NULL)""",
+            [(work_id, position, service) for position, service in enumerate(services)])
         db.execute("INSERT INTO hq_native_work_events VALUES (?,?,?,?,?)",
                    (uuid.uuid4().hex, work_id, "service_enquiry_quote_created", 0, now))
         db.execute("""INSERT INTO hq_service_quote_work_links
@@ -305,6 +318,138 @@ def convert_approved_service_quote(ident, revision, confirmed_tier, actor="owner
     return work_id
 
 
+
+def linked_quote_lines(ident):
+    """Read the linked native quote and each requested service's allocation.
+
+    Older linked quotes are shown using their frozen enquiry snapshot; simply
+    opening the page never backfills or changes a production record.
+    """
+    _id(ident, "service request")
+    with _db() as db:
+        row = db.execute("""SELECT l.request_id,l.work_id,l.services_json,
+            l.approved_total_pence,l.customer_tier,w.price_pence AS work_price_pence,
+            w.deposit_pence,w.kind,w.status AS work_status,w.revision AS work_revision,
+            COALESCE(a.is_archived,0) AS is_archived,
+            c.name AS customer_name,v.make,v.model,v.registration
+            FROM hq_service_quote_work_links l
+            JOIN hq_service_quote_requests q ON q.id=l.request_id
+            JOIN hq_work_records w ON w.id=l.work_id
+            JOIN hq_customers c ON c.id=q.customer_id
+            JOIN hq_vehicles v ON v.id=q.vehicle_id
+            LEFT JOIN hq_work_archive_state a ON a.work_id=w.id
+            WHERE l.request_id=?""", (ident,)).fetchone()
+        if row is None:
+            raise LookupError("Linked native quote not found")
+        services = json.loads(row["services_json"])
+        if (not isinstance(services, list) or not 1 <= len(services) <= 5
+                or len(set(services)) != len(services)
+                or any(not isinstance(x, str) or x not in SERVICES for x in services)):
+            raise ValueError("Source service list needs review")
+        existing = [dict(x) for x in db.execute("""SELECT position,service,description,amount_pence
+            FROM hq_service_quote_lines WHERE work_id=? ORDER BY position""",
+            (row["work_id"],))]
+        if existing and (len(existing) != len(services)
+                         or any(x["position"] != i or x["service"] != services[i]
+                                for i, x in enumerate(existing))):
+            raise ValueError("Saved service lines differ from the original enquiry; review required")
+        lines = existing or [{"position": i, "service": service, "description": "",
+                              "amount_pence": None} for i, service in enumerate(services)]
+        data = dict(row)
+        data["lines"] = lines
+        data["fully_allocated"] = (all(x["amount_pence"] is not None for x in lines)
+                                   and sum(x["amount_pence"] or 0 for x in lines)
+                                   == row["approved_total_pence"]
+                                   == row["work_price_pence"])
+        data["editable"] = (row["kind"] == "quote"
+                            and row["work_status"] in ("draft", "ready_for_review")
+                            and not row["is_archived"])
+        return data
+
+
+def save_linked_quote_lines(ident, expected_revision, entries, actor="owner"):
+    """Allocate a confirmed customer quote to its original services atomically.
+
+    The sum MUST equal both the customer-visible approved amount and the
+    current native draft amount. No implicit repricing, new job, sheet sync,
+    stock reservation, payment or customer communication is performed.
+    """
+    _id(ident, "service request")
+    if type(expected_revision) is not int or not 0 <= expected_revision <= 100000000:
+        raise ValueError("Invalid work revision")
+    if not isinstance(entries, list):
+        raise ValueError("Invalid service lines")
+    with _db() as db:
+        _tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("""SELECT l.work_id,l.services_json,l.approved_total_pence,
+            w.price_pence,w.kind,w.status,w.revision,
+            COALESCE(a.is_archived,0) AS is_archived
+            FROM hq_service_quote_work_links l
+            JOIN hq_work_records w ON w.id=l.work_id
+            LEFT JOIN hq_work_archive_state a ON a.work_id=w.id
+            WHERE l.request_id=?""", (ident,)).fetchone()
+        if row is None:
+            raise LookupError("Linked native quote not found")
+        services = json.loads(row["services_json"])
+        if (not isinstance(services, list) or not 1 <= len(services) <= 5
+                or len(set(services)) != len(services)
+                or any(not isinstance(x, str) or x not in SERVICES for x in services)):
+            raise ValueError("Original enquiry services require review")
+        if len(entries) != len(services):
+            raise ValueError("Provide an amount for every requested service")
+        proposed = []
+        for i, (service, entry) in enumerate(zip(services, entries)):
+            if not isinstance(entry, dict) or entry.get("service") != service:
+                raise ValueError("Original service selection cannot be changed")
+            description = entry.get("description", "")
+            if not isinstance(description, str) or len(description.strip()) > 200:
+                raise ValueError("Line description must be 200 characters or fewer")
+            amount = _pence(entry.get("price"))
+            proposed.append({"position": i, "service": service,
+                             "description": description.strip(), "amount_pence": amount})
+        total = sum(item["amount_pence"] for item in proposed)
+        if total != row["approved_total_pence"]:
+            raise ValueError("Service line total must match the original owner-approved quote")
+        if row["price_pence"] != row["approved_total_pence"]:
+            raise ValueError("HQ work amount differs from the customer quote; reconcile before allocating lines")
+        previous = [dict(x) for x in db.execute("""SELECT position,service,description,amount_pence
+            FROM hq_service_quote_lines WHERE work_id=? ORDER BY position""",
+            (row["work_id"],))]
+        if previous == proposed:
+            return row["revision"]  # Safe exact retry, including across DB connections.
+        if row["kind"] != "quote" or row["status"] not in ("draft", "ready_for_review"):
+            raise ValueError("Only unapproved native quotes permit line changes")
+        if row["is_archived"]:
+            raise ValueError("Restore the archived quote before editing its lines")
+        if row["revision"] != expected_revision:
+            raise StaleWorkRecordError("The HQ work record changed; reload its service lines")
+        db.execute("DELETE FROM hq_service_quote_lines WHERE work_id=?", (row["work_id"],))
+        db.executemany("""INSERT INTO hq_service_quote_lines
+            (work_id,position,service,description,amount_pence) VALUES (?,?,?,?,?)""",
+            [(row["work_id"], item["position"], item["service"],
+              item["description"], item["amount_pence"]) for item in proposed])
+        changed = db.execute("""UPDATE hq_work_records SET revision=revision+1
+            WHERE id=? AND revision=?""", (row["work_id"], expected_revision))
+        if changed.rowcount != 1:
+            raise StaleWorkRecordError("HQ work changed; reload before saving")
+        revision = expected_revision + 1
+        # Work audit deliberately excludes free-form descriptions/PII. The
+        # editable descriptions live only in the protected canonical records.
+        audit_lines = lambda values: [
+            {"service": x["service"], "amount_pence": x["amount_pence"],
+             "description_sha256": hashlib.sha256(x["description"].encode()).hexdigest()}
+            for x in values]
+        _audit_work(db, row["work_id"], revision, "service_line_allocation",
+                    {"lines": audit_lines(previous)},
+                    {"lines": audit_lines(proposed), "verified_total_pence": total,
+                     "original_quote_pence": row["approved_total_pence"]})
+        db.execute("INSERT INTO hq_native_work_events VALUES (?,?,?,?,?)",
+                   (uuid.uuid4().hex, row["work_id"], "service_lines_saved",
+                    revision, _now()))
+        return revision
+
+
 def customer_requests(customer_id):
     _id(customer_id, "customer")
     with _db() as db:
@@ -319,7 +464,25 @@ def customer_requests(customer_id):
             LEFT JOIN hq_work_records w ON w.id=l.work_id
             WHERE q.customer_id=? ORDER BY q.created_at DESC,q.id DESC LIMIT 100""",
             (customer_id,)).fetchall()
-        return [{**dict(r), "services": json.loads(r["services_json"])} for r in rows]
+        result = []
+        for raw in rows:
+            item = {**dict(raw), "services": json.loads(raw["services_json"]),
+                    "approved_lines": []}
+            # The customer sees item prices ONLY once the native quote is
+            # approved into work, and only when allocations reconcile exactly.
+            if item["linked_status"] in ("approved", "in_progress", "completed"):
+                items = [dict(x) for x in db.execute("""SELECT li.service,li.amount_pence
+                    FROM hq_service_quote_work_links l
+                    JOIN hq_service_quote_lines li ON li.work_id=l.work_id
+                    WHERE l.request_id=? ORDER BY li.position""", (item["id"],))]
+                if (len(items) == len(item["services"])
+                        and [x["service"] for x in items] == item["services"]
+                        and all(x["amount_pence"] is not None for x in items)
+                        and sum(x["amount_pence"] for x in items)
+                        == item["linked_price_pence"] == item["approved_total_pence"]):
+                    item["approved_lines"] = items
+            result.append(item)
+        return result
 
 
 def owner_requests():
@@ -455,6 +618,51 @@ def owner_index():
         current_app.logger.exception("Owner service inbox unavailable")
         abort(503)
 
+
+
+@service_quotes.route("/hq/service-enquiries/<ident>/lines", methods=["GET", "POST"])
+@required
+def owner_service_lines(ident):
+    """Owner-only, revisioned allocation editor; never changes approved totals."""
+    error = None
+    form_values = {}
+    if request.method == "POST":
+        _csrf("csrf")
+        raw_revision = request.form.get("revision", "")
+        if not re.fullmatch(r"(?:0|[1-9][0-9]{0,8})", raw_revision):
+            abort(400)
+        form_values = request.form
+        try:
+            # Read the immutable service list, then recheck it under the write
+            # transaction in save_linked_quote_lines.
+            quote = linked_quote_lines(ident)
+            entries = [
+                {"service": item["service"],
+                 "description": request.form.get("description_" + str(i), ""),
+                 "price": request.form.get("price_" + str(i), "")}
+                for i, item in enumerate(quote["lines"])
+            ]
+            save_linked_quote_lines(ident, int(raw_revision), entries,
+                                    session.get("google_sub", "owner"))
+            return redirect("/hq/service-enquiries/" + ident + "/lines?saved=1", code=303)
+        except (ValueError, StaleWorkRecordError) as exc:
+            error = str(exc)
+        except LookupError:
+            abort(404)
+        except (sqlite3.Error, OSError, RuntimeError):
+            current_app.logger.exception("Service lines could not be saved")
+            abort(503)
+    try:
+        return render_template("hq_service_lines.html", quote=linked_quote_lines(ident),
+                               csrf=session.get("csrf"), form_values=form_values,
+                               error=error), (409 if error else 200)
+    except LookupError:
+        abort(404)
+    except ValueError as exc:
+        return str(exc), 409
+    except (sqlite3.Error, OSError, RuntimeError):
+        current_app.logger.exception("Service lines unavailable")
+        abort(503)
 
 @service_quotes.post("/hq/service-enquiries/<ident>/create-work")
 @required
