@@ -17,6 +17,7 @@ from flask import Blueprint, abort, current_app, redirect, render_template, requ
 from customer_request_store import connect, storage_ready
 from hq_auth import required
 from hq_core_records import _schema
+from hq_customer_documents import _tables as _document_tables
 
 customer_portal = Blueprint("customer_portal", __name__)
 _ID = re.compile(r"[0-9a-f]{32}\Z")
@@ -210,17 +211,18 @@ def customer_portal_snapshot(customer_id):
         customer = db.execute("SELECT name FROM hq_customers WHERE id=?", (customer_id,)).fetchone()
         if customer is None:
             raise LookupError("Customer not found")
-        # The document table may not exist until an owner first opens an editor.
-        db.execute("""CREATE TABLE IF NOT EXISTS hq_work_customer_documents (
-            work_id TEXT PRIMARY KEY REFERENCES hq_work_records(id),
-            public_description TEXT NOT NULL, updated_at TEXT NOT NULL)""")
+        # Both document/update tables are additive and safe to create on read.
+        _document_tables(db)
         works = db.execute("""SELECT w.id,w.kind,w.status,w.service,
             w.price_pence,w.preferred_date,w.preferred_time,
             v.make,v.model,v.registration,
-            COALESCE(doc.public_description,'') AS public_description
+            COALESCE(doc.public_description,'') AS public_description,
+            CASE WHEN upd.is_published=1 THEN upd.message ELSE '' END AS portal_update,
+            CASE WHEN upd.is_published=1 THEN upd.published_at ELSE NULL END AS update_published_at
             FROM hq_work_records w
             JOIN hq_vehicles v ON v.id=w.vehicle_id AND v.customer_id=w.customer_id
             LEFT JOIN hq_work_customer_documents doc ON doc.work_id=w.id
+            LEFT JOIN hq_work_customer_updates upd ON upd.work_id=w.id
             WHERE w.customer_id=?
               AND w.status IN ('approved','in_progress','completed','cancelled')
               AND NOT EXISTS (SELECT 1 FROM hq_work_archive_state a
