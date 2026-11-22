@@ -482,6 +482,15 @@ def _candidate_for_review(candidate_id):
             if review:
                 item["field_review"] = dict(review)
                 item["field_review"]["assessments"] = json.loads(review["assessments"])
+        if db.execute("""SELECT 1 FROM sqlite_master WHERE type='table'
+            AND name='hq_historical_field_ownership'""").fetchone():
+            ownership = db.execute("""SELECT revision,source_stamp,work_revision,
+                assessment_revision,selections,updated_at
+                FROM hq_historical_field_ownership WHERE candidate_id=?""",
+                (candidate_id,)).fetchone()
+            if ownership:
+                item["field_ownership"] = dict(ownership)
+                item["field_ownership"]["selections"] = json.loads(ownership["selections"])
         return item
 
 
@@ -603,6 +612,111 @@ def save_candidate_field_review(*, candidate_id, expected_revision, assessments,
         return revision
 
 
+
+# Inactive owner draft decisions, NOT verified matches or source-of-truth changes.
+_OWNERSHIP_CHOICES = ("hold", "review_sheets", "review_hq", "manual_resolution")
+
+
+def _field_ownership_tables(db):
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_historical_field_ownership (
+        candidate_id TEXT PRIMARY KEY REFERENCES hq_historical_j_candidates(id),
+        revision INTEGER NOT NULL CHECK(revision >= 1),
+        source_stamp TEXT NOT NULL,
+        work_revision INTEGER NOT NULL,
+        assessment_revision INTEGER NOT NULL,
+        selections TEXT NOT NULL,
+        actor_fingerprint TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_historical_field_ownership_events (
+        id TEXT PRIMARY KEY,
+        candidate_id TEXT NOT NULL REFERENCES hq_historical_j_candidates(id),
+        revision INTEGER NOT NULL,
+        source_stamp TEXT NOT NULL,
+        work_revision INTEGER NOT NULL,
+        assessment_revision INTEGER NOT NULL,
+        selections TEXT NOT NULL,
+        actor_fingerprint TEXT NOT NULL,
+        occurred_at TEXT NOT NULL,
+        UNIQUE(candidate_id,revision)
+    )""")
+
+
+def save_candidate_field_ownership(*, candidate_id, expected_revision, selections,
+                                   formula, computed, owner_identity):
+    """Save review preferences only, never modify a source or canonical HQ record."""
+    if not storage_ready() or not isinstance(candidate_id, str) or not _HEX.fullmatch(candidate_id):
+        raise ValueError("Invalid candidate or persistent storage")
+    if type(expected_revision) is not int or not 0 <= expected_revision < 2**31:
+        raise ValueError("Invalid ownership revision")
+    if (not isinstance(selections, dict)
+            or set(selections) != {field for field, _ in _REVIEW_FIELDS}
+            or any(type(choice) is not str or choice not in _OWNERSHIP_CHOICES
+                   for choice in selections.values())):
+        raise ValueError("Choose a permitted handling decision for every field")
+    if all(choice == "hold" for choice in selections.values()):
+        raise ValueError("Select at least one field for review")
+    actor, now = _actor_fingerprint(owner_identity), datetime.now(timezone.utc).isoformat()
+    payload = json.dumps(selections, sort_keys=True, separators=(",", ":"))
+    with connect() as db:
+        db.execute("PRAGMA foreign_keys=ON")
+        _schema(db)
+        _review_tables(db)
+        _field_review_tables(db)
+        _field_ownership_tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        candidate = db.execute("""SELECT work_id,work_revision,job_ref,sheet_row,
+            source_stamp,withdrawn_at FROM hq_historical_j_candidates
+            WHERE id=?""", (candidate_id,)).fetchone()
+        if candidate is None or candidate["withdrawn_at"] is not None:
+            raise ValueError("Historical candidate withdrawn or missing")
+        _verified_source_candidate(formula, computed, candidate["sheet_row"],
+                                   candidate["job_ref"], candidate["source_stamp"])
+        work = db.execute("SELECT revision FROM hq_work_records WHERE id=?",
+                          (candidate["work_id"],)).fetchone()
+        if work is None or work["revision"] != candidate["work_revision"]:
+            raise ValueError("Native work changed; withdraw and restage candidate")
+        assessment = db.execute("""SELECT revision,assessments,source_stamp,work_revision
+            FROM hq_historical_candidate_field_reviews WHERE candidate_id=?""",
+            (candidate_id,)).fetchone()
+        if (assessment is None or assessment["source_stamp"] != candidate["source_stamp"]
+                or assessment["work_revision"] != candidate["work_revision"]):
+            raise ValueError("Save a fresh field-by-field assessment first")
+        decisions = json.loads(assessment["assessments"])
+        for field, choice in selections.items():
+            if choice in ("review_sheets", "review_hq") and decisions.get(field) != "appears_consistent":
+                raise ValueError("Source preference needs a consistent field assessment")
+            if choice == "manual_resolution" and decisions.get(field) == "needs_evidence":
+                raise ValueError("Assess the field before recording manual resolution")
+        previous = db.execute("""SELECT revision,selections,source_stamp,
+            work_revision,assessment_revision FROM hq_historical_field_ownership
+            WHERE candidate_id=?""", (candidate_id,)).fetchone()
+        if previous and (previous["selections"],previous["source_stamp"],
+                         previous["work_revision"],previous["assessment_revision"]) == (
+                             payload,candidate["source_stamp"],candidate["work_revision"],
+                             assessment["revision"]):
+            return previous["revision"]  # exact replay, without a duplicate event
+        if (previous["revision"] if previous else 0) != expected_revision:
+            raise ValueError("Field ownership proposal changed; reload before saving")
+        revision = expected_revision + 1
+        db.execute("""INSERT INTO hq_historical_field_ownership
+            (candidate_id,revision,source_stamp,work_revision,assessment_revision,
+             selections,actor_fingerprint,updated_at) VALUES (?,?,?,?,?,?,?,?)
+            ON CONFLICT(candidate_id) DO UPDATE SET
+             revision=excluded.revision,source_stamp=excluded.source_stamp,
+             work_revision=excluded.work_revision,
+             assessment_revision=excluded.assessment_revision,
+             selections=excluded.selections,actor_fingerprint=excluded.actor_fingerprint,
+             updated_at=excluded.updated_at""",
+            (candidate_id,revision,candidate["source_stamp"],candidate["work_revision"],
+             assessment["revision"],payload,actor,now))
+        db.execute("""INSERT INTO hq_historical_field_ownership_events
+            VALUES (?,?,?,?,?,?,?,?,?)""",
+            (uuid.uuid4().hex,candidate_id,revision,candidate["source_stamp"],
+             candidate["work_revision"],assessment["revision"],payload,actor,now))
+        return revision
+
+
 @migration_preview.route("/hq/migration/candidates/<candidate_id>/review", methods=["GET", "POST"])
 @required
 def candidate_field_review_page(candidate_id):
@@ -621,7 +735,7 @@ def candidate_field_review_page(candidate_id):
                 request.form.get("csrf", ""), session.get("csrf", "not-set")):
             abort(403)
         action = request.form.get("action", "")
-        if action not in ("inspect", "save"):
+        if action not in ("inspect", "save", "save_ownership"):
             abort(400)
         provider = current_app.extensions["hq_sheets_connection"]()
         if not provider or provider[1] <= time.time():
@@ -637,6 +751,15 @@ def candidate_field_review_page(candidate_id):
                         candidate_id=candidate_id, expected_revision=revision,
                         assessments=assessments, formula=formula, computed=computed,
                         owner_identity=session.get("google_sub"))
+                elif action == "save_ownership":
+                    revision = int(request.form.get("ownership_revision", "-1"))
+                    selections = {key: request.form.get("ownership_" + key, "")
+                                  for key, _ in _REVIEW_FIELDS}
+                    save_candidate_field_ownership(
+                        candidate_id=candidate_id, expected_revision=revision,
+                        selections=selections, formula=formula, computed=computed,
+                        owner_identity=session.get("google_sub"))
+                if action != "inspect":
                     return redirect(url_for(".candidate_field_review_page",
                                             candidate_id=candidate_id, saved="1"), code=303)
             except (ValueError, sqlite3.Error, OSError):

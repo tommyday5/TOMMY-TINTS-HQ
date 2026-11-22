@@ -13,7 +13,8 @@ from hq_core_records import _schema
 from customer_request_store import connect
 from hq_historical_preview import (build_preview, _read_live, _native_inventory,
     _candidate_stamp, stage_j_candidate, withdraw_j_candidate, _current_candidates,
-    _candidate_for_review, _field_comparison, save_candidate_field_review)
+    _candidate_for_review, _field_comparison, save_candidate_field_review,
+    save_candidate_field_ownership)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -483,6 +484,125 @@ class HistoricalMappingProposalTests(unittest.TestCase):
         self.assertIn(b"revision 1", refreshed.data)
         self.assertIn(b"conflict", refreshed.data)
         self.assertNotIn(b"Synthetic A", refreshed.data)
+
+
+
+    def test_field_ownership_plan_is_audited_idempotent_and_inactive(self):
+        cid = self._stage()
+        assessments = {"customer": "conflict", "customer_tier": "appears_consistent",
+                       "vehicle": "appears_consistent", "services": "needs_evidence",
+                       "quoted_price": "appears_consistent", "lifecycle": "needs_evidence"}
+        selections = {"customer": "manual_resolution", "customer_tier": "review_hq",
+                      "vehicle": "review_sheets", "services": "hold",
+                      "quoted_price": "review_sheets", "lifecycle": "hold"}
+        with app.app_context():
+            save_candidate_field_review(
+                candidate_id=cid, expected_revision=0, assessments=assessments,
+                formula=self.formula, computed=self.actual, owner_identity="fixture")
+            self.assertEqual(save_candidate_field_ownership(
+                candidate_id=cid, expected_revision=0, selections=selections,
+                formula=self.formula, computed=self.actual, owner_identity="fixture"), 1)
+            self.assertEqual(save_candidate_field_ownership(
+                candidate_id=cid, expected_revision=0, selections=selections,
+                formula=self.formula, computed=self.actual, owner_identity="fixture"), 1)
+        stored = _candidate_for_review(cid)["field_ownership"]
+        self.assertEqual(stored["selections"], selections)
+        self.assertEqual(stored["revision"], 1)
+        self.assertEqual(stored["assessment_revision"], 1)
+        with connect() as db:
+            self.assertEqual(db.execute("""SELECT COUNT(*) FROM
+                hq_historical_field_ownership_events WHERE candidate_id=?""",
+                (cid,)).fetchone()[0], 1)
+            self.assertEqual(tuple(db.execute("""SELECT status,revision,price_pence
+                FROM hq_work_records WHERE id=?""", (self.work_id,)).fetchone()),
+                ("approved", 0, None))
+            self.assertNotIn("Fixture Customer", str(dict(db.execute(
+                "SELECT * FROM hq_historical_field_ownership WHERE candidate_id=?",
+                (cid,)).fetchone())))
+
+    def test_field_ownership_requires_evidence_and_rejects_conflicts(self):
+        cid = self._stage()
+        base = {key: "hold" for key in ("customer","customer_tier","vehicle",
+                                        "services","quoted_price","lifecycle")}
+        with app.app_context():
+            with self.assertRaisesRegex(ValueError, "assessment first"):
+                save_candidate_field_ownership(
+                    candidate_id=cid, expected_revision=0,
+                    selections=dict(base, customer="review_hq"),
+                    formula=self.formula, computed=self.actual, owner_identity="fixture")
+            assessment = {key: "needs_evidence" for key in base}
+            assessment["customer"] = "conflict"
+            assessment["customer_tier"] = "appears_consistent"
+            save_candidate_field_review(
+                candidate_id=cid, expected_revision=0, assessments=assessment,
+                formula=self.formula, computed=self.actual, owner_identity="fixture")
+            with self.assertRaisesRegex(ValueError, "consistent field"):
+                save_candidate_field_ownership(
+                    candidate_id=cid, expected_revision=0,
+                    selections=dict(base, customer="review_sheets"),
+                    formula=self.formula, computed=self.actual, owner_identity="fixture")
+            with self.assertRaisesRegex(ValueError, "Assess the field"):
+                save_candidate_field_ownership(
+                    candidate_id=cid, expected_revision=0,
+                    selections=dict(base, services="manual_resolution"),
+                    formula=self.formula, computed=self.actual, owner_identity="fixture")
+            plan = dict(base, customer="manual_resolution")
+            self.assertEqual(save_candidate_field_ownership(
+                candidate_id=cid, expected_revision=0, selections=plan,
+                formula=self.formula, computed=self.actual, owner_identity="fixture"), 1)
+            with self.assertRaisesRegex(ValueError, "changed; reload"):
+                save_candidate_field_ownership(
+                    candidate_id=cid, expected_revision=0,
+                    selections=dict(plan, customer_tier="review_hq"),
+                    formula=self.formula, computed=self.actual, owner_identity="fixture")
+            altered, actual = snapshots()
+            altered["valueRanges"][0]["values"][1][5] = "Changed"
+            with self.assertRaisesRegex(ValueError, "Source row changed"):
+                save_candidate_field_ownership(
+                    candidate_id=cid, expected_revision=1, selections=plan,
+                    formula=altered, computed=actual, owner_identity="fixture")
+            withdraw_j_candidate(cid, 0, "fixture")
+            with self.assertRaisesRegex(ValueError, "withdrawn"):
+                save_candidate_field_ownership(
+                    candidate_id=cid, expected_revision=1, selections=plan,
+                    formula=self.formula, computed=self.actual, owner_identity="fixture")
+
+    def test_field_ownership_ui_is_owner_only_and_saves_on_explicit_post(self):
+        cid = self._stage()
+        with app.app_context():
+            assess = {key:"appears_consistent" for key in
+                      ("customer","customer_tier","vehicle","services",
+                       "quoted_price","lifecycle")}
+            save_candidate_field_review(
+                candidate_id=cid, expected_revision=0, assessments=assess,
+                formula=self.formula, computed=self.actual, owner_identity="fixture")
+        endpoint = "/hq/migration/candidates/" + cid + "/review"
+        client = app.test_client()
+        self.assertEqual(client.get(endpoint).status_code, 302)
+        with client.session_transaction() as sess, auth_db() as db:
+            sess.update(hq_sid=issue_session(db,"owner-fixture"),
+                        csrf="ownership-csrf",google_sub="owner-fixture")
+        with patch("hq_historical_preview._read_live") as read:
+            before = client.get(endpoint)
+            self.assertNotIn(b"Synthetic A", before.data)
+            self.assertEqual(client.post(endpoint, data={
+                "csrf":"bad","action":"save_ownership"}).status_code,403)
+            read.assert_not_called()
+        with (patch.dict(app.extensions, {
+                "hq_sheets_connection": lambda: ("fixture",9999999999)}),
+              patch("hq_historical_preview._read_live",
+                    return_value=(self.formula,self.actual)) as read):
+            data = {"csrf":"ownership-csrf","action":"save_ownership",
+                    "ownership_revision":"0"}
+            for key in assess:
+                data["ownership_"+key] = "hold"
+            data["ownership_customer"] = "review_sheets"
+            self.assertEqual(client.post(endpoint,data=data).status_code,303)
+            self.assertEqual(read.call_count,1)
+        after = client.get(endpoint)
+        self.assertIn(b"Saved field handling plan",after.data)
+        self.assertIn(b"review sheets",after.data)
+        self.assertNotIn(b"Synthetic A",after.data)
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ select{padding:10px;background:#0d1420;color:white;border:1px solid #718097;bord
 <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="inspect">
 <button type="submit">Compare current Sheets and HQ values</button>
 </form>
-{% if saved %}<p role="status">Field assessments saved to HQ with an audit event. No production data was imported or changed.</p>{% endif %}
+{% if saved %}<p role="status">Review decisions saved with audit evidence. No production data was imported or changed.</p>{% endif %}
 {% if error %}<p role="alert">{{ error }}</p>{% endif %}
 </div>
 {% if candidate.field_review %}
@@ -36,6 +36,18 @@ select{padding:10px;background:#0d1420;color:white;border:1px solid #718097;bord
 <p class="muted">Recorded at {{ candidate.field_review.updated_at }}. These decisions are advisory, not verified mapping approvals.</p>
 <table><thead><tr><th>Field</th><th>Recorded assessment</th></tr></thead><tbody>
 {% for key,label in fields %}<tr><td>{{ label }}</td><td>{{ candidate.field_review.assessments.get(key,"needs_evidence").replace("_"," ") }}</td></tr>{% endfor %}
+</tbody></table>
+</div>
+{% endif %}
+{% if candidate.field_ownership %}
+<div class="panel">
+<h2>Saved field handling plan · revision {{ candidate.field_ownership.revision }}</h2>
+<p class="muted">Updated {{ candidate.field_ownership.updated_at }}. Proposed handling only; historical Sheets remain authoritative until a separately approved import and reconciliation.</p>
+{% if not candidate.field_review or candidate.field_ownership.assessment_revision != candidate.field_review.revision %}
+<p class="warning">Assessment revised: this handling plan needs revalidation.</p>
+{% endif %}
+<table><thead><tr><th>Field</th><th>Proposed handling</th></tr></thead><tbody>
+{% for key,label in fields %}<tr><td>{{ label }}</td><td>{{ candidate.field_ownership.selections.get(key,"hold").replace("_"," ") }}</td></tr>{% endfor %}
 </tbody></table>
 </div>
 {% endif %}
@@ -61,5 +73,30 @@ select{padding:10px;background:#0d1420;color:white;border:1px solid #718097;bord
 <button type="submit">Save field assessments</button>
 </form>
 </div>
+
+{% if candidate.field_review %}
+<div class="panel">
+<h2>Draft field-by-field handling plan</h2>
+<p class="muted">Choose how each historical field should be investigated. Selecting Sheets or HQ marks a source for further review, NOT a verified source-of-truth change. Conflicting fields can only be held or resolved manually. This form never imports or overwrites data.</p>
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="save_ownership">
+<input type="hidden" name="ownership_revision" value="{{ candidate.field_ownership.revision if candidate.field_ownership else 0 }}">
+<div class="scroller"><table><thead><tr><th>Field</th><th>Assessment</th><th>Proposed handling</th></tr></thead><tbody>
+{% for row in comparison %}
+<tr><th scope="row">{{ row.label }}</th><td>{{ candidate.field_review.assessments.get(row.key,"needs_evidence").replace("_"," ") }}</td><td>
+<label for="ownership-{{ row.key }}" class="muted">Handling for {{ row.label }}</label>
+<select id="ownership-{{ row.key }}" name="ownership_{{ row.key }}" required>
+{% set chosen = candidate.field_ownership.selections.get(row.key,"hold") if candidate.field_ownership else "hold" %}
+<option value="hold" {% if chosen=="hold" %}selected{% endif %}>Hold — more evidence needed</option>
+<option value="review_sheets" {% if chosen=="review_sheets" %}selected{% endif %}>Review original Sheets value</option>
+<option value="review_hq" {% if chosen=="review_hq" %}selected{% endif %}>Review existing HQ value</option>
+<option value="manual_resolution" {% if chosen=="manual_resolution" %}selected{% endif %}>Manual conflict resolution</option>
+</select></td></tr>
+{% endfor %}
+</tbody></table></div>
+<p class="muted">Saving requires a fresh source reread, unchanged J-series identity, unchanged native work revision and compatible field assessments. Every change leaves an immutable audit event.</p>
+<button type="submit">Save draft field handling plan</button>
+</form></div>
+{% endif %}
 {% endif %}
 </main></body></html>
