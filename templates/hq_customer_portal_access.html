@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>Customer portal access — Tommy Tints HQ</title>
+<style>:root{font-family:system-ui,sans-serif;color-scheme:dark;background:#0b0d12;color:#fff}body{margin:0;padding:clamp(12px,3vw,30px)}main{max-width:780px;margin:auto}.card{padding:20px;background:#171a21;border:1px solid #48404b;border-radius:12px;margin:16px 0}a{color:#ff858e}p{line-height:1.5;color:#c1c6d2}button{padding:12px 17px;border-radius:8px;background:#c6162c;color:#fff;border:1px solid #e83e50;cursor:pointer;font:inherit}button:focus-visible,a:focus-visible{outline:2px solid #fad22b;outline-offset:2px}code{overflow-wrap:anywhere;color:#fae185}.danger{border-color:#a44848}.secret{background:#101217;padding:13px;border-radius:8px;border:1px solid #f7d33b}</style>
+</head><body><main>
+<p><a href="/hq/customers/{{ details.id }}">← Back to HQ customer</a></p>
+<h1>Customer portal access</h1>
+<p><strong>{{ details.name }}</strong> · canonical HQ customer ID <code>{{ details.id }}</code></p>
+<p>This is a private owner tool. Check the customer's identity before manually sharing any invitation. An invitation grants access to approved, non-archived work linked to this exact HQ customer. No message is automatically sent.</p>
+<div class="card"><p>Active unused invitations: {{ details.invites }} · Active sessions: {{ details.sessions }}</p>
+{% if message %}<p role="status">{{ message }}</p>{% endif %}
+{% if code %}<div class="secret" role="status">
+<strong>One-time access code — only shown now</strong>
+<p><code id="access-code">{{ code }}</code></p>
+<p>Customer enters this code at <strong>/customer/login</strong>. It expires after 48 hours or first use. Do not paste it into a public link or support ticket.</p></div>{% endif %}
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="action" value="issue">
+<input type="hidden" name="operation_id" value="{{ operation_id }}">
+<button type="submit">Generate single-use customer access code</button>
+</form></div>
+<div class="card danger"><h2>Revoke access</h2>
+<p>Immediately invalidates all existing customer sessions and unused codes for this HQ customer; no jobs or records are removed.</p>
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="action" value="revoke">
+<button type="submit">Revoke all customer access</button>
+</form></div>
+</main></body></html>
