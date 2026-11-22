@@ -1,7 +1,7 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Service Enquiries · Tommy Tints HQ</title><link rel="stylesheet" href="/static/commerce.css"></head><body><main>
 <p><a href="/">← HQ dashboard</a> · <a href="/hq/services">Edit service tariffs</a> · <a href="/hq/shop/enquiries">Product enquiries</a></p>
 <h1>Customer service quote inbox</h1>
-<p>Requests use canonical HQ customer and vehicle IDs. Customer-selected tiers are unverified. Owner tariffs shown here are submission-time snapshots, not a guaranteed price; check vehicle, scope, current costs and entitlement before approving. Quoting here does not automatically create a native job, reserve an appointment, send messages or collect a payment.</p>
+<p>Requests use canonical HQ customer and vehicle IDs. Customer-selected tiers are unverified. Owner tariffs shown here are submission-time snapshots, not a guaranteed price; check vehicle, scope, current costs and entitlement before approving. After reviewing a price, explicitly create a native HQ quote linked to the existing customer and vehicle. The owner must then separately approve it as a job. Nothing here reserves an appointment, sends messages, collects payment or writes to Google Sheets.</p>
 {% if error %}<p role="alert">{{ error }}</p>{% endif %}
 {% if request.args.get('saved') %}<p role="status">Owner review saved and audited.</p>{% endif %}
 {% for e in enquiries %}<article>
@@ -10,7 +10,17 @@
 <ul>{% for service in e.services %}<li>{{ service }} — {{ '£%.2f'|format(e.owner_prices[service]/100) if e.owner_prices[service] is not none else 'Private tier price unknown' }}</li>{% endfor %}</ul>
 <p>Customer notes: {{ e.notes or '(none)' }}</p>
 {% if e.approved_total_pence is not none %}<p>Approved quote £{{ '%.2f'|format(e.approved_total_pence/100) }}</p>{% endif %}
-{% if e.status not in ('closed','declined') %}<form method="post">
+{% if e.linked_work_id %}
+<p><strong>Linked native HQ quote:</strong> <a href="/hq/work/{{ e.linked_work_id }}/edit">{{ e.linked_work_id }}</a> · {{ e.linked_work_status|replace('_',' ')|title }} · owner-confirmed {{ e.confirmed_tier|title }} tier. Edit and approve it in HQ. The original enquiry review is now locked for provenance.</p>
+{% elif e.status == 'quoted' and e.approved_total_pence is not none %}
+<form method="post" action="/hq/service-enquiries/{{ e.id }}/create-work">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="revision" value="{{ e.revision }}">
+<label>Owner-verified customer pricing tier
+<select name="customer_tier" required><option value="retail">Retail</option><option value="trade">Trade (verify entitlement)</option><option value="maintenance">Maintenance (verify entitlement)</option></select></label>
+<p>Creates one native HQ quote with the approved price, same customer and vehicle IDs, and the full original service list retained as provenance. No booking, job approval, payment or Sheets write.</p>
+<button type="submit">Create linked native HQ quote</button></form>
+{% endif %}
+{% if not e.linked_work_id and e.status not in ('closed','declined') %}<form method="post">
 <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="request_id" value="{{ e.id }}"><input type="hidden" name="revision" value="{{ e.revision }}">
 <label>Status<select name="status">{% for st in ('reviewing','quoted','declined','closed') %}<option value="{{ st }}" {{ 'selected' if st == e.status else '' }}>{{ st|title }}</option>{% endfor %}</select></label>
 <label>Owner-approved total £ (required to quote)<input name="approved_pounds" inputmode="decimal" value="{{ '%.2f'|format(e.approved_total_pence/100) if e.approved_total_pence is not none else '' }}"></label>
