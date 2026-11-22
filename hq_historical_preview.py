@@ -402,6 +402,237 @@ def withdraw_j_candidate(candidate_id, expected_revision, owner_identity):
 
 
 
+# Owner-only field assessments are advisory review evidence, never migration
+# approval, a source-of-truth transfer or a write into canonical work records.
+_REVIEW_FIELDS = (
+    ("customer", "Customer identity"),
+    ("customer_tier", "Retail / Trade / Maintenance"),
+    ("vehicle", "Vehicle and registration"),
+    ("services", "Service scope"),
+    ("quoted_price", "Historical selling price"),
+    ("lifecycle", "Job lifecycle"),
+)
+_REVIEW_DECISIONS = ("needs_evidence", "appears_consistent", "conflict")
+
+
+def _field_review_tables(db):
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_historical_candidate_field_reviews (
+        candidate_id TEXT PRIMARY KEY REFERENCES hq_historical_j_candidates(id),
+        revision INTEGER NOT NULL CHECK(revision >= 1),
+        source_stamp TEXT NOT NULL,
+        work_revision INTEGER NOT NULL,
+        assessments TEXT NOT NULL,
+        actor_fingerprint TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_historical_candidate_field_events (
+        id TEXT PRIMARY KEY,
+        candidate_id TEXT NOT NULL REFERENCES hq_historical_j_candidates(id),
+        revision INTEGER NOT NULL,
+        source_stamp TEXT NOT NULL,
+        work_revision INTEGER NOT NULL,
+        assessments TEXT NOT NULL,
+        actor_fingerprint TEXT NOT NULL,
+        occurred_at TEXT NOT NULL,
+        UNIQUE(candidate_id,revision)
+    )""")
+
+
+def _candidate_for_review(candidate_id):
+    """Load a staged mapping without mutating/creating the production DB."""
+    if not isinstance(candidate_id, str) or not _HEX.fullmatch(candidate_id):
+        return None
+    root = os.environ.get("HQ_DATA_DIR", "")
+    path = Path(root) / "customer_requests.sqlite3" if root and Path(root).is_absolute() else None
+    if path is None or not path.is_file():
+        return None
+    with sqlite3.connect("file:" + str(path) + "?mode=ro", uri=True, timeout=3) as db:
+        db.row_factory = sqlite3.Row
+        db.execute("PRAGMA query_only=ON")
+        if not db.execute("""SELECT 1 FROM sqlite_master WHERE
+            type='table' AND name='hq_historical_j_candidates'""").fetchone():
+            return None
+        row = db.execute("""SELECT id,work_id,work_revision,job_ref,
+            sheet_row,source_stamp,withdrawn_at FROM hq_historical_j_candidates
+            WHERE id=?""", (candidate_id,)).fetchone()
+        if row is None:
+            return None
+        item = dict(row)
+        if db.execute("""SELECT 1 FROM sqlite_master WHERE
+            type='table' AND name='hq_historical_candidate_field_reviews'""").fetchone():
+            review = db.execute("""SELECT revision,source_stamp,work_revision,
+                assessments,updated_at FROM hq_historical_candidate_field_reviews
+                WHERE candidate_id=?""", (candidate_id,)).fetchone()
+            if review:
+                item["field_review"] = dict(review)
+                item["field_review"]["assessments"] = json.loads(review["assessments"])
+        return item
+
+
+def _field_comparison(formula, computed, candidate):
+    """Fresh source + current native display, shown only on owner POST."""
+    _verified_source_candidate(formula, computed, candidate["sheet_row"],
+                               candidate["job_ref"], candidate["source_stamp"])
+    jobs, _ = _check_source(formula, computed)
+    effective, _ = _ranges(computed)
+    index = candidate["sheet_row"] - 4
+    source, values = jobs[index], effective[index]
+    root = os.environ.get("HQ_DATA_DIR", "")
+    path = Path(root) / "customer_requests.sqlite3" if root and Path(root).is_absolute() else None
+    if path is None or not path.is_file():
+        raise ValueError("HQ records are unavailable")
+    with sqlite3.connect("file:" + str(path) + "?mode=ro", uri=True, timeout=3) as db:
+        db.row_factory = sqlite3.Row
+        db.execute("PRAGMA query_only=ON")
+        native = db.execute("""SELECT w.revision,w.service,w.status,w.price_pence,
+            c.name AS customer_name,v.make,v.model,v.registration,
+            (SELECT customer_tier FROM hq_native_work_details
+             WHERE work_id=w.id) AS customer_tier
+            FROM hq_work_records w JOIN hq_customers c ON c.id=w.customer_id
+            JOIN hq_vehicles v ON v.id=w.vehicle_id WHERE w.id=?""",
+            (candidate["work_id"],)).fetchone()
+        if native is None or native["revision"] != candidate["work_revision"]:
+            raise ValueError("Native HQ work changed; withdraw and restage the candidate")
+    # This is a side-by-side inspection, not a value comparison or automatic match.
+    def display(value):
+        if value is None or value == "":
+            return "(unrecorded)"
+        return str(value)[:180]
+    services = [display(_cell(source, i)) for i in range(5, 10)
+                if _cell(source, i) not in ("", None)]
+    raw_price = _cell(source, 16)
+    actual_price = _cell(values, 16)
+    price = display(raw_price)
+    if isinstance(raw_price, str) and raw_price.startswith("="):
+        price = "Formula " + price + " (effective: " + display(actual_price) + ")"
+    return [
+        {"key": "customer", "label": "Customer identity",
+         "source": display(_cell(source, 2)), "native": display(native["customer_name"])},
+        {"key": "customer_tier", "label": "Retail / Trade / Maintenance",
+         "source": display(_cell(source, 3)), "native": display(native["customer_tier"])},
+        {"key": "vehicle", "label": "Vehicle and registration",
+         "source": display(_cell(source, 4)),
+         "native": display(" ".join(str(native[k]) for k in ("make", "model", "registration")))},
+        {"key": "services", "label": "Service scope",
+         "source": " / ".join(services) or "(unrecorded)",
+         "native": display(native["service"])},
+        {"key": "quoted_price", "label": "Historical selling price",
+         "source": price,
+         "native": "(unrecorded)" if native["price_pence"] is None
+                   else "GBP %.2f" % (native["price_pence"] / 100)},
+        {"key": "lifecycle", "label": "Job lifecycle (not payment)",
+         "source": display(_cell(source, 17)), "native": display(native["status"])},
+    ]
+
+
+def save_candidate_field_review(*, candidate_id, expected_revision, assessments,
+                                formula, computed, owner_identity):
+    """Save owner assessment with source/native revision checks and audit events."""
+    if not storage_ready() or not isinstance(candidate_id, str) or not _HEX.fullmatch(candidate_id):
+        raise ValueError("Invalid candidate or persistent storage")
+    if type(expected_revision) is not int or not 0 <= expected_revision < 2**31:
+        raise ValueError("Invalid review revision")
+    if not isinstance(assessments, dict) or set(assessments) != {
+            name for name, _ in _REVIEW_FIELDS} or any(
+            v not in _REVIEW_DECISIONS for v in assessments.values()):
+        raise ValueError("Choose a valid assessment for each field")
+    if all(v == "needs_evidence" for v in assessments.values()):
+        raise ValueError("Review at least one field before saving")
+    actor = _actor_fingerprint(owner_identity)
+    now = datetime.now(timezone.utc).isoformat()
+    payload = json.dumps(assessments, separators=(",", ":"), sort_keys=True)
+    with connect() as db:
+        db.execute("PRAGMA foreign_keys=ON")
+        _schema(db)
+        _review_tables(db)
+        _field_review_tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        candidate = db.execute("""SELECT work_id,work_revision,job_ref,sheet_row,
+            source_stamp,withdrawn_at FROM hq_historical_j_candidates
+            WHERE id=?""", (candidate_id,)).fetchone()
+        if candidate is None or candidate["withdrawn_at"] is not None:
+            raise ValueError("Candidate withdrawn or no longer available")
+        _verified_source_candidate(formula, computed, candidate["sheet_row"],
+                                   candidate["job_ref"], candidate["source_stamp"])
+        work = db.execute("SELECT revision FROM hq_work_records WHERE id=?",
+                          (candidate["work_id"],)).fetchone()
+        if work is None or work["revision"] != candidate["work_revision"]:
+            raise ValueError("Native work changed; restage this candidate")
+        previous = db.execute("""SELECT revision,source_stamp,work_revision,assessments
+            FROM hq_historical_candidate_field_reviews WHERE candidate_id=?""",
+            (candidate_id,)).fetchone()
+        if previous and (previous["source_stamp"],previous["work_revision"],
+                         previous["assessments"]) == (
+                         candidate["source_stamp"],candidate["work_revision"],payload):
+            return previous["revision"]  # safe exact retry; no duplicate audit
+        if (previous["revision"] if previous else 0) != expected_revision:
+            raise ValueError("Assessment changed; reload before saving")
+        revision = expected_revision + 1
+        db.execute("""INSERT INTO hq_historical_candidate_field_reviews
+            (candidate_id,revision,source_stamp,work_revision,assessments,
+             actor_fingerprint,updated_at) VALUES (?,?,?,?,?,?,?)
+            ON CONFLICT(candidate_id) DO UPDATE SET
+              revision=excluded.revision,source_stamp=excluded.source_stamp,
+              work_revision=excluded.work_revision,assessments=excluded.assessments,
+              actor_fingerprint=excluded.actor_fingerprint,updated_at=excluded.updated_at""",
+            (candidate_id,revision,candidate["source_stamp"],candidate["work_revision"],
+             payload,actor,now))
+        db.execute("""INSERT INTO hq_historical_candidate_field_events
+            VALUES (?,?,?,?,?,?,?,?)""",
+            (uuid.uuid4().hex,candidate_id,revision,candidate["source_stamp"],
+             candidate["work_revision"],payload,actor,now))
+        return revision
+
+
+@migration_preview.route("/hq/migration/candidates/<candidate_id>/review", methods=["GET", "POST"])
+@required
+def candidate_field_review_page(candidate_id):
+    try:
+        candidate = _candidate_for_review(candidate_id)
+    except (sqlite3.Error, OSError, ValueError):
+        candidate = None
+    if candidate is None or candidate["withdrawn_at"] is not None:
+        abort(404)
+    comparison, error = None, None
+    saved = request.args.get("saved", "") == "1"
+    if request.method == "POST":
+        if request.content_length is None or request.content_length > 4096:
+            abort(413)
+        if not secrets.compare_digest(
+                request.form.get("csrf", ""), session.get("csrf", "not-set")):
+            abort(403)
+        action = request.form.get("action", "")
+        if action not in ("inspect", "save"):
+            abort(400)
+        provider = current_app.extensions["hq_sheets_connection"]()
+        if not provider or provider[1] <= time.time():
+            error = "Connect your owner Google Sheets read-only account first."
+        else:
+            try:
+                formula, computed = _read_live(provider[0])
+                comparison = _field_comparison(formula, computed, candidate)
+                if action == "save":
+                    revision = int(request.form.get("revision", "-1"))
+                    assessments = {key: request.form.get(key, "") for key, _ in _REVIEW_FIELDS}
+                    save_candidate_field_review(
+                        candidate_id=candidate_id, expected_revision=revision,
+                        assessments=assessments, formula=formula, computed=computed,
+                        owner_identity=session.get("google_sub"))
+                    return redirect(url_for(".candidate_field_review_page",
+                                            candidate_id=candidate_id, saved="1"), code=303)
+            except (ValueError, sqlite3.Error, OSError):
+                error = "Source or HQ records changed, or the assessment was invalid. Nothing was saved."
+                comparison = None
+            except Exception:
+                current_app.logger.warning("Historical field assessment unavailable")
+                error = "Comparison unavailable. No changes made."
+                comparison = None
+    return render_template("hq_migration_candidate.html",
+                           candidate=candidate, comparison=comparison,
+                           fields=_REVIEW_FIELDS, decisions=_REVIEW_DECISIONS,
+                           error=error, saved=saved, csrf=session.get("csrf", ""))
+
+
 @migration_preview.after_request
 def no_store(response):
     response.headers["Cache-Control"] = "no-store"
