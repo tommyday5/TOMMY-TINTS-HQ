@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>Customer account — Tommy Tints</title>
+<style>:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#0b0d12;color:#fff}body{padding:24px;margin:0}main{max-width:500px;margin:8vh auto}.panel{padding:26px;background:#181b22;border:1px solid #42444e;border-radius:14px}p{color:#c5c8d3;line-height:1.6}a{color:#ff7885}input{box-sizing:border-box;display:block;width:100%;padding:13px;margin:12px 0 20px;border:1px solid #777;border-radius:8px;background:#090b11;color:white;font:inherit}button{font:inherit;background:#d10e27;border:1px solid #f13c51;color:white;border-radius:8px;padding:12px 20px;cursor:pointer}button:focus-visible,input:focus-visible{outline:2px solid #fbd533;outline-offset:2px}.error{color:#ffb8bb}</style></head>
+<body><main><p><a href="/book">← Tommy Tints Bookings</a></p>
+<div class="panel"><h1>Customer account</h1>
+<p>Enter the single-use access code supplied directly by Tommy Tints after identity verification. Your account shows owner-approved work only. A request is not a confirmed appointment.</p>
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+<form method="post" autocomplete="off">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<label for="code">Single-use access code</label>
+<input id="code" name="code" required minlength="43" maxlength="60" autocomplete="off" spellcheck="false">
+<button type="submit">Open my account</button>
+</form></div></main></body></html>
