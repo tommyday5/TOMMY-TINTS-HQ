@@ -43,7 +43,7 @@ button.alt{background:#333842;border-color:#90949b}button:focus-visible,a:focus-
 <p role="status"><strong>You accepted this tentative offer.</strong> Tommy Tints still needs to confirm availability separately. This is not a booked appointment.</p>
 {% elif item.status == 'offered' and item.customer_decision == 'declined' %}
 <p role="status"><strong>You declined this offer.</strong> You can request another date for approved work using the form above.</p>
-{% endif %>
+{% endif %}
 {% if item.note %}<p>{{ item.note }}</p>{% endif %}
 {% if item.offered_date and item.status == 'offered' %}
 <p><strong>Tentative offer:</strong> {{ item.offered_date }} at {{ item.offered_time }}. This remains unconfirmed until Tommy Tints separately confirms the booking.</p>
