@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>HQ Draft Cost Estimate · Tommy Tints</title>
+<style>
+:root{color-scheme:dark;background:#090a10;color:#f7f7f8;font:16px system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;padding:clamp(12px,3vw,30px)}
+main{max-width:970px;margin:auto}a{color:#ff7481}h1{font-size:clamp(23px,4vw,32px)}
+.panel{background:#181a20;border:1px solid #42464f;border-radius:14px;padding:clamp(14px,3vw,22px);margin:18px 0}
+p{color:#c9ced8;line-height:1.55}label{display:block;margin:12px 0 5px;font-weight:650}
+input,textarea{font:inherit;width:100%;padding:11px;border:1px solid #6b7281;background:#10141a;color:white;border-radius:7px}
+button,.button{display:inline-block;font:inherit;font-weight:650;color:white;background:#c8112b;border:1px solid #ef4050;border-radius:8px;padding:11px 15px;cursor:pointer;text-decoration:none}
+.secondary{background:#303640;border-color:#606b7b}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+table{border-collapse:collapse;width:100%;min-width:520px}td,th{text-align:left;border-bottom:1px solid #3d4049;padding:11px}
+.table{overflow-x:auto}.warn{border-left:4px solid #f3d03a;padding:11px;background:#362c19}
+:focus-visible{outline:3px solid #ffe25e;outline-offset:2px}
+@media(max-width:660px){.grid{grid-template-columns:1fr}}
+</style></head><body><main>
+<nav><a href="/hq/work/{{ work.id }}/edit">← Native job card</a> · <a href="/hq/cost-library">HQ Cost Library</a> · <a href="/hq/customers">Customers</a></nav>
+<h1>Draft cost estimate</h1>
+<p><strong>{{ work.customer_name }}</strong> · {{ work.service }} · {{ work.kind|title }} · {{ work.status|replace('_',' ') }} · work revision {{ work.revision }}</p>
+<p class="warn"><strong>Planning only.</strong> This snapshot is not actual hours/material usage, a customer selling price, an invoice, payment or bank receipt. It never updates quotation pricing, customer Bookings or Google Sheets. The historical Cost Library has not been imported.</p>
+{% if request.args.get('saved') == '1' %}<p role="status">Estimate saved to the existing HQ database. Reload to confirm persistence.</p>{% endif %}
+{% if error %}<p role="alert" class="warn">{{ error }}</p>{% endif %}
+{% if existing %}<section class="panel">
+<h2>Current saved snapshot · revision {{ existing.revision }}</h2>
+<p><strong>{{ existing.service_snapshot }}</strong> (Cost Library revision {{ existing.source_item_revision }}) · {{ 'Archived' if existing.is_archived else 'Active' }}</p>
+<p>Planned hours: {{ '%.2f' % (existing.hours_hundredths / 100) }} · Estimated materials: £{{ '%.2f' % (existing.material_pence / 100) }} · Estimated consumables: £{{ '%.2f' % (existing.consumables_pence / 100) }}</p>
+{% if existing.note %}<p>Workshop note: {{ existing.note }}</p>{% endif %}
+</section>{% endif %}
+{% if work.status in ('draft','ready_for_review') and not work.work_archived %}
+<div class="panel">
+<h2>Select a native HQ Cost Library service</h2>
+<p>Selection prefills editable estimate figures. Only pressing Save changes this job's estimate. Existing snapshots stay unchanged when the Cost Library is edited later.</p>
+<div class="table"><table><thead><tr><th>Service</th><th>Baseline hours</th><th>Material + consumables</th><th>Select</th></tr></thead><tbody>
+{% for item in items %}<tr><td>{{ item.service_name }}</td><td>{{ '%.2f' % (item.default_hours_hundredths / 100) }}</td><td>£{{ '%.2f' % ((item.material_pence + item.consumables_pence) / 100) }}</td><td><a href="{{ url_for('estimate_workspace.edit_estimate',work_id=work.id,library_id=item.id) }}">Use baseline</a></td></tr>{% else %}<tr><td colspan="4">No native cost assumptions yet. <a href="/hq/cost-library/new">Create one</a> first.</td></tr>{% endfor %}
+</tbody></table></div>
+</div>
+{% if selected_id and (not existing or not existing.is_archived) %}
+<div class="panel"><h2>{{ 'Replace/adjust draft snapshot' if existing else 'Save a planning snapshot' }}</h2>
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="action" value="save">
+<input type="hidden" name="operation_id" value="{{ operation_id }}">
+<input type="hidden" name="work_revision" value="{{ work.revision }}">
+<input type="hidden" name="expected_revision" value="{{ existing.revision if existing else 0 }}">
+<input type="hidden" name="source_item_id" value="{{ selected_id }}">
+<input type="hidden" name="source_item_revision" value="{{ source_revision }}">
+<div class="grid">
+<div><label for="hours">Estimated labour hours</label><input type="number" step=".01" min="0" max="200" id="hours" name="hours" value="{{ hours }}" required></div>
+<div><label for="materials">Estimated materials (£)</label><input type="number" step=".01" min="0" max="1000000" id="materials" name="materials" value="{{ materials }}" required></div>
+<div><label for="consumables">Estimated consumables (£)</label><input type="number" step=".01" min="0" max="1000000" id="consumables" name="consumables" value="{{ consumables }}" required></div>
+</div>
+<label for="note">Private planning note (not customer-visible)</label><textarea id="note" name="note" maxlength="300" rows="3">{{ note }}</textarea>
+<p>No assumed labour cost is calculated: labour hourly cost is unknown until separately entered and verified.</p>
+<button type="submit">Save draft cost estimate</button>
+</form></div>{% endif %}
+{% if existing %}
+<div class="panel"><h2>Snapshot lifecycle</h2><p>Archiving hides the planning estimate from active use but preserves full revision history and the historical snapshot.</p>
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="operation_id" value="{{ operation_id }}">
+<input type="hidden" name="work_revision" value="{{ work.revision }}">
+<input type="hidden" name="expected_revision" value="{{ existing.revision }}">
+<button type="submit" name="action" value="{{ 'restore' if existing.is_archived else 'archive' }}" class="secondary">{{ 'Restore estimate' if existing.is_archived else 'Archive estimate' }}</button>
+</form></div>{% endif %}
+{% else %}<p role="status">This work is approved, closed or archived. The existing estimate remains read-only to protect the historical decision.</p>{% endif %}
+{% if history %}<section class="panel"><h2>Estimate revision history</h2>
+<p>This ledger preserves the change sequence without displaying historical customer details or private note contents.</p>
+<div class="table"><table><thead><tr><th>Revision</th><th>Action</th><th>Recorded (UTC)</th></tr></thead><tbody>
+{% for event in history %}<tr><td>{{ event.revision }}</td><td>{{ event.action|capitalize }}</td><td>{{ event.occurred_at }}</td></tr>{% endfor %}
+</tbody></table></div></section>{% endif %}
+</main></body></html>
