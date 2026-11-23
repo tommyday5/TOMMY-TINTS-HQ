@@ -1,0 +1,31 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Historical job review batches | Tommy Tints HQ</title>
+<style>
+:root{color-scheme:dark;background:#090b0f;color:#f4f5f9;font-family:system-ui,sans-serif}
+main{max-width:920px;margin:auto;padding:20px}a{color:#ff7881}section{background:#181d26;border:1px solid #3b4659;border-radius:14px;padding:18px;margin:16px 0}label{display:block;padding:10px 0}button{background:#bf1426;color:white;border:1px solid #ff334a;padding:12px 18px;border-radius:8px;font-weight:bold}button:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid #ffda38}small{color:#c1c9d3}li{margin:.5em 0;overflow-wrap:anywhere}.warning{border-left:4px solid #efc42b;padding:12px}
+</style></head><body><main>
+<p><a href="/hq/migration/preview">Historical Jobs review</a> · <a href="/hq/customers">HQ Customers</a></p>
+<h1>Historical job review batches</h1>
+<p class="warning">Review only — no import, active link, authority change, payment or booking. The current source fingerprint covers Jobs columns A–AZ only, not the remaining historical financial and agreement fields. Source and native data must be reverified before any future import.</p>
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+{% if saved %}<p role="status">Review batch change saved. No original job was modified.</p>{% endif %}
+{% set ns=namespace(active=[]) %}
+{% for batch in batches if not batch.archived_at %}{% for item in batch.items %}{% set ns.active=ns.active+[item.candidate_id] %}{% endfor %}{% endfor %}
+<section><h2>Create review batch</h2>
+<p>Select up to 20 existing inactive J-series proposals. HQ rechecks their source fingerprints and work revisions before saving. Selection is frozen; archive a batch and create another to change membership.</p>
+{% if candidates %}
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="create"><input type="hidden" name="operation_id" value="{{ operation_id }}">
+{% for c in candidates %}
+<label><input type="checkbox" name="candidate_id" value="{{ c.id }}" {% if c.id in ns.active %}disabled{% endif %}> {{ c.job_ref }} · source row {{ c.sheet_row }} · HQ {{ c.work_id[:8] }} (rev {{ c.work_revision }}) {% if c.id in ns.active %} — already in active batch{% endif %}</label>
+{% endfor %}
+<button type="submit">Save review batch</button></form>
+{% else %}<p>No saved proposals. <a href="/hq/migration/preview">Stage a historical job proposal first.</a></p>{% endif %}
+</section>
+<section><h2>Saved review batches</h2><p><small>Most recent 100, active first. “Native changed” is a local warning, not a fresh Sheets check. A batch is never an import approval.</small></p>
+{% for batch in batches %}
+<section><h3>Batch {{ batch.id[:12] }} · {{ "Archived" if batch.archived_at else "Review only" }}</h3><p>{{ batch.created_at }} · {{ batch.items|length }} proposals</p>
+<ul>{% for item in batch.items %}<li>{{ item.job_ref }} · source row {{ item.sheet_row }} · HQ {{ item.work_id[:8] }} (rev {{ item.work_revision }}) — {% if item.stale %}Native changed / proposal unavailable{% else %}Native revision unchanged; source not rechecked{% endif %}</li>{% endfor %}</ul>
+{% if not batch.archived_at %}<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="archive"><input type="hidden" name="batch_id" value="{{ batch.id }}"><input type="hidden" name="revision" value="{{ batch.revision }}"><button type="submit">Archive batch</button></form>{% endif %}
+</section>
+{% else %}<p>No review batches saved.</p>{% endfor %}
+</section></main></body></html>
