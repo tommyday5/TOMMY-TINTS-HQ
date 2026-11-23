@@ -580,13 +580,18 @@ def customer_history():
                     entry["product_pdf_ready"] = True
                 except (ValueError, LookupError):
                     pass  # Partial/unreconciled product quotes never show PDF links.
+            if entry["product_pdf_ready"]:
+                from hq_product_proceed_requests import customer_proceed_state
+                entry["proceed_state"] = customer_proceed_state(entry["id"], customer_id)
+                entry["proceed_operation_id"] = uuid.uuid4().hex
             if entry["linked_work_status"] in ("approved", "in_progress", "completed"):
                 try:
                     approved_combined_snapshot(entry["id"], customer_id=customer_id)
                     entry["pdf_ready"] = True
                 except (ValueError, LookupError, QuoteNotPrintable):
                     pass  # A partial, stale or changed quote never exposes a PDF link.
-        return render_template("customer_combined_history.html", enquiries=enquiries)
+        return render_template("customer_combined_history.html", enquiries=enquiries,
+                               csrf=session.get("customer_portal_csrf", ""))
     except (sqlite3.Error, OSError, RuntimeError):
         current_app.logger.exception("Combined basket history unavailable")
         abort(503)
