@@ -114,6 +114,21 @@ def estimate_snapshot(work_id):
     return work, existing, items
 
 
+def estimate_history(work_id):
+    """Owner-only version history, without mirroring notes or customer PII in UI."""
+    _id(work_id)
+    with connect() as db:
+        _schema(db)
+        _library_tables(db)
+        _tables(db)
+        db.execute("BEGIN")
+        work, _ = _read(db, work_id)
+        events = [dict(row) for row in db.execute(
+            """SELECT revision,action,occurred_at FROM hq_work_cost_estimate_events
+               WHERE work_id=? ORDER BY revision DESC LIMIT 25""", (work_id,))]
+    return events
+
+
 def _fields(payload, action):
     if action not in ("save", "archive", "restore"):
         raise ValueError("Choose a valid estimate action")
@@ -294,4 +309,5 @@ def edit_estimate(work_id):
     return render_template("hq_work_estimate.html", work=work, existing=existing,
         items=items, selected_id=selected_id, source_revision=source_revision,
         hours=hours, materials=materials, consumables=consumables, note=note,
-        csrf=session["csrf"], operation_id=uuid.uuid4().hex, error=error), (409 if error else 200)
+        csrf=session["csrf"], operation_id=uuid.uuid4().hex, error=error,
+        history=estimate_history(work_id)), (409 if error else 200)
