@@ -281,10 +281,10 @@ def owner_lines(ident):
 def _download(ident, customer_id=None):
     try:
         snapshot = approved_combined_snapshot(ident, customer_id=customer_id)
-    except (ValueError, LookupError):
-        abort(404)
     except QuoteNotPrintable:
         abort(404 if customer_id is not None else 409)
+    except (ValueError, LookupError):
+        abort(404)
     except (sqlite3.Error, OSError, RuntimeError):
         current_app.logger.exception("Combined PDF could not be prepared")
         abort(503)
