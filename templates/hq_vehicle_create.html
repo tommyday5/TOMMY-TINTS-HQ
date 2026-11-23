@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>Add HQ vehicle | Tommy Tints</title>
+<style>
+:root{color-scheme:dark;background:#090b10;color:#f6f7fa;font-family:system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;padding:clamp(12px,3vw,32px)}main{max-width:740px;margin:auto}
+a{color:#ff727c}p{color:#c0c6d2;line-height:1.55;overflow-wrap:anywhere}
+.panel{border:1px solid #3d414b;background:#171a21;border-radius:14px;padding:clamp(14px,3vw,24px);margin:16px 0}
+h1{font-size:clamp(23px,4vw,32px)}label{font-weight:650;display:block;margin:14px 0 5px}
+input{display:block;background:#0e131b;color:white;border:1px solid #667181;padding:12px;border-radius:8px;width:100%;font:inherit}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 14px}
+button{background:#d0142a;border:1px solid #fa3348;border-radius:8px;color:white;padding:13px 18px;cursor:pointer;font:inherit;font-weight:700;margin-top:18px}
+:focus-visible{outline:3px solid #ffdc44;outline-offset:2px}
+.alert{border-left:4px solid #f4cc29;background:#342a19;padding:12px}
+@media(max-width:600px){.grid{grid-template-columns:1fr}}
+</style></head><body><main>
+<nav><a href="/hq/customers/{{ customer.id }}">← {{ customer.name }}'s HQ profile</a> · <a href="/hq/customers">Customer directory</a></nav>
+<h1>Add a vehicle without creating a job</h1>
+<p>Customer: <strong>{{ customer.name }}</strong> · HQ ID <code>{{ customer.id }}</code></p>
+<p>This vehicle will be saved to the existing HQ customer account. It can later be selected for a quote, service enquiry or job. No booking, invoice, stock allocation, Google Sheets write or J-series ID is created.</p>
+<section class="panel">
+{% if error %}<p role="alert" class="alert">{{ error }}</p>{% endif %}
+{% if archived %}
+<p role="status" class="alert">This contact is archived. Restore the customer from their profile before adding a vehicle.</p>
+{% else %}
+<form method="post" action="{{ url_for('customer_directory.new_vehicle',customer_id=customer.id) }}">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="operation_id" value="{{ operation_id }}">
+<div class="grid">
+<div><label for="make">Vehicle make *</label><input id="make" name="make" required maxlength="60" autocomplete="off" value="{{ values.get('make','') }}"></div>
+<div><label for="model">Vehicle model *</label><input id="model" name="model" required maxlength="60" autocomplete="off" value="{{ values.get('model','') }}"></div>
+<div><label for="model_year">Year (optional)</label><input id="model_year" name="model_year" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="2022" value="{{ values.get('model_year','') }}"></div>
+<div><label for="registration">Registration (optional)</label><input id="registration" name="registration" maxlength="20" autocapitalize="characters" placeholder="AB22 CDE" value="{{ values.get('registration','') }}"></div>
+</div>
+<p>A registration already saved to another vehicle cannot be reused. For vehicles without a registration, identical make/model/year records for this customer are flagged for review.</p>
+<button type="submit">Save vehicle to HQ customer</button>
+</form>
+{% endif %}
+</section></main></body></html>
