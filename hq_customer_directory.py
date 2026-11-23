@@ -18,23 +18,31 @@ from hq_auth import required
 from hq_core_records import _schema
 from customer_edits import _tables as customer_edit_tables
 from hq_work_progress import _actor_fingerprint
+from hq_customer_archive import (
+    _tables as _archive_tables, archive_status, set_archived,
+    StaleCustomerArchive, CustomerArchiveRetryConflict,
+)
 
 customer_directory = Blueprint("customer_directory", __name__)
 HEX_ID = re.compile(r"[0-9a-f]{32}\Z")
 PAGE_SIZE = 25
 
 
-def find_customers(query="", offset=0):
-    """A single-snapshot, bounded customer/registration lookup."""
+def find_customers(query="", offset=0, archived=False):
+    """A single-snapshot, bounded active or archived customer lookup."""
     if not isinstance(query, str) or len(query) > 80:
         raise ValueError("Enter a search of 80 characters or fewer")
     if type(offset) is not int or not 0 <= offset <= 100000:
         raise ValueError("Invalid page offset")
+    if type(archived) is not bool:
+        raise ValueError("Invalid archive scope")
     term = query.strip()
-    clause = ""
+    clause = (" WHERE EXISTS" if archived else " WHERE NOT EXISTS") + (
+        " (SELECT 1 FROM hq_customer_archive_state a "
+        "WHERE a.customer_id=c.id AND a.is_archived=1)")
     args = []
     if term:
-        clause = """ WHERE (
+        clause += """ AND (
             instr(lower(c.name),lower(?))>0 OR
             instr(lower(c.email),lower(?))>0 OR
             instr(lower(c.phone),lower(?))>0 OR
@@ -43,6 +51,7 @@ def find_customers(query="", offset=0):
         args = [term] * 4
     with connect() as db:
         _schema(db)
+        _archive_tables(db)
         db.execute("BEGIN")
         total = db.execute("SELECT count(*) FROM hq_customers c" + clause, args).fetchone()[0]
         rows = db.execute("""SELECT c.id,c.name,c.email,c.phone,
@@ -88,7 +97,7 @@ def private_headers(response):
 @customer_directory.route("/hq/customers", methods=["GET", "POST"])
 @required
 def directory():
-    query, offset = "", 0
+    query, offset, scope = "", 0, "active"
     if request.method == "POST":
         if request.content_length is None or request.content_length > 1200:
             abort(413)
@@ -96,12 +105,15 @@ def directory():
                                       session.get("csrf", "not-set")):
             abort(403)
         query = request.form.get("q", "")
+        scope = request.form.get("scope", "active")
+        if scope not in ("active", "archived"):
+            abort(400)
         raw_offset = request.form.get("offset", "0")
         if not re.fullmatch(r"(?:0|[1-9][0-9]{0,5})", raw_offset):
             abort(400)
         offset = int(raw_offset)
     try:
-        total, customers = find_customers(query, offset)
+        total, customers = find_customers(query, offset, archived=(scope == "archived"))
     except ValueError:
         abort(400)
     except (OSError, sqlite3.Error):
@@ -109,7 +121,7 @@ def directory():
         abort(503)
     return render_template("hq_customer_directory.html", query=query, offset=offset,
                            page_size=PAGE_SIZE, total=total, customers=customers,
-                           csrf=session["csrf"])
+                           scope=scope, csrf=session["csrf"])
 
 
 @customer_directory.get("/hq/customers/<customer_id>")
@@ -117,13 +129,48 @@ def directory():
 def profile(customer_id):
     try:
         customer, vehicles, work, work_count = customer_snapshot(customer_id)
+        archived, archive_revision = archive_status(customer_id)
     except (ValueError, LookupError):
         abort(404)
     except (OSError, sqlite3.Error):
         current_app.logger.exception("HQ customer profile unavailable")
         abort(503)
     return render_template("hq_customer_profile.html", customer=customer,
-                           vehicles=vehicles, work=work, work_count=work_count)
+                           vehicles=vehicles, work=work, work_count=work_count,
+                           archived=archived, archive_revision=archive_revision,
+                           operation_id=uuid.uuid4().hex, csrf=session["csrf"])
+
+
+@customer_directory.post("/hq/customers/<customer_id>/archive")
+@required
+def change_customer_directory_archive(customer_id):
+    """Hide/restore a customer from the active directory, not from linked records."""
+    if not HEX_ID.fullmatch(customer_id):
+        abort(404)
+    if request.content_length is None or request.content_length > 2048:
+        abort(413)
+    if not secrets.compare_digest(request.form.get("csrf", ""),
+                                  session.get("csrf", "not-set")):
+        abort(403)
+    archived_value = request.form.get("archived", "")
+    revision_value = request.form.get("revision", "")
+    if archived_value not in ("0", "1") or not re.fullmatch(r"(?:0|[1-9][0-9]{0,17})", revision_value):
+        abort(400)
+    try:
+        set_archived(customer_id, archived_value == "1", int(revision_value),
+                     request.form.get("operation_id", ""), session.get("google_sub"))
+    except LookupError:
+        abort(404)
+    except StaleCustomerArchive as exc:
+        abort(409, description=str(exc))
+    except CustomerArchiveRetryConflict as exc:
+        abort(409, description=str(exc))
+    except ValueError:
+        abort(400)
+    except (OSError, sqlite3.Error):
+        current_app.logger.exception("HQ customer archive unavailable")
+        abort(503)
+    return redirect(url_for(".profile", customer_id=customer_id), code=303)
 
 
 class CustomerCreationConflict(Exception):
