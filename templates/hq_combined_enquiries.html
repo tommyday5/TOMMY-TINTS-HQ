@@ -13,6 +13,7 @@
 {% if e.notes %}<p>Customer scope: {{ e.notes }}</p>{% endif %}
 {% if e.linked_work_id %}
 <p><strong>Linked native HQ quote:</strong> <a href="/hq/work/{{ e.linked_work_id }}/edit">{{ e.linked_work_id[:8] }} · Open quote and work stages</a></p>
+<p><a href="/hq/combined-enquiries/{{ e.id }}/line-prices">Allocate &amp; verify service, product and delivery item prices</a></p>
 <p>The saved basket and approved total are locked. No booking, payment or stock reservation has been made.</p>
 {% elif e.status == 'quoted' and e.approved_total_pence is not none and e.services %}
 <form action="/hq/combined-enquiries/{{ e.id }}/create-work" method="post">
@@ -22,7 +23,7 @@
 <option value="retail">Retail</option><option value="trade">Trade</option><option value="maintenance">Maintenance</option></select></label>
 <button type="submit">Create linked native HQ quote</button>
 </form>
-<p>The entire approved total is saved as the native draft amount. Individual product/service price allocation is not yet verified; review before approving the resulting job.</p>
+<p>The approved total becomes the native draft price. Allocate each service, product and delivery line in the linked HQ quote before issuing an itemised PDF.</p>
 {% elif e.status == 'quoted' and not e.services %}
 <p>Product-only quote: retained in the owner inbox. Creating a vehicle job would invent a vehicle; a product order workflow is still required.</p>
 {% endif %}
