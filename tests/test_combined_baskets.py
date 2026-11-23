@@ -6,6 +6,8 @@ import os
 import tempfile
 import unittest
 import uuid
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,6 +22,10 @@ from hq_native_work import native_work_record
 from hq_job_sync import status as sheet_sync_status
 from hq_customer_portal import issue_customer_invite
 from hq_service_quotes import save_service_price
+from hq_appointment_requests import (
+    customer_availability_snapshot, owner_decide_availability,
+    respond_to_tentative_offer, confirm_accepted_offer
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -252,6 +258,69 @@ class CombinedBasketTests(unittest.TestCase):
         with commerce_db() as db:
             self.assertEqual(db.execute("SELECT stock FROM products WHERE id=?",
                                         (self.product,)).fetchone()[0], 3)
+
+    def test_approved_combined_quote_appointment_handoff_and_customer_isolation(self):
+        basket_id = self.submit()
+        review_combined(basket_id, 0, "quoted", "149.00", "Quote approved for review")
+        work_id = convert_approved_combined(basket_id, 1, "retail")
+        change_work_status(work_id, "approved", expected_revision=0)
+        csrf = self.customer_login(self.customer, self.a)
+        other = app.test_client()
+        self.customer_login(other, self.b)
+
+        history = self.customer.get("/customer/basket-requests")
+        self.assertIn(("work_id=" + work_id).encode(), history.data)
+        self.assertIn(b"Request an appointment preference", history.data)
+        self.assertNotIn(work_id.encode(), other.get("/customer/basket-requests").data)
+
+        preferred = self.customer.get("/customer/availability?work_id=" + work_id)
+        self.assertEqual(preferred.status_code, 200)
+        self.assertIn(('value="' + work_id + '" selected').encode(), preferred.data)
+        # Supplying an unrelated ID in the URL must not disclose or select it.
+        self.assertNotIn(b"selected", other.get(
+            "/customer/availability?work_id=" + work_id).data.split(b'<select id="work"')[1].split(b'</select>')[0])
+
+        day = (datetime.now(ZoneInfo("Europe/London")).date()
+               + timedelta(days=12)).isoformat()
+        response = self.customer.post("/customer/availability", data={
+            "csrf":csrf, "action":"request", "work_id":work_id,
+            "operation_id":uuid.uuid4().hex, "date":day, "time":"11:00",
+            "note":"Synthetic appointment preference"
+        })
+        self.assertEqual(response.status_code, 303, response.get_data(as_text=True))
+        works, requests = customer_availability_snapshot(self.a)
+        self.assertEqual(len(requests), 1)
+        req = requests[0]
+        self.assertEqual(req["work_id"], work_id)
+        self.assertIn(b"awaiting owner review",
+                      self.customer.get("/customer/basket-requests").data)
+        self.assertNotIn(b"awaiting owner review",
+                         other.get("/customer/basket-requests").data)
+        with connect() as db:
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM hq_portal_booking_confirmations").fetchone()[0], 0)
+
+        owner_decide_availability(req["id"], 0, "offered", day, "11:00", "Tentative")
+        self.assertIn(b"tentative", self.customer.get("/customer/basket-requests").data)
+        respond_to_tentative_offer(self.a, req["id"], 1, "accepted")
+        confirm_accepted_offer(req["id"], 1, "2", True, note="HQ only")
+        confirmed = self.customer.get("/customer/basket-requests")
+        self.assertIn(b"Appointment confirmed in HQ", confirmed.data)
+        self.assertIn(day.encode(), confirmed.data)
+        self.assertNotIn(b"Request an appointment preference", confirmed.data)
+        self.assertNotIn(b"Appointment confirmed in HQ",
+                         other.get("/customer/basket-requests").data)
+        self.assertNotIn(('value="' + work_id + '"').encode(),
+                         self.customer.get("/customer/availability").data.split(
+                             b'<select id="work"')[1].split(b'</select>')[0])
+        with connect() as db:
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM hq_portal_booking_confirmations WHERE status='confirmed'"
+            ).fetchone()[0], 1)
+        with commerce_db() as db:
+            self.assertEqual(db.execute(
+                "SELECT stock FROM products WHERE id=?", (self.product,)
+            ).fetchone()[0], 3)
 
     def test_product_only_combined_quote_does_not_invent_a_vehicle(self):
         ident = submit_combined(
