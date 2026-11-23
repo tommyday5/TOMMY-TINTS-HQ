@@ -10,7 +10,7 @@ import re
 import secrets
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from flask import (Blueprint, abort, current_app, redirect, render_template,
                    request, session)
@@ -106,6 +106,30 @@ def _tables(db):
         order_id TEXT NOT NULL REFERENCES hq_product_orders(id),
         revision INTEGER NOT NULL,
         status TEXT NOT NULL,
+        public_note TEXT NOT NULL,
+        actor_fingerprint TEXT NOT NULL,
+        occurred_at TEXT NOT NULL,
+        UNIQUE(order_id,revision)
+    )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_product_order_handover (
+        order_id TEXT PRIMARY KEY REFERENCES hq_product_orders(id),
+        state TEXT NOT NULL CHECK(state IN ('recorded','disputed')),
+        evidence_type TEXT NOT NULL CHECK(evidence_type IN
+            ('collection_confirmation','carrier_handover_receipt')),
+        evidence_reference TEXT NOT NULL,
+        handover_date TEXT NOT NULL,
+        public_note TEXT NOT NULL DEFAULT '',
+        revision INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL
+    )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_product_order_handover_events (
+        id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL REFERENCES hq_product_orders(id),
+        revision INTEGER NOT NULL,
+        state TEXT NOT NULL,
+        evidence_type TEXT NOT NULL,
+        evidence_reference TEXT NOT NULL,
+        handover_date TEXT NOT NULL,
         public_note TEXT NOT NULL,
         actor_fingerprint TEXT NOT NULL,
         occurred_at TEXT NOT NULL,
@@ -213,6 +237,105 @@ def owner_save_product_order(ident, expected_revision, status, public_note, acto
         return expected_revision+1
 
 
+def owner_save_product_handover(ident, expected_revision, action, evidence_type,
+                                evidence_reference, handover_date, public_note, actor):
+    """Owner-entered, append-audited handover evidence. No provider verification.
+
+    Original evidence survives a dispute. Cannot make a second handover claim,
+    take payment, dispatch anything or alter inventory from this workflow.
+    """
+    _id(ident)
+    if type(expected_revision) is not int or not 0 <= expected_revision < 100000000:
+        raise ValueError("Invalid handover revision")
+    if action not in ("record", "dispute"):
+        raise ValueError("Invalid handover action")
+    if not isinstance(public_note, str) or len(public_note.strip()) > 400:
+        raise ValueError("Customer-visible handover note is too long")
+    public_note = public_note.strip()
+    if action == "dispute" and len(public_note) < 10:
+        raise ValueError("Explain the handover dispute in at least 10 characters")
+    fingerprint = _actor_fingerprint(actor)
+    with canonical_db() as db:
+        _tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        order = db.execute("""SELECT o.*, p.basket_id, p.status AS request_status
+            FROM hq_product_orders o
+            JOIN hq_product_proceed_requests p ON p.id=o.request_id
+            WHERE o.request_id=?""", (ident,)).fetchone()
+        if not order:
+            raise LookupError("Product order not found")
+        prior = db.execute("""SELECT * FROM hq_product_order_handover
+            WHERE order_id=?""", (order["id"],)).fetchone()
+        if action == "record":
+            required_type = ("collection_confirmation" if order["fulfilment"] == "collection"
+                             else "carrier_handover_receipt")
+            if evidence_type != required_type:
+                raise ValueError("Evidence type does not match the approved fulfilment method")
+            if not isinstance(evidence_reference, str) or not (
+                    3 <= len(evidence_reference.strip()) <= 120):
+                raise ValueError("Enter a 3–120 character private evidence reference")
+            evidence_reference = evidence_reference.strip()
+            if not isinstance(handover_date, str) or not re.fullmatch(
+                    r"[0-9]{4}-[0-9]{2}-[0-9]{2}", handover_date):
+                raise ValueError("Enter a valid handover date")
+            try:
+                actual_date = date.fromisoformat(handover_date)
+            except ValueError as exc:
+                raise ValueError("Enter a valid handover date") from exc
+            if actual_date > datetime.now(timezone.utc).date():
+                raise ValueError("Handover cannot be recorded in the future")
+            if handover_date < order["created_at"][:10]:
+                raise ValueError("Handover cannot predate native order creation")
+            if prior and (prior["state"] == "recorded"
+                          and prior["evidence_type"] == evidence_type
+                          and prior["evidence_reference"] == evidence_reference
+                          and prior["handover_date"] == handover_date
+                          and prior["public_note"] == public_note):
+                return prior["revision"]  # exact double-click/retry
+            if prior:
+                raise ValueError("Handover already recorded; dispute it rather than overwrite evidence")
+            if expected_revision != 0:
+                raise ValueError("Handover changed; reload before saving")
+            if order["status"] != "open" or order["request_status"] != "approved":
+                raise ValueError("Only open approved orders can record handover")
+            _approved_unchanged_quote(db, order)
+            state, revision = "recorded", 1
+        else:
+            if not prior:
+                raise ValueError("No handover evidence exists to dispute")
+            if prior["state"] == "disputed" and prior["public_note"] == public_note:
+                return prior["revision"]
+            if prior["revision"] != expected_revision:
+                raise ValueError("Handover changed; reload before saving")
+            if prior["state"] != "recorded":
+                raise ValueError("Handover already disputed")
+            state, revision = "disputed", expected_revision + 1
+            evidence_type = prior["evidence_type"]
+            evidence_reference = prior["evidence_reference"]
+            handover_date = prior["handover_date"]
+        now = _now()
+        if action == "record":
+            db.execute("""INSERT INTO hq_product_order_handover
+                (order_id,state,evidence_type,evidence_reference,handover_date,
+                 public_note,revision,updated_at) VALUES (?,?,?,?,?,?,?,?)""",
+                (order["id"], state, evidence_type, evidence_reference,
+                 handover_date, public_note, revision, now))
+        else:
+            update = db.execute("""UPDATE hq_product_order_handover
+                SET state=?, public_note=?,revision=?,updated_at=?
+                WHERE order_id=? AND revision=?""",
+                (state, public_note, revision, now, order["id"], expected_revision))
+            if update.rowcount != 1:
+                raise ValueError("Handover changed; reload before saving")
+        db.execute("""INSERT INTO hq_product_order_handover_events
+            (id,order_id,revision,state,evidence_type,evidence_reference,
+             handover_date,public_note,actor_fingerprint,occurred_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (uuid.uuid4().hex, order["id"], revision, state, evidence_type,
+             evidence_reference, handover_date, public_note, fingerprint, now))
+        return revision
+
+
 def request_to_proceed(basket_id, customer_id, operation_id):
     """Idempotent authenticated customer request; never touches stock or payments."""
     _id(basket_id)
@@ -261,12 +384,14 @@ def customer_proceed_state(basket_id, customer_id):
         row = db.execute("""SELECT p.status,p.public_note,
             COALESCE(f.stage,'not_started') AS preparation_stage,
             COALESCE(f.public_note,'') AS preparation_note,
-            o.id AS order_id,o.status AS order_status,o.public_note AS order_note
+            o.id AS order_id,o.status AS order_status,o.public_note AS order_note,
+            h.state AS handover_state, h.handover_date, h.public_note AS handover_note
             FROM hq_product_proceed_requests p
             JOIN hq_combined_product_quotes q ON q.id=p.quote_id
             LEFT JOIN hq_product_preparation f ON f.request_id=p.id
             LEFT JOIN hq_product_orders o ON o.request_id=p.id
                 AND o.customer_id=p.customer_id AND o.quote_id=p.quote_id
+            LEFT JOIN hq_product_order_handover h ON h.order_id=o.id
             WHERE p.basket_id=? AND p.customer_id=?
             AND q.customer_id=p.customer_id""", (basket_id, customer_id)).fetchone()
         if not row:
@@ -279,6 +404,10 @@ def customer_proceed_state(basket_id, customer_id):
                 result["order_id"] = row["order_id"]
                 result["order_status"] = row["order_status"]
                 result["order_note"] = row["order_note"]
+                if row["handover_state"]:
+                    result["handover_state"] = row["handover_state"]
+                    result["handover_date"] = row["handover_date"]
+                    result["handover_note"] = row["handover_note"]
         return result
 
 
@@ -286,7 +415,7 @@ def owner_proceed_requests():
     """Owner-only inbox. Read-only query, no external order creation."""
     with canonical_db() as db:
         _tables(db)
-        return [dict(row) for row in db.execute("""
+        rows = [dict(row) for row in db.execute("""
             SELECT p.id,p.basket_id,p.customer_id,p.quote_id,p.status,
                 p.revision,p.public_note,p.created_at,p.updated_at,
                 c.name AS customer_name, q.status AS quote_status,
@@ -295,15 +424,29 @@ def owner_proceed_requests():
                 COALESCE(f.public_note,'') AS preparation_note,
                 COALESCE(f.revision,0) AS preparation_revision,
                 o.id AS order_id,o.status AS order_status,
-                o.public_note AS order_note,COALESCE(o.revision,0) AS order_revision
+                o.fulfilment AS order_fulfilment,
+                o.public_note AS order_note,COALESCE(o.revision,0) AS order_revision,
+                h.state AS handover_state,h.evidence_type AS handover_evidence_type,
+                h.evidence_reference AS handover_evidence_reference,
+                h.handover_date,h.public_note AS handover_note,
+                COALESCE(h.revision,0) AS handover_revision
             FROM hq_product_proceed_requests p
             JOIN hq_combined_product_quotes q ON q.id=p.quote_id
             JOIN hq_customers c ON c.id=p.customer_id
             LEFT JOIN hq_product_preparation f ON f.request_id=p.id
             LEFT JOIN hq_product_orders o ON o.request_id=p.id
                 AND o.customer_id=p.customer_id AND o.quote_id=p.quote_id
+            LEFT JOIN hq_product_order_handover h ON h.order_id=o.id
             ORDER BY CASE p.status WHEN 'pending' THEN 0 ELSE 1 END,
                      p.created_at DESC LIMIT 100""")]
+        for item in rows:
+            item["handover_history"] = (
+                [dict(event) for event in db.execute("""
+                    SELECT revision,state,handover_date,public_note,occurred_at
+                    FROM hq_product_order_handover_events
+                    WHERE order_id=? ORDER BY revision DESC""", (item["order_id"],))]
+                if item["order_id"] else [])
+        return rows
 
 
 def owner_review_proceed(ident, expected_revision, status, public_note, actor):
@@ -469,6 +612,16 @@ def owner_inbox():
                     request.form.get("request_id"), int(raw),
                     request.form.get("order_status"),
                     request.form.get("order_note", ""),
+                    session.get("google_sub", ""))
+            elif request.form.get("action") in ("handover_record", "handover_dispute"):
+                owner_save_product_handover(
+                    request.form.get("request_id"), int(raw),
+                    ("record" if request.form.get("action") == "handover_record"
+                     else "dispute"),
+                    request.form.get("evidence_type", ""),
+                    request.form.get("evidence_reference", ""),
+                    request.form.get("handover_date", ""),
+                    request.form.get("handover_note", ""),
                     session.get("google_sub", ""))
             elif request.form.get("action") == "preparation":
                 owner_set_preparation(

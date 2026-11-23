@@ -39,6 +39,13 @@
 {% if e.proceed_state.status == 'approved' and e.proceed_state.order_id %}
 <p role="status"><strong>Native product order {{ e.proceed_state.order_id[:8]|upper }} · {{ e.proceed_state.order_status|replace('_',' ')|title }}</strong>. This is a manually confirmed order record, not evidence of payment, reserved stock, shipment or collection.</p>
 {% if e.proceed_state.order_note %}<p>Order update: {{ e.proceed_state.order_note }}</p>{% endif %}
+{% if e.proceed_state.handover_state == 'recorded' %}
+<p role="status"><strong>Handover recorded by Tommy Tints on {{ e.proceed_state.handover_date }}</strong>. This is owner-entered handover evidence, not independently confirmed delivery or proof of payment.</p>
+{% if e.proceed_state.handover_note %}<p>Handover update: {{ e.proceed_state.handover_note }}</p>{% endif %}
+{% elif e.proceed_state.handover_state == 'disputed' %}
+<p role="status"><strong>Handover under review.</strong> The earlier owner record has been flagged for investigation; please contact Tommy Tints if you have concerns.</p>
+{% if e.proceed_state.handover_note %}<p>Handover review update: {{ e.proceed_state.handover_note }}</p>{% endif %}
+{% endif %}
 {% endif %}
 {% if e.proceed_state.status == 'approved' and e.proceed_state.preparation_stage != 'not_started' %}
 <p role="status"><strong>Product preparation: {{ e.proceed_state.preparation_stage|replace('_',' ')|title }}</strong>. This is an owner-entered progress update, not proof of dispatch, reservation, payment or a completed sale.</p>
