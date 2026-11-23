@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>New HQ customer | Tommy Tints</title>
+<style>
+:root{color-scheme:dark;background:#090b10;color:#f6f7fa;font-family:system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;padding:clamp(12px,3vw,32px)}main{max-width:750px;margin:auto}
+a{color:#ff727c}p{color:#c0c6d2;line-height:1.55}.panel{border:1px solid #3d414b;background:#171a21;border-radius:14px;padding:clamp(14px,3vw,24px);margin:16px 0}
+label{font-weight:650;display:block;margin:14px 0 5px}
+input{display:block;background:#0e131b;color:white;border:1px solid #667181;padding:12px;border-radius:8px;width:100%;max-width:600px;font:inherit}
+button{background:#d0142a;border:1px solid #fa3348;border-radius:8px;color:white;padding:13px 18px;cursor:pointer;font:inherit;font-weight:700;margin-top:18px}
+:focus-visible{outline:3px solid #ffdc44;outline-offset:2px}.alert{border-left:4px solid #f4cc29;background:#342a19;padding:12px}
+</style></head><body><main>
+<nav><a href="/hq/customers">← Customer directory</a> · <a href="/hq/work/new">Create quote or job</a></nav>
+<h1>Create a customer in HQ</h1>
+<p>Save a customer independently of a job or vehicle. You can add vehicles and quotes later against the same HQ customer ID. This is a private, native contact — not a historical Google Sheets import or a customer portal registration.</p>
+<section class="panel">
+{% if error %}<p role="alert" class="alert">{{ error }}</p>{% endif %}
+<form method="post" action="/hq/customers/new">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="operation_id" value="{{ operation_id }}">
+<label for="name">Customer or business name *</label><input id="name" name="name" maxlength="160" required autocomplete="name" value="{{ values.get('name','') }}">
+<label for="email">Email address</label><input id="email" name="email" type="email" maxlength="254" autocomplete="email" value="{{ values.get('email','') }}">
+<label for="phone">Telephone number</label><input id="phone" name="phone" type="tel" maxlength="40" autocomplete="tel" value="{{ values.get('phone','') }}">
+<p>At least one contact method is required. Existing email and phone numbers cannot be silently merged. <a href="/hq/customers">Check existing customers first</a>.</p>
+<label for="address">Address (optional)</label><input id="address" name="address" maxlength="240" autocomplete="street-address" value="{{ values.get('address','') }}">
+<label for="postcode">Postcode (optional)</label><input id="postcode" name="postcode" maxlength="12" autocomplete="postal-code" value="{{ values.get('postcode','') }}">
+<p>Retail, Trade and Maintenance pricing must still be verified per quote. Creating a customer does not automatically grant discounts, book work, send messages, or change historical J-series IDs.</p>
+<button type="submit">Save new HQ customer</button>
+</form></section></main></body></html>
