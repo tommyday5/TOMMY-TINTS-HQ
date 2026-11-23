@@ -277,8 +277,8 @@ class CombinedBasketTests(unittest.TestCase):
         self.assertEqual(preferred.status_code, 200)
         self.assertIn(('value="' + work_id + '" selected').encode(), preferred.data)
         # Supplying an unrelated ID in the URL must not disclose or select it.
-        self.assertNotIn(b"selected", other.get(
-            "/customer/availability?work_id=" + work_id).data.split(b'<select id="work"')[1].split(b'</select>')[0])
+        self.assertNotIn(work_id.encode(), other.get(
+            "/customer/availability?work_id=" + work_id).data)
 
         day = (datetime.now(ZoneInfo("Europe/London")).date()
                + timedelta(days=12)).isoformat()
@@ -311,8 +311,7 @@ class CombinedBasketTests(unittest.TestCase):
         self.assertNotIn(b"Appointment confirmed in HQ",
                          other.get("/customer/basket-requests").data)
         self.assertNotIn(('value="' + work_id + '"').encode(),
-                         self.customer.get("/customer/availability").data.split(
-                             b'<select id="work"')[1].split(b'</select>')[0])
+                         self.customer.get("/customer/availability").data)
         with connect() as db:
             self.assertEqual(db.execute(
                 "SELECT COUNT(*) FROM hq_portal_booking_confirmations WHERE status='confirmed'"
