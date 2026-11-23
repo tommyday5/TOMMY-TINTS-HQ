@@ -729,7 +729,7 @@ class HistoricalMappingProposalTests(unittest.TestCase):
             self.assertEqual(read.call_count, 1)
         page = client.get(endpoint)
         self.assertIn(b"Saved customer identity review", page.data)
-        self.assertIn(b"Potential match", page.data)
+        self.assertIn(b"hold", page.data)
         self.assertNotIn(b"Synthetic A", page.data)
 
 
