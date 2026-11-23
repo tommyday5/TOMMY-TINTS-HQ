@@ -26,6 +26,8 @@
 <p>The approved total becomes the native draft price. Allocate each service, product and delivery line in the linked HQ quote before issuing an itemised PDF.</p>
 {% elif not e.services and e.product_quote_id %}
 <p><strong>Native HQ product-only quote:</strong> {{ e.product_quote_id[:8] }} · {{ e.product_quote_status|title }} · £{{ '%.2f'|format(e.approved_total_pence/100) }}</p>
+<p><a href="/hq/combined-enquiries/{{ e.id }}/product-line-prices">View / edit itemised product and delivery prices</a> (editable while draft).</p>
+{% if e.product_quote_status == 'approved' %}<p>Once all item prices reconcile, download the <a href="/hq/combined-enquiries/{{ e.id }}/product-quote.pdf">approved product-only quotation PDF</a>.</p>{% endif %}
 <p>No vehicle was invented. Quote status is not payment, fulfilment, stock reservation or a confirmed order.</p>
 {% if e.product_quote_status in ('draft','approved') %}
 <form method="post" action="/hq/combined-enquiries/{{ e.id }}/product-quote-status">
