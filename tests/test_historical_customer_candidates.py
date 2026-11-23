@@ -51,6 +51,9 @@ class CustomerHistoricalCandidateTests(unittest.TestCase):
         })
         env.start()
         self.addCleanup(env.stop)
+        context = app.app_context()
+        context.push()
+        self.addCleanup(context.pop)
         self.customer_id = uuid.uuid4().hex
         self.other_id = uuid.uuid4().hex
         with connect() as db:
