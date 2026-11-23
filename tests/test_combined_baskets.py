@@ -244,7 +244,7 @@ class CombinedBasketTests(unittest.TestCase):
         mine = self.customer.get("/customer/basket-requests").data
         self.assertIn(b"HQ work status: Approved", mine)
         self.assertIn(b"149.00", mine)
-        self.assertNotIn(b"trade", mine.lower())
+        self.assertNotIn(b"70.00", mine)  # private trade rate stays private
         theirs = second.get("/customer/basket-requests").data
         self.assertNotIn(work_id.encode(), theirs)
         self.assertNotIn(ident.encode(), theirs)
