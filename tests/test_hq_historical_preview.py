@@ -14,7 +14,7 @@ from customer_request_store import connect
 from hq_historical_preview import (build_preview, _read_live, _native_inventory,
     _candidate_stamp, stage_j_candidate, withdraw_j_candidate, _current_candidates,
     _candidate_for_review, _field_comparison, save_candidate_field_review,
-    save_candidate_field_ownership)
+    save_candidate_field_ownership, save_customer_identity_review)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -605,6 +605,133 @@ class HistoricalMappingProposalTests(unittest.TestCase):
         self.assertIn(b"Saved field handling plan",after.data)
         self.assertIn(b"review sheets",after.data)
         self.assertNotIn(b"Synthetic A",after.data)
+
+
+    def test_customer_identity_hold_is_editable_persistent_and_does_not_import(self):
+        cid = self._stage()
+        with app.app_context():
+            self.assertEqual(save_customer_identity_review(
+                candidate_id=cid, expected_revision=0, decision="hold",
+                basis="none", formula=self.formula, computed=self.actual,
+                owner_identity="fixture"), 1)
+            self.assertEqual(save_customer_identity_review(
+                candidate_id=cid, expected_revision=0, decision="hold",
+                basis="none", formula=self.formula, computed=self.actual,
+                owner_identity="fixture"), 1)
+        saved = _candidate_for_review(cid)["identity_review"]
+        self.assertEqual((saved["revision"], saved["decision"], saved["basis"],
+                          saved["customer_id"]), (1, "hold", "none", self.customer_id))
+        with connect() as db:
+            self.assertEqual(db.execute("""SELECT count(*) FROM
+                hq_historical_identity_review_events WHERE candidate_id=?""",
+                (cid,)).fetchone()[0], 1)
+            work = db.execute("""SELECT customer_id,status,revision
+                FROM hq_work_records WHERE id=?""", (self.work_id,)).fetchone()
+            self.assertEqual(tuple(work), (self.customer_id, "approved", 0))
+            self.assertNotIn("Synthetic A", str(dict(db.execute(
+                "SELECT * FROM hq_historical_identity_reviews WHERE candidate_id=?",
+                (cid,)).fetchone())))
+
+    def test_potential_match_rejects_duplicate_sheet_names_and_identity_mismatch(self):
+        cid = self._stage()
+        keys = ("customer","customer_tier","vehicle","services",
+                "quoted_price","lifecycle")
+        assessments = {key: "needs_evidence" for key in keys}
+        assessments["customer"] = "appears_consistent"
+        with app.app_context():
+            save_candidate_field_review(
+                candidate_id=cid, expected_revision=0, assessments=assessments,
+                formula=self.formula, computed=self.actual, owner_identity="fixture")
+            with self.assertRaisesRegex(ValueError, "Ambiguous or mismatched"):
+                save_customer_identity_review(
+                    candidate_id=cid, expected_revision=0, decision="potential_match",
+                    basis="name_crosscheck", formula=self.formula, computed=self.actual,
+                    owner_identity="fixture")
+            with connect() as db:
+                db.execute("UPDATE hq_customers SET name=? WHERE id=?",
+                           ("Synthetic A", self.customer_id))
+            with self.assertRaisesRegex(ValueError, "Ambiguous or mismatched"):
+                save_customer_identity_review(
+                    candidate_id=cid, expected_revision=0, decision="potential_match",
+                    basis="name_crosscheck", formula=self.formula, computed=self.actual,
+                    owner_identity="fixture")
+            # Leave the staged J row unchanged; remove only the duplicate
+            # customer name in synthetic source snapshots.
+            self.formula["valueRanges"][1]["values"][2][0] = "Different Customer"
+            self.actual["valueRanges"][1]["values"][2][0] = "Different Customer"
+            with self.assertRaisesRegex(ValueError, "explicit evidence"):
+                save_customer_identity_review(
+                    candidate_id=cid, expected_revision=0, decision="potential_match",
+                    basis="none", formula=self.formula, computed=self.actual,
+                    owner_identity="fixture")
+            self.assertEqual(save_customer_identity_review(
+                candidate_id=cid, expected_revision=0, decision="potential_match",
+                basis="name_crosscheck", formula=self.formula, computed=self.actual,
+                owner_identity="fixture"), 1)
+            self.assertEqual(_candidate_for_review(cid)["identity_review"]["decision"],
+                             "potential_match")
+            with self.assertRaisesRegex(ValueError, "changed; reload"):
+                save_customer_identity_review(
+                    candidate_id=cid, expected_revision=0, decision="hold",
+                    basis="none", formula=self.formula, computed=self.actual,
+                    owner_identity="fixture")
+            self.assertEqual(save_customer_identity_review(
+                candidate_id=cid, expected_revision=1, decision="hold",
+                basis="none", formula=self.formula, computed=self.actual,
+                owner_identity="fixture"), 2)
+
+    def test_customer_identity_review_rejects_stale_source_and_withdrawn_candidate(self):
+        cid = self._stage()
+        with app.app_context():
+            self.assertEqual(save_customer_identity_review(
+                candidate_id=cid, expected_revision=0, decision="hold",
+                basis="none", formula=self.formula, computed=self.actual,
+                owner_identity="fixture"), 1)
+            altered, computed = snapshots()
+            altered["valueRanges"][0]["values"][1][2] = "Changed Customer"
+            with self.assertRaisesRegex(ValueError, "Source row changed"):
+                save_customer_identity_review(
+                    candidate_id=cid, expected_revision=1, decision="hold",
+                    basis="name_crosscheck", formula=altered, computed=computed,
+                    owner_identity="fixture")
+            withdraw_j_candidate(cid, 0, "fixture")
+            with self.assertRaisesRegex(ValueError, "withdrawn"):
+                save_customer_identity_review(
+                    candidate_id=cid, expected_revision=1, decision="hold",
+                    basis="name_crosscheck", formula=self.formula, computed=self.actual,
+                    owner_identity="fixture")
+        with connect() as db:
+            self.assertEqual(db.execute("""SELECT count(*) FROM
+                hq_historical_identity_review_events WHERE candidate_id=?""",
+                (cid,)).fetchone()[0], 1)
+
+    def test_customer_identity_review_route_requires_owner_and_fresh_source(self):
+        cid = self._stage()
+        endpoint = "/hq/migration/candidates/" + cid + "/review"
+        client = app.test_client()
+        self.assertEqual(client.get(endpoint).status_code, 302)
+        with client.session_transaction() as sess, auth_db() as db:
+            sess.update(hq_sid=issue_session(db, "owner-fixture"),
+                        csrf="identity-csrf", google_sub="owner-fixture")
+        with patch("hq_historical_preview._read_live") as read:
+            self.assertEqual(client.get(endpoint).status_code, 200)
+            self.assertEqual(client.post(endpoint, data={
+                "csrf":"bad", "action":"save_identity"}).status_code, 403)
+            read.assert_not_called()
+        with (patch.dict(app.extensions, {
+                "hq_sheets_connection": lambda: ("fixture", 9999999999)}),
+              patch("hq_historical_preview._read_live",
+                    return_value=(self.formula,self.actual)) as read):
+            self.assertEqual(client.post(endpoint, data={
+                "csrf":"identity-csrf", "action":"save_identity",
+                "identity_revision":"0", "identity_decision":"hold",
+                "identity_basis":"none"}).status_code, 303)
+            self.assertEqual(read.call_count, 1)
+        page = client.get(endpoint)
+        self.assertIn(b"Saved customer identity review", page.data)
+        self.assertIn(b"Potential match", page.data)
+        self.assertNotIn(b"Synthetic A", page.data)
+
 
 
 if __name__ == "__main__":
