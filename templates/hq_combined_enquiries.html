@@ -41,7 +41,7 @@
 <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="revision" value="{{ e.revision }}">
 <button type="submit">Create native product-only HQ quote</button>
 </form>
-<p>Create an editable-status vehicle-free quotation linked to this exact basket and canonical customer. An additional owner approval is required. No stock movement, invoice, booking or payment is created.</p>
+<p>Product-only quote: create an editable-status vehicle-free quotation linked to this exact basket and canonical customer. An additional owner approval is required. No stock movement, invoice, booking or payment is created.</p>
 {% endif %}
 {% if not e.linked_work_id and e.status not in ('declined','closed') %}<form method="post">
 <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="enquiry_id" value="{{ e.id }}"><input type="hidden" name="revision" value="{{ e.revision }}">
