@@ -1,8 +1,8 @@
 """One owner-reviewed service + product basket against canonical HQ customers.
 
 Additive owner-approved conversion: no appointments, payments, stock reservations,
-Sheets writes or implied trade-tier entitlement. Product-only enquiries remain
-in the owner review inbox until a vehicle-free order model is available.
+Sheets writes or implied trade-tier entitlement. Product-only requests can be linked to a dedicated vehicle-free, owner-approved
+quote ledger. Neither path books work, collects payment or reserves stock.
 Existing service/shop workflows remain unchanged.
 """
 import hashlib
@@ -79,6 +79,33 @@ def _tables(db):
         services_json TEXT NOT NULL, products_json TEXT NOT NULL,
         fulfilment TEXT NOT NULL, delivery_reference_pence INTEGER NOT NULL,
         actor TEXT NOT NULL, created_at TEXT NOT NULL
+    )""")
+
+
+    # Product-only quotations are not vehicle jobs or commerce orders. Keep
+    # their source enquiry and priced product snapshots in canonical HQ SQLite.
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_combined_product_quotes (
+        id TEXT PRIMARY KEY,
+        basket_id TEXT NOT NULL UNIQUE REFERENCES hq_combined_baskets(id),
+        customer_id TEXT NOT NULL REFERENCES hq_customers(id),
+        basket_revision INTEGER NOT NULL,
+        approved_total_pence INTEGER NOT NULL CHECK(approved_total_pence > 0),
+        products_json TEXT NOT NULL,
+        fulfilment TEXT NOT NULL CHECK(fulfilment IN ('collection','delivery')),
+        delivery_reference_pence INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('draft','approved','withdrawn')),
+        revision INTEGER NOT NULL DEFAULT 0,
+        actor TEXT NOT NULL,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_combined_product_quote_events (
+        id TEXT PRIMARY KEY,
+        quote_id TEXT NOT NULL REFERENCES hq_combined_product_quotes(id),
+        revision INTEGER NOT NULL,
+        action TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        occurred_at TEXT NOT NULL,
+        UNIQUE(quote_id,revision)
     )""")
 
 
@@ -210,6 +237,9 @@ def review_combined(ident, revision, status, approved_pounds, public_note, actor
         if db.execute("SELECT 1 FROM hq_combined_basket_work_links WHERE basket_id=?",
                       (ident,)).fetchone():
             raise ValueError("A native HQ quote already exists; edit its work record instead")
+        if db.execute("SELECT 1 FROM hq_combined_product_quotes WHERE basket_id=?",
+                      (ident,)).fetchone():
+            raise ValueError("A product-only HQ quotation is linked; its original offer is locked")
         if row["revision"] != revision:
             raise ValueError("Basket changed elsewhere; reload before editing")
         if row["status"] in ("declined", "closed"):
@@ -321,11 +351,120 @@ def convert_approved_combined(ident, revision, confirmed_tier, actor="owner"):
     return work_id
 
 
+
+def create_product_only_quote(ident, expected_revision, actor="owner"):
+    """Idempotently convert one owner-quoted product-only request into an HQ quote.
+
+    This creates no work record, booking, invoice, sale or stock movement.
+    Owner status approval is an additional separate action.
+    """
+    _valid_id(ident, "basket")
+    if type(expected_revision) is not int or not 0 <= expected_revision <= 100000000:
+        raise ValueError("Invalid basket revision")
+    with canonical_db() as db:
+        _tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        basket = db.execute("SELECT * FROM hq_combined_baskets WHERE id=?",
+                            (ident,)).fetchone()
+        if basket is None:
+            raise LookupError("Combined request not found")
+        prior = db.execute("""SELECT id,basket_revision FROM hq_combined_product_quotes
+            WHERE basket_id=?""", (ident,)).fetchone()
+        if prior:
+            if prior["basket_revision"] != expected_revision:
+                raise StaleWorkRecordError("Product quote already linked; reload")
+            return prior["id"]
+        if basket["revision"] != expected_revision:
+            raise StaleWorkRecordError("Basket changed; reload before creating a quote")
+        if basket["status"] != "quoted" or type(basket["approved_total_pence"]) is not int or not (
+                1 <= basket["approved_total_pence"] <= 100000000):
+            raise ValueError("Review and price the product-only enquiry first")
+        if basket["vehicle_id"] is not None or json.loads(basket["services_json"]):
+            raise ValueError("Use native work quotes for vehicle services")
+        if db.execute("SELECT 1 FROM hq_combined_basket_work_links WHERE basket_id=?",
+                      (ident,)).fetchone():
+            raise ValueError("This request already links to native work")
+        products = json.loads(basket["products_json"])
+        if not isinstance(products, list) or not 1 <= len(products) <= 30 or any(
+                not isinstance(p, dict) or not isinstance(p.get("id"), str)
+                or not _ID.fullmatch(p["id"]) or type(p.get("quantity")) is not int
+                or not 1 <= p["quantity"] <= 100
+                or not isinstance(p.get("name"), str) for p in products):
+            raise ValueError("Original product snapshots require review")
+        if basket["fulfilment"] not in ("collection", "delivery"):
+            raise ValueError("Original fulfilment requires review")
+        now, quote_id = _now(), uuid.uuid4().hex
+        db.execute("""INSERT INTO hq_combined_product_quotes
+            (id,basket_id,customer_id,basket_revision,approved_total_pence,
+             products_json,fulfilment,delivery_reference_pence,status,actor,
+             created_at,updated_at)
+             VALUES (?,?,?,?,?,?,?,?,'draft',?,?,?)""",
+            (quote_id, ident, basket["customer_id"], expected_revision,
+             basket["approved_total_pence"], basket["products_json"],
+             basket["fulfilment"], basket["delivery_pence"], str(actor)[:100],
+             now,now))
+        db.execute("""INSERT INTO hq_combined_product_quote_events
+            VALUES (?,?,?,?,?,?)""",
+            (uuid.uuid4().hex, quote_id, 0, "draft_created", str(actor)[:100], now))
+        return quote_id
+
+
+def change_product_quote_status(ident, expected_revision, new_status, actor="owner"):
+    """Owner approval/withdrawal only; status is never a booking or payment."""
+    _valid_id(ident, "basket")
+    if type(expected_revision) is not int or not 0 <= expected_revision <= 100000000:
+        raise ValueError("Invalid product quote revision")
+    if new_status not in ("approved", "withdrawn"):
+        raise ValueError("Choose approval or withdrawal")
+    with canonical_db() as db:
+        _tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        quote = db.execute("""SELECT * FROM hq_combined_product_quotes
+            WHERE basket_id=?""", (ident,)).fetchone()
+        if quote is None:
+            raise LookupError("Product quote not found")
+        if quote["status"] == new_status:
+            return quote["revision"]  # exact retry is not a second approval
+        if quote["revision"] != expected_revision:
+            raise StaleWorkRecordError("Product quotation changed; reload")
+        if quote["status"] == "withdrawn":
+            raise ValueError("Withdrawn quotations cannot be reopened")
+        if (quote["status"], new_status) not in (
+                ("draft", "approved"), ("draft", "withdrawn"),
+                ("approved", "withdrawn")):
+            raise ValueError("Invalid quotation status transition")
+        basket = db.execute("""SELECT revision,status,approved_total_pence,
+            customer_id FROM hq_combined_baskets WHERE id=?""",
+            (ident,)).fetchone()
+        if basket is None or (basket["revision"], basket["status"],
+                              basket["approved_total_pence"], basket["customer_id"]) != (
+                              quote["basket_revision"], "quoted",
+                              quote["approved_total_pence"], quote["customer_id"]):
+            raise ValueError("Original quoted enquiry changed; do not approve")
+        now = _now()
+        updated = db.execute("""UPDATE hq_combined_product_quotes
+            SET status=?, revision=revision+1, updated_at=?
+            WHERE id=? AND revision=?""",
+            (new_status, now, quote["id"], expected_revision))
+        if updated.rowcount != 1:
+            raise StaleWorkRecordError("Product quotation changed; reload")
+        db.execute("""INSERT INTO hq_combined_product_quote_events
+            VALUES (?,?,?,?,?,?)""",
+            (uuid.uuid4().hex, quote["id"], expected_revision + 1,
+             new_status, str(actor)[:100], now))
+        return expected_revision + 1
+
+
 def _list(customer_id=None):
     with canonical_db() as db:
         _tables(db)
         sql = """SELECT b.*,c.name AS customer_name,v.make,v.model,v.registration,
             l.work_id AS linked_work_id,
+            pq.id AS product_quote_id, pq.status AS product_quote_status,
+            pq.revision AS product_quote_revision,
+            CASE WHEN pq.status='approved'
+                    AND pq.approved_total_pence=b.approved_total_pence
+                 THEN pq.approved_total_pence ELSE NULL END AS approved_product_quote_pence,
             CASE WHEN w.status IN ('approved','in_progress','completed','cancelled')
                 THEN w.status ELSE NULL END AS linked_work_status,
             CASE WHEN w.status IN ('approved','in_progress','completed')
@@ -334,7 +473,8 @@ def _list(customer_id=None):
             FROM hq_combined_baskets b JOIN hq_customers c ON c.id=b.customer_id
             LEFT JOIN hq_vehicles v ON v.id=b.vehicle_id
             LEFT JOIN hq_combined_basket_work_links l ON l.basket_id=b.id
-            LEFT JOIN hq_work_records w ON w.id=l.work_id"""
+            LEFT JOIN hq_work_records w ON w.id=l.work_id
+            LEFT JOIN hq_combined_product_quotes pq ON pq.basket_id=b.id"""
         if customer_id:
             _valid_id(customer_id, "customer")
             rows = db.execute(sql + " WHERE b.customer_id=? ORDER BY b.created_at DESC LIMIT 100",
@@ -487,3 +627,55 @@ def owner_create_combined_work(ident):
         current_app.logger.exception("Combined quote conversion unavailable")
         abort(503)
     return redirect("/hq/work/" + work_id + "/edit?created=1", code=303)
+
+
+@combined_baskets.post("/hq/combined-enquiries/<ident>/create-product-quote")
+@required
+def owner_create_product_quote(ident):
+    if request.content_length is None or request.content_length > 3000:
+        abort(413)
+    if not secrets.compare_digest(request.form.get("csrf", ""),
+                                  session.get("csrf", "missing")):
+        abort(403)
+    raw = request.form.get("revision", "")
+    if not _REV.fullmatch(raw):
+        abort(400)
+    try:
+        create_product_only_quote(ident, int(raw), session.get("google_sub", "owner"))
+    except StaleWorkRecordError as exc:
+        return str(exc), 409
+    except ValueError as exc:
+        return str(exc), 400
+    except LookupError:
+        abort(404)
+    except (sqlite3.Error, OSError, RuntimeError):
+        current_app.logger.exception("Product-only quote creation unavailable")
+        abort(503)
+    return redirect("/hq/combined-enquiries?product_quote=created", code=303)
+
+
+@combined_baskets.post("/hq/combined-enquiries/<ident>/product-quote-status")
+@required
+def owner_product_quote_status(ident):
+    if request.content_length is None or request.content_length > 3000:
+        abort(413)
+    if not secrets.compare_digest(request.form.get("csrf", ""),
+                                  session.get("csrf", "missing")):
+        abort(403)
+    raw = request.form.get("revision", "")
+    if not _REV.fullmatch(raw):
+        abort(400)
+    try:
+        change_product_quote_status(
+            ident, int(raw), request.form.get("status"),
+            session.get("google_sub", "owner"))
+    except StaleWorkRecordError as exc:
+        return str(exc), 409
+    except ValueError as exc:
+        return str(exc), 400
+    except LookupError:
+        abort(404)
+    except (sqlite3.Error, OSError, RuntimeError):
+        current_app.logger.exception("Product-only quote status unavailable")
+        abort(503)
+    return redirect("/hq/combined-enquiries?product_quote=saved", code=303)
