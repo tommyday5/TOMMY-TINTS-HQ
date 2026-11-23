@@ -86,6 +86,132 @@ def _tables(db):
         UNIQUE(request_id,revision)
     )""")
 
+    # Separate native owner-confirmed order ledger. No changes to historical requests.
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_product_orders (
+        id TEXT PRIMARY KEY,
+        request_id TEXT NOT NULL UNIQUE REFERENCES hq_product_proceed_requests(id),
+        quote_id TEXT NOT NULL REFERENCES hq_combined_product_quotes(id),
+        customer_id TEXT NOT NULL REFERENCES hq_customers(id),
+        quote_revision INTEGER NOT NULL,
+        approved_total_pence INTEGER NOT NULL CHECK(approved_total_pence >= 0),
+        fulfilment TEXT NOT NULL CHECK(fulfilment IN ('collection','delivery')),
+        status TEXT NOT NULL CHECK(status IN ('open','on_hold','closed','cancelled')),
+        public_note TEXT NOT NULL DEFAULT '',
+        revision INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_product_order_events (
+        id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL REFERENCES hq_product_orders(id),
+        revision INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        public_note TEXT NOT NULL,
+        actor_fingerprint TEXT NOT NULL,
+        occurred_at TEXT NOT NULL,
+        UNIQUE(order_id,revision)
+    )""")
+
+
+def _approved_unchanged_quote(db, proceed):
+    quote = _load(db, proceed["basket_id"])
+    if (quote["id"] != proceed["quote_id"]
+            or quote["customer_id"] != proceed["customer_id"]
+            or quote["status"] != "approved"
+            or quote["revision"] != proceed["quote_revision"]
+            or not quote["fully_allocated"]):
+        raise ValueError("Quotation changed or withdrawn; order creation is locked")
+    return quote
+
+
+def owner_create_product_order(ident, expected_revision, actor):
+    """Explicit owner action creates one native product order from a frozen quote.
+
+    Does not reserve stock, capture payment, mark anything paid, fulfil an order,
+    issue an invoice, contact a customer, or write to external systems.
+    """
+    _id(ident)
+    if type(expected_revision) is not int or not 0 <= expected_revision < 100000000:
+        raise ValueError("Invalid request revision")
+    fingerprint = _actor_fingerprint(actor)
+    with canonical_db() as db:
+        _tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        proceed = db.execute("SELECT * FROM hq_product_proceed_requests WHERE id=?",
+                             (ident,)).fetchone()
+        if proceed is None:
+            raise LookupError("Product proceed request not found")
+        existing = db.execute("SELECT id FROM hq_product_orders WHERE request_id=?",
+                              (ident,)).fetchone()
+        if existing:
+            return existing["id"]  # double-click and stale retry create no second order
+        if proceed["status"] != "approved":
+            raise ValueError("Owner approval is required before creating an order")
+        if proceed["revision"] != expected_revision:
+            raise ValueError("Request changed; reload before creating an order")
+        quote = _approved_unchanged_quote(db, proceed)
+        now, order_id = _now(), uuid.uuid4().hex
+        db.execute("""INSERT INTO hq_product_orders
+            (id,request_id,quote_id,customer_id,quote_revision,
+             approved_total_pence,fulfilment,status,public_note,revision,
+             created_at,updated_at)
+            VALUES (?,?,?,?,?,?,?,'open','',0,?,?)""",
+            (order_id, ident, proceed["quote_id"], proceed["customer_id"],
+             quote["revision"], quote["approved_total_pence"],
+             quote["fulfilment"], now, now))
+        db.execute("""INSERT INTO hq_product_order_events
+            (id,order_id,revision,status,public_note,actor_fingerprint,occurred_at)
+            VALUES (?,?,0,'open','',?,?)""",
+            (uuid.uuid4().hex, order_id, fingerprint, now))
+        return order_id
+
+
+def owner_save_product_order(ident, expected_revision, status, public_note, actor):
+    """Versioned owner-entered administration status, never a payment signal."""
+    _id(ident)
+    if type(expected_revision) is not int or not 0 <= expected_revision < 100000000:
+        raise ValueError("Invalid order revision")
+    if status not in ("open", "on_hold", "closed", "cancelled"):
+        raise ValueError("Choose a valid order status")
+    if not isinstance(public_note, str) or len(public_note.strip()) > 400:
+        raise ValueError("Customer-visible order note is too long")
+    public_note = public_note.strip()
+    fingerprint = _actor_fingerprint(actor)
+    with canonical_db() as db:
+        _tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("""SELECT o.*,p.basket_id,p.quote_revision AS request_quote_revision,
+            p.quote_id AS request_quote_id,p.status AS request_status
+            FROM hq_product_orders o
+            JOIN hq_product_proceed_requests p ON p.id=o.request_id
+            WHERE o.request_id=?""", (ident,)).fetchone()
+        if row is None:
+            raise LookupError("Product order not found")
+        if row["status"] == status and row["public_note"] == public_note:
+            return row["revision"]
+        if row["revision"] != expected_revision:
+            raise ValueError("Order changed; reload before saving")
+        if row["status"] in ("closed", "cancelled"):
+            raise ValueError("Closed or cancelled orders cannot be amended")
+        if status in ("open", "closed"):
+            if row["request_status"] != "approved":
+                raise ValueError("Proceed approval no longer valid")
+            # Withdrawn/revised quotes may only cause an administrative hold/cancellation.
+            _approved_unchanged_quote(db, row)
+        now = _now()
+        updated = db.execute("""UPDATE hq_product_orders
+            SET status=?, public_note=?, revision=revision+1,updated_at=?
+            WHERE request_id=? AND revision=?""",
+            (status, public_note, now, ident, expected_revision))
+        if updated.rowcount != 1:
+            raise ValueError("Order changed; reload before saving")
+        db.execute("""INSERT INTO hq_product_order_events
+            (id,order_id,revision,status,public_note,actor_fingerprint,occurred_at)
+            VALUES (?,?,?,?,?,?,?)""",
+            (uuid.uuid4().hex, row["id"], expected_revision+1, status,
+             public_note, fingerprint, now))
+        return expected_revision+1
+
 
 def request_to_proceed(basket_id, customer_id, operation_id):
     """Idempotent authenticated customer request; never touches stock or payments."""
@@ -134,10 +260,13 @@ def customer_proceed_state(basket_id, customer_id):
         _tables(db)
         row = db.execute("""SELECT p.status,p.public_note,
             COALESCE(f.stage,'not_started') AS preparation_stage,
-            COALESCE(f.public_note,'') AS preparation_note
+            COALESCE(f.public_note,'') AS preparation_note,
+            o.id AS order_id,o.status AS order_status,o.public_note AS order_note
             FROM hq_product_proceed_requests p
             JOIN hq_combined_product_quotes q ON q.id=p.quote_id
             LEFT JOIN hq_product_preparation f ON f.request_id=p.id
+            LEFT JOIN hq_product_orders o ON o.request_id=p.id
+                AND o.customer_id=p.customer_id AND o.quote_id=p.quote_id
             WHERE p.basket_id=? AND p.customer_id=?
             AND q.customer_id=p.customer_id""", (basket_id, customer_id)).fetchone()
         if not row:
@@ -146,6 +275,10 @@ def customer_proceed_state(basket_id, customer_id):
         if row["status"] == "approved":
             result["preparation_stage"] = row["preparation_stage"]
             result["preparation_note"] = row["preparation_note"]
+            if row["order_id"] is not None:
+                result["order_id"] = row["order_id"]
+                result["order_status"] = row["order_status"]
+                result["order_note"] = row["order_note"]
         return result
 
 
@@ -160,11 +293,15 @@ def owner_proceed_requests():
                 q.approved_total_pence,
                 COALESCE(f.stage,'not_started') AS preparation_stage,
                 COALESCE(f.public_note,'') AS preparation_note,
-                COALESCE(f.revision,0) AS preparation_revision
+                COALESCE(f.revision,0) AS preparation_revision,
+                o.id AS order_id,o.status AS order_status,
+                o.public_note AS order_note,COALESCE(o.revision,0) AS order_revision
             FROM hq_product_proceed_requests p
             JOIN hq_combined_product_quotes q ON q.id=p.quote_id
             JOIN hq_customers c ON c.id=p.customer_id
             LEFT JOIN hq_product_preparation f ON f.request_id=p.id
+            LEFT JOIN hq_product_orders o ON o.request_id=p.id
+                AND o.customer_id=p.customer_id AND o.quote_id=p.quote_id
             ORDER BY CASE p.status WHEN 'pending' THEN 0 ELSE 1 END,
                      p.created_at DESC LIMIT 100""")]
 
@@ -323,7 +460,17 @@ def owner_inbox():
         if not _REV.fullmatch(raw):
             abort(400)
         try:
-            if request.form.get("action") == "preparation":
+            if request.form.get("action") == "order_create":
+                owner_create_product_order(
+                    request.form.get("request_id"), int(raw),
+                    session.get("google_sub", ""))
+            elif request.form.get("action") == "order_edit":
+                owner_save_product_order(
+                    request.form.get("request_id"), int(raw),
+                    request.form.get("order_status"),
+                    request.form.get("order_note", ""),
+                    session.get("google_sub", ""))
+            elif request.form.get("action") == "preparation":
                 owner_set_preparation(
                     request.form.get("request_id"), int(raw),
                     request.form.get("stage"), request.form.get("preparation_note", ""),

@@ -21,6 +21,7 @@ from hq_product_quote_lines import save_product_quote_lines
 from hq_product_proceed_requests import (
     request_to_proceed, customer_proceed_state, owner_proceed_requests,
     owner_review_proceed, owner_set_preparation,
+    owner_create_product_order, owner_save_product_order,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -220,6 +221,91 @@ class ProductProceedTests(unittest.TestCase):
         change_product_quote_status(self.basket, 2, "withdrawn")
         with app.app_context(), self.assertRaisesRegex(ValueError, "changed or withdrawn"):
             owner_set_preparation(ident, 2, "paused", "", "synthetic-owner")
+
+
+
+    def test_owner_explicit_product_order_customer_visibility_and_audit(self):
+        """Opening a canonical order is a separate owner action; no money or stock changes."""
+        self.login_customer(self.mine, self.cid)
+        self.login_customer(self.other, self.stranger)
+        ident = request_to_proceed(self.basket, self.cid, uuid.uuid4().hex)
+        self.owner_login()
+        url = "/hq/product-proceed-requests"
+        with app.app_context(), self.assertRaisesRegex(ValueError, "Owner approval"):
+            owner_create_product_order(ident, 0, "synthetic-owner")
+        self.assertEqual(self.owner.post(url, data={
+            "csrf": "owner-csrf", "request_id": ident, "revision": "0",
+            "status": "approved", "public_note": "Ready to organise."
+        }).status_code, 303)
+        self.assertIn(b"Create native product order record", self.owner.get(url).data)
+        self.assertEqual(self.owner.post(url, data={
+            "csrf": "invalid", "action": "order_create", "request_id": ident,
+            "revision": "1"
+        }).status_code, 403)
+        payload = {"csrf": "owner-csrf", "action": "order_create",
+                   "request_id": ident, "revision": "1"}
+        self.assertEqual(self.owner.post(url, data=payload).status_code, 303)
+        with app.app_context():
+            order_id = owner_create_product_order(ident, 1, "synthetic-owner")
+            self.assertEqual(order_id, owner_create_product_order(
+                ident, 0, "synthetic-owner"))  # retry cannot duplicate
+        current = customer_proceed_state(self.basket, self.cid)
+        self.assertEqual(current["order_id"], order_id)
+        self.assertEqual(current["order_status"], "open")
+        self.assertIsNone(customer_proceed_state(self.basket, self.stranger))
+        self.assertIn(b"Native product order", self.mine.get(
+            "/customer/basket-requests").data)
+        self.assertNotIn(order_id[:8].upper().encode(), self.other.get(
+            "/customer/basket-requests").data)
+        self.assertEqual(self.owner.post(url, data={
+            "csrf": "owner-csrf", "action": "order_edit",
+            "request_id": ident, "revision": "0",
+            "order_status": "on_hold",
+            "order_note": "Waiting for your collection preference."
+        }).status_code, 303)
+        self.assertEqual(customer_proceed_state(
+            self.basket, self.cid)["order_status"], "on_hold")
+        with app.app_context():
+            self.assertEqual(owner_save_product_order(
+                ident, 0, "on_hold", "Waiting for your collection preference.",
+                "synthetic-owner"), 1)
+            with self.assertRaisesRegex(ValueError, "Order changed"):
+                owner_save_product_order(ident, 0, "open", "", "synthetic-owner")
+            with self.assertRaisesRegex(ValueError, "too long"):
+                owner_save_product_order(ident, 1, "open", "x" * 401,
+                                         "synthetic-owner")
+        self.assertEqual(self.owner.post(url, data={
+            "csrf": "owner-csrf", "action": "order_edit", "request_id": ident,
+            "revision": "1", "order_status": "closed",
+            "order_note": "Administratively closed; payment not verified."
+        }).status_code, 303)
+        with app.app_context(), self.assertRaisesRegex(ValueError, "cannot be amended"):
+            owner_save_product_order(ident, 2, "open", "", "synthetic-owner")
+        with connect() as db:
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM hq_product_orders").fetchone()[0], 1)
+            events = db.execute("""SELECT revision,status FROM hq_product_order_events
+                WHERE order_id=? ORDER BY revision""", (order_id,)).fetchall()
+            self.assertEqual([tuple(row) for row in events],
+                             [(0, "open"), (1, "on_hold"), (2, "closed")])
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM hq_work_records").fetchone()[0], 0)
+        with commerce_db() as db:
+            self.assertEqual(db.execute(
+                "SELECT stock FROM products WHERE id=?", (self.product,)
+            ).fetchone()[0], 5)
+
+    def test_product_order_creation_rejects_withdrawn_quote(self):
+        ident = request_to_proceed(self.basket, self.cid, uuid.uuid4().hex)
+        with app.app_context():
+            owner_review_proceed(ident, 0, "approved", "", "synthetic-owner")
+        change_product_quote_status(self.basket, 2, "withdrawn")
+        with app.app_context(), self.assertRaisesRegex(
+                ValueError, "changed or withdrawn|Original product offer changed"):
+            owner_create_product_order(ident, 1, "synthetic-owner")
+        with connect() as db:
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM hq_product_orders").fetchone()[0], 0)
 
 
 
