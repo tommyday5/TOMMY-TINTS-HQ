@@ -35,6 +35,7 @@ class HistoricalJobBatchTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory(dir=ROOT)
         self.addCleanup(tmp.cleanup)
         env = patch.dict(os.environ, {"HQ_DATA_DIR":tmp.name,
+            "HQ_SESSION_SECRET":"synthetic-historical-batch-test-secret",
             "GOOGLE_CLIENT_ID":"synthetic","GOOGLE_CLIENT_SECRET":"synthetic",
             "HQ_ALLOWED_GOOGLE_EMAIL":"owner@example.invalid"})
         env.start()
