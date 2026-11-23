@@ -20,6 +20,7 @@ from hq_historical_customer_links import (
 )
 from hq_historical_customer_field_review import _read_snapshot, save_field_review, _tables
 from hq_customer_account_types import _tables as tier_tables
+from hq_customer_postcodes import save_postcode
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -183,6 +184,19 @@ class CustomerFieldReviewTests(unittest.TestCase):
         with connect() as db:
             self.assertEqual(db.execute("""SELECT count(*) FROM
                 hq_historical_customer_field_events""").fetchone()[0],1)
+
+    def test_native_postcode_visible_to_owner_but_not_verified_match(self):
+        save_postcode(self.customer,"SW1A 1AA",0,"f"*32,"synthetic-owner")
+        self.login()
+        a,b=self.live_source()
+        with a,b:
+            page=self.client.get(self.url)
+            self.assertEqual(page.status_code,200)
+            self.assertIn(b"SW1A 1AA",page.data)
+            self.assertIn(b"owner-recorded, not independently verified",page.data)
+            self.assertEqual(self.client.post(self.url,data=self.data(
+                postcode_decision="candidate_agreement")).status_code,409)
+        self.assertEqual((self.formula,self.computed),self.original)
 
     def test_withdrawal_and_security_gates(self):
         self.login()
