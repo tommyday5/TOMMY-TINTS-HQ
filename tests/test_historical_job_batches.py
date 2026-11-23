@@ -144,3 +144,76 @@ class HistoricalJobBatchTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.create([new],"a"*32)
         self.assertEqual(len(list_batches()),1)
+
+    def full_snapshots(self):
+        from hq_historical_job_full_evidence import HEADERS, WIDTH
+        from hq_historical_preview import WORKBOOK
+        self.assertEqual(len(HEADERS), 94)
+        self.assertEqual(HEADERS[53], "Deposit Received £")
+        self.assertEqual(HEADERS[-1], "Work Release Gate")
+        full = []
+        for legacy in (self.formula, self.computed):
+            rows = legacy["valueRanges"][0]["values"]
+            rows[0] = list(HEADERS[:52])
+            expanded = [list(HEADERS)]
+            for row in rows[1:]:
+                expanded.append(row + [""] * (WIDTH - len(row)))
+                expanded[-1][53] = 75
+                expanded[-1][57] = "Unpaid"
+                expanded[-1][93] = "Awaiting agreement"
+            full.append({"spreadsheetId": WORKBOOK, "valueRanges": [
+                {"range": "Jobs!A4:CP1000", "values": expanded}]})
+        return full
+
+    def test_full_width_ui_preserves_legacy_and_rejects_late_column_changes(self):
+        from hq_historical_job_full_evidence import save_full_width_evidence
+        batch = self.create(self.ids, "a"*32)
+        full = self.full_snapshots()
+        self.login()
+        data = {"csrf":"test-csrf","action":"full_evidence","batch_id":batch,"revision":"0"}
+        with patch.dict(app.extensions,{"hq_sheets_connection":lambda:("fixture",9999999999)}), \\
+             patch("hq_historical_preview._read_live",return_value=(self.formula,self.computed)), \\
+             patch("hq_historical_job_full_evidence.read_full_width",return_value=full):
+            self.assertIn(b"No 94-column source evidence saved", self.client.get(self.url).data)
+            self.assertEqual(self.client.post(self.url,data=dict(data,csrf="bad")).status_code,403)
+            self.assertEqual(self.client.post(self.url,data=data).status_code,303)
+            self.assertIn(b"94-column source evidence v2 saved",self.client.get(self.url).data)
+            self.assertEqual(self.client.post(self.url,data=data).status_code,303)
+            full[1]["valueRanges"][0]["values"][1][93] = "Changed"
+            self.assertIn(b"Changed full-width evidence requires archive",self.client.post(self.url,data=data).data)
+        with connect() as db:
+            records = db.execute("SELECT * FROM hq_historical_job_batch_full_evidence").fetchall()
+            self.assertEqual(len(records),1)
+            self.assertEqual(records[0]["version"],2)
+            self.assertNotIn("Awaiting agreement",records[0]["evidence"])
+            self.assertNotIn("Synthetic Client",records[0]["evidence"])
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_work_records WHERE revision=0 AND status='draft'").fetchone()[0],2)
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_historical_j_candidates WHERE withdrawn_at IS NULL").fetchone()[0],2)
+        self.assertIsNotNone(list_batches()[0]["full_evidence_at"])
+
+    def test_full_width_fail_closed_on_incomplete_range_and_source_race(self):
+        from hq_historical_job_full_evidence import save_full_width_evidence
+        batch = self.create(self.ids,"a"*32)
+        full = self.full_snapshots()
+        def save(pair):
+            save_full_width_evidence(batch,legacy_formula=self.formula,legacy_computed=self.computed,
+                                     full_formula=pair[0],full_computed=pair[1],owner_identity="synthetic-owner")
+        for index, value in ((16,126),(0,"J9999")):
+            changed = copy.deepcopy(full)
+            changed[1]["valueRanges"][0]["values"][1][index] = value
+            with self.assertRaises(ValueError):
+                save(changed)
+        changed = copy.deepcopy(full)
+        changed[0]["valueRanges"][0]["range"] = "Jobs!A4:AZ1000"
+        with self.assertRaises(ValueError):
+            save(changed)
+        changed = copy.deepcopy(full)
+        changed[0]["valueRanges"][0]["values"][0][93] = "Different header"
+        with self.assertRaises(ValueError):
+            save(changed)
+        self.assertIsNone(list_batches()[0]["full_evidence_at"])
+        save(full)
+        with connect() as db:
+            db.execute("UPDATE hq_work_records SET revision=1 WHERE id=?",(self.work_ids[0],))
+        with self.assertRaises(ValueError):
+            save(full)
