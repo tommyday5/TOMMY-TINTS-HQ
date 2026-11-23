@@ -14,8 +14,10 @@ from customer_request_store import SERVICES, connect
 from hq_auth import issue_session
 from hq_auth_store import auth_db
 from hq_commerce import save_product, database as commerce_db
-from hq_combined_baskets import submit_combined, review_combined, _list
-from hq_core_records import _schema
+from hq_combined_baskets import submit_combined, review_combined, convert_approved_combined, _list
+from hq_core_records import _schema, change_work_status
+from hq_native_work import native_work_record
+from hq_job_sync import status as sheet_sync_status
 from hq_customer_portal import issue_customer_invite
 from hq_service_quotes import save_service_price
 
@@ -171,6 +173,100 @@ class CombinedBasketTests(unittest.TestCase):
             submit_combined(self.a, uuid.uuid4().hex, None, "retail", [],
                             [{"id": self.product, "quantity": 10}], "collection")
         self.assertEqual(_list(self.a), [])
+
+
+    def test_owner_converts_mixed_quote_to_canonical_work_and_customer_tracks_approval(self):
+        ident = self.submit()
+        with self.assertRaisesRegex(ValueError, "owner-reviewed"):
+            convert_approved_combined(ident, 0, "retail")
+        review_combined(ident, 0, "quoted", "149.00", "Reviewed quote")
+        path = "/hq/combined-enquiries/" + ident + "/create-work"
+        self.assertEqual(self.owner.post(path, data={
+            "csrf": "owner-fixture", "revision": "1", "customer_tier": "trade"
+        }).status_code, 302)
+        self.owner_login()
+        html = self.owner.get("/hq/combined-enquiries").data
+        self.assertIn(b"Create linked native HQ quote", html)
+        self.assertEqual(self.owner.post(path, data={
+            "csrf": "wrong", "revision": "1", "customer_tier": "trade"
+        }).status_code, 403)
+        self.assertEqual(self.owner.post(path, data={
+            "csrf": "owner-fixture", "revision": "0", "customer_tier": "trade"
+        }).status_code, 409)
+        self.assertEqual(self.owner.post(path, data={
+            "csrf": "owner-fixture", "revision": "1", "customer_tier": "unverified"
+        }).status_code, 400)
+        created = self.owner.post(path, data={
+            "csrf": "owner-fixture", "revision": "1", "customer_tier": "retail"
+        })
+        self.assertEqual(created.status_code, 303, created.get_data(as_text=True))
+        work_id = created.headers["Location"].split("/")[3]
+        work = native_work_record(work_id)
+        self.assertEqual((work["kind"], work["status"], work["customer_tier"]),
+                         ("quote", "ready_for_review", "retail"))
+        self.assertEqual((work["customer_id"], work["vehicle_id"]), (self.a, self.vehicle))
+        self.assertEqual(work["price_pence"], 14900)
+        self.assertIn(ident, work["notes"])
+        self.assertIn(self.service, work["notes"])
+        self.assertEqual(sheet_sync_status(work_id)["state"], "not_linked")
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_work_records").fetchone()[0], 1)
+            link = db.execute("""SELECT * FROM hq_combined_basket_work_links
+                WHERE basket_id=?""", (ident,)).fetchone()
+            self.assertEqual(link["work_id"], work_id)
+            self.assertEqual(link["confirmed_tier"], "retail")
+            self.assertEqual(link["approved_total_pence"], 14900)
+            self.assertIn(self.product, link["products_json"])
+            self.assertIn(self.service, link["services_json"])
+            self.assertEqual(db.execute("""SELECT COUNT(*) FROM hq_work_audit
+                WHERE work_id=? AND action='combined_basket_quote_origin'""",
+                (work_id,)).fetchone()[0], 1)
+            self.assertEqual(db.execute("""SELECT COUNT(*) FROM hq_job_sync_outbox"""
+                ).fetchone()[0] if db.execute("""SELECT 1 FROM sqlite_master
+                WHERE name='hq_job_sync_outbox'""").fetchone() else 0, 0)
+        self.assertIn(work_id.encode(), self.owner.get("/hq/combined-enquiries").data)
+        self.assertNotIn(b"Save review", self.owner.get("/hq/combined-enquiries").data)
+        self.assertEqual(convert_approved_combined(ident, 1, "retail"), work_id)
+        self.assertEqual(self.owner.post(path, data={
+            "csrf": "owner-fixture", "revision": "1", "customer_tier": "retail"
+        }).headers["Location"], created.headers["Location"])
+        with self.assertRaisesRegex(ValueError, "already exists"):
+            convert_approved_combined(ident, 1, "trade")
+        with self.assertRaisesRegex(ValueError, "already exists"):
+            review_combined(ident, 1, "quoted", "150.00", "different")
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_work_records").fetchone()[0], 1)
+        self.customer_login(self.customer, self.a)
+        second = app.test_client()
+        self.customer_login(second, self.b)
+        self.assertNotIn(b"HQ work status", self.customer.get("/customer/basket-requests").data)
+        change_work_status(work_id, "approved", expected_revision=0)
+        mine = self.customer.get("/customer/basket-requests").data
+        self.assertIn(b"HQ work status: Approved", mine)
+        self.assertIn(b"149.00", mine)
+        self.assertNotIn(b"trade", mine.lower())
+        theirs = second.get("/customer/basket-requests").data
+        self.assertNotIn(work_id.encode(), theirs)
+        self.assertNotIn(ident.encode(), theirs)
+        self.assertNotIn(b"149.00", theirs)
+        with commerce_db() as db:
+            self.assertEqual(db.execute("SELECT stock FROM products WHERE id=?",
+                                        (self.product,)).fetchone()[0], 3)
+
+    def test_product_only_combined_quote_does_not_invent_a_vehicle(self):
+        ident = submit_combined(
+            self.a, uuid.uuid4().hex, None, "retail", [],
+            [{"id": self.product, "quantity": 1}], "collection")
+        review_combined(ident, 0, "quoted", "20.00", "")
+        with self.assertRaisesRegex(ValueError, "Product-only"):
+            convert_approved_combined(ident, 1, "retail")
+        self.owner_login()
+        owner = self.owner.get("/hq/combined-enquiries").data
+        self.assertIn(b"Product-only quote", owner)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_work_records").fetchone()[0], 0)
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM hq_combined_basket_work_links").fetchone()[0], 0)
 
 
 if __name__ == "__main__":
