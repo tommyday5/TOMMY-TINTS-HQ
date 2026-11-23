@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Customer account classification — Tommy Tints HQ</title>
+<style>
+:root{color-scheme:dark;background:#080a0e;color:#f5f6f8;font-family:system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;padding:clamp(12px,4vw,32px)}main{max-width:780px;margin:auto}
+.panel{background:#171a21;border:1px solid #3a3d48;border-radius:14px;padding:clamp(14px,3vw,24px);margin:16px 0}
+a{color:#ff6878}p{line-height:1.55;color:#c1c5cf}label{display:block;font-weight:650;margin:16px 0 7px}
+select{display:block;width:100%;padding:12px;border:1px solid #656875;border-radius:8px;background:#090d14;color:white;font:inherit}
+button{background:#d0142b;color:white;border:1px solid #ff3b51;border-radius:8px;padding:12px 17px;font:inherit;cursor:pointer}
+button:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid #ffd62e;outline-offset:2px}
+code{overflow-wrap:anywhere}ul{padding-left:20px}li{margin:10px 0}
+</style></head><body><main>
+<p><a href="/hq/customers/{{ customer_id }}">← Back to customer profile</a></p>
+<h1>Customer account classification</h1>
+<p>{{ customer_name }} · canonical HQ customer ID <code>{{ customer_id }}</code></p>
+<div class="panel">
+<h2>Saved status</h2>
+<p><strong>{{ types[status.tier] }}</strong> · {% if status.reviewed %}owner-reviewed{% else %}not yet reviewed (Retail default only){% endif %} · revision {{ status.revision }}</p>
+{% if status.reviewed %}<p>Evidence category: {{ basis_labels[status.basis] }}. Last edited {{ status.updated_at }}.</p>{% endif %}
+<p>This classification is saved in HQ and visible as an account label to this customer. It does <strong>not</strong> grant maintenance entitlements, change any existing price or quote, prove an external trade credential, create an appointment or collect a deposit. Confirm eligibility and selling prices individually before approval.</p>
+{% if request.args.get('saved') == '1' %}<p role="status">Account classification saved. Reload to confirm persistence.</p>{% endif %}
+</div>
+<div class="panel">
+<h2>Owner review and edit</h2>
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="operation_id" value="{{ operation_id }}">
+<input type="hidden" name="revision" value="{{ status.revision }}">
+<label for="tier">Customer account type</label>
+<select name="tier" id="tier" required>
+{% for key,label in types.items() %}
+<option value="{{ key }}" {% if status.tier==key %}selected{% endif %}>{{ label }}</option>
+{% endfor %}
+</select>
+<label for="basis">Evidence checked by owner</label>
+<select name="basis" id="basis" required>
+{% for key,label in basis_labels.items() %}
+<option value="{{ key }}" {% if status.basis==key or (not status.reviewed and key=='owner_review') %}selected{% endif %}>{{ label }}</option>
+{% endfor %}
+</select>
+<p>Choose the matching evidence category. Trade and Maintenance require you to have reviewed the relevant evidence first. This form stores your attestation, not copies of customer documents or the underlying agreement.</p>
+<button type="submit">Save reviewed account type</button>
+</form>
+</div>
+<div class="panel"><h2>Revision history</h2>
+{% if history %}<ul>{% for event in history %}<li>Revision {{ event.revision }} · {{ event.previous_tier|replace('_',' ')|title }} → {{ event.next_tier|title }} · {{ basis_labels[event.basis] }} · {{ event.occurred_at }}</li>{% endfor %}</ul>
+{% else %}<p>No owner account-type review recorded yet.</p>{% endif %}
+<p>Previous classifications and decisions are retained. Customer names, contract documents and confidential prices are not copied into the classification audit events.</p>
+</div>
+<script>
+(()=>{const tier=document.getElementById('tier'),basis=document.getElementById('basis');
+const rule={{ basis|tojson }};
+tier.addEventListener('change',()=>{basis.value=rule[tier.value]});
+})();
+</script>
+</main></body></html>
