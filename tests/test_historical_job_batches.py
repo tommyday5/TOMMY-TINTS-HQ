@@ -12,7 +12,7 @@ from customer_request_store import connect
 from hq_auth import issue_session
 from hq_auth_store import auth_db
 from hq_core_records import _schema
-from hq_historical_preview import stage_j_candidate, _candidate_stamp
+from hq_historical_preview import stage_j_candidate, _candidate_stamp, withdraw_j_candidate
 from hq_historical_job_batches import create_batch, list_batches
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -131,3 +131,15 @@ class HistoricalJobBatchTests(unittest.TestCase):
             db.execute("UPDATE hq_work_records SET revision=1 WHERE id=?",(self.work_ids[0],))
         self.assertEqual(list_batches()[0]["id"],batch)
         self.assertEqual(list_batches()[0]["items"][0]["stale"],1)
+
+    def test_restaged_candidate_cannot_bypass_active_batch_collision(self):
+        self.create([self.ids[0]],"f"*32)
+        withdraw_j_candidate(self.ids[0],0,"synthetic-owner")
+        new = stage_j_candidate(formula=self.formula,computed=self.computed,
+                    sheet_row=5,job_ref="J0001",
+                    source_stamp=_candidate_stamp(self.formula,self.computed,5),
+                    work_token=self.work_ids[0]+":0",operation_id=uuid.uuid4().hex,
+                    owner_identity="synthetic-owner")
+        with self.assertRaises(ValueError):
+            self.create([new],"a"*32)
+        self.assertEqual(len(list_batches()),1)
