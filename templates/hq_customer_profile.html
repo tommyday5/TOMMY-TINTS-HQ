@@ -26,6 +26,7 @@ code{overflow-wrap:anywhere}button.button{font:inherit;cursor:pointer}form{margi
 </form>
 <p>{% if customer.source_request_id %}Origin: reviewed public request{% else %}Origin: owner-created HQ contact{% endif %}. Historical Sheets identity and pricing tier require separate verification.</p>
 <a class="button" href="/hq/customers/{{ customer.id }}/edit">Edit customer details</a>
+<a class="button" href="/hq/customers/{{ customer.id }}/account-type">Review Retail / Trade / Maintenance account type</a>
 <a class="button" href="/hq/customers/{{ customer.id }}/portal-access">Manage customer portal access</a>
 <a class="button" href="/hq/profile-change-requests">Customer correction inbox</a>
 <a class="button" href="/hq/availability-requests">Appointment request inbox</a>

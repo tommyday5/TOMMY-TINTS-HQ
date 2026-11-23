@@ -45,6 +45,7 @@ from hq_service_quotes import service_quotes
 from hq_quote_pdf import service_quote_pdfs
 from customer_edits import customer_edits
 from hq_customer_directory import customer_directory
+from hq_customer_account_types import account_types
 from hq_cost_library import cost_library
 from hq_work_cost_estimates import estimate_workspace
 from hq_customer_documents import customer_documents
@@ -73,6 +74,7 @@ app.register_blueprint(passkeys)
 app.register_blueprint(visual_routes)
 app.register_blueprint(customer_edits)
 app.register_blueprint(customer_directory)
+app.register_blueprint(account_types)
 app.register_blueprint(cost_library)
 app.register_blueprint(estimate_workspace)
 app.register_blueprint(customer_documents)
