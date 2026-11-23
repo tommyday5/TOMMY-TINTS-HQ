@@ -71,7 +71,9 @@ def create_batch(candidate_ids, operation_id, *, formula, computed, owner_identi
             _verified_source_candidate(formula, computed, row["sheet_row"], row["job_ref"], row["source_stamp"])
             if db.execute("""SELECT 1 FROM hq_historical_job_batch_items i
                     JOIN hq_historical_job_batches b ON b.id=i.batch_id
-                    WHERE i.candidate_id=? AND b.archived_at IS NULL""", (cid,)).fetchone():
+                    WHERE b.archived_at IS NULL AND (i.candidate_id=? OR i.job_ref=? COLLATE NOCASE
+                        OR i.work_id=? OR i.sheet_row=?)""",
+                    (cid, row["job_ref"], row["work_id"], row["sheet_row"])).fetchone():
                 raise ValueError("A proposal is already in an active review batch")
             items.append(row)
         bid = uuid.uuid4().hex
