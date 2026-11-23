@@ -171,8 +171,8 @@ class HistoricalJobBatchTests(unittest.TestCase):
         full = self.full_snapshots()
         self.login()
         data = {"csrf":"test-csrf","action":"full_evidence","batch_id":batch,"revision":"0"}
-        with patch.dict(app.extensions,{"hq_sheets_connection":lambda:("fixture",9999999999)}), \\
-             patch("hq_historical_preview._read_live",return_value=(self.formula,self.computed)), \\
+        with patch.dict(app.extensions,{"hq_sheets_connection":lambda:("fixture",9999999999)}), \
+             patch("hq_historical_preview._read_live",return_value=(self.formula,self.computed)), \
              patch("hq_historical_job_full_evidence.read_full_width",return_value=full):
             self.assertIn(b"No 94-column source evidence saved", self.client.get(self.url).data)
             self.assertEqual(self.client.post(self.url,data=dict(data,csrf="bad")).status_code,403)
