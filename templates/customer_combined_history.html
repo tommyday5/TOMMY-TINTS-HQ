@@ -31,7 +31,18 @@
 {% if e.product_quote_status == 'approved' and e.approved_product_quote_pence is not none %}
 <p><strong>Product-only HQ quote approved: £{{ '%.2f'|format(e.approved_product_quote_pence/100) }}</strong></p>
 <p>This is a confirmed quotation only. No product has been reserved, no sale or delivery arranged, and no payment received.</p>
-{% if e.product_pdf_ready %}<p><a href="/customer/basket-requests/{{ e.id }}/product-quote.pdf">Download itemised approved products quotation (PDF)</a></p>{% endif %}
+{% if e.product_pdf_ready %}
+<p><a href="/customer/basket-requests/{{ e.id }}/product-quote.pdf">Download itemised approved products quotation (PDF)</a></p>
+{% if e.proceed_state %}
+<p role="status"><strong>Request to proceed: {{ e.proceed_state.status|title }}</strong>. This is not payment, stock reservation, fulfilment or a booking.</p>
+{% if e.proceed_state.public_note %}<p>Message from Tommy Tints: {{ e.proceed_state.public_note }}</p>{% endif %}
+{% else %}
+<form method="post" action="/customer/basket-requests/{{ e.id }}/request-proceed">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="operation_id" value="{{ e.proceed_operation_id }}">
+<button type="submit">Request to proceed with this product quotation</button></form>
+<p>Requests require owner review. Nothing is paid for or reserved by submitting.</p>
+{% endif %}
+{% endif %}
 {% elif e.product_quote_status == 'withdrawn' %}
 <p>Product-only HQ quotation withdrawn. Please contact Tommy Tints for updated pricing.</p>
 {% endif %}
