@@ -34,6 +34,7 @@
 </form>
 <p>Choose the readiness stage matching the quote's collection/delivery method. Do not mark readiness without checking actual products.</p>
 {% endif %}
+{% if item.status == 'approved' %}
 <h3>Native product order (owner controlled)</h3>
 {% if not item.order_id %}
 <p>No product order has been created. Approval and preparation updates alone do not create an order, reserve stock or accept payment.</p>
@@ -61,6 +62,7 @@
 <textarea id="order-note-{{ item.id }}" name="order_note" maxlength="400" rows="3" {% if item.order_status in ('closed','cancelled') %}disabled{% endif %}>{{ item.order_note }}</textarea>
 {% if item.order_status not in ('closed','cancelled') %}<button type="submit">Save order status</button>{% endif %}
 </form>
+{% endif %}
 {% endif %}
 {% endif %}
 </article>{% else %}<p>No customer product proceed requests yet.</p>{% endfor %}
