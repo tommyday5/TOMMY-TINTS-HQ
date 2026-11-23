@@ -17,6 +17,7 @@ from flask import abort, current_app, redirect, render_template, request, sessio
 from customer_request_store import connect, storage_ready
 from hq_auth import required
 from hq_core_records import _schema
+from hq_customer_postcodes import postcode_status
 from hq_work_progress import _actor_fingerprint
 
 HEX = re.compile(r"[0-9a-f]{32}\Z")
@@ -124,6 +125,7 @@ def _read_snapshot(candidate_id, formula, computed):
             "source_name": str(raw[0]), "source_type": str(raw[1]) if len(raw)>1 else "",
             "source_postcode": str(raw[2]) if len(raw)>2 else "",
             "native_name": native["name"], "tier": tier,
+            "native_postcode": postcode_status(db, candidate["customer_id"]),
             "revision": saved["revision"] if saved else 0,
             "name_decision": saved["name_decision"] if saved else "unreviewed",
             "account_type_decision": saved["account_type_decision"] if saved else "unreviewed",
