@@ -294,4 +294,4 @@ def edit_estimate(work_id):
     return render_template("hq_work_estimate.html", work=work, existing=existing,
         items=items, selected_id=selected_id, source_revision=source_revision,
         hours=hours, materials=materials, consumables=consumables, note=note,
-        csrf=session["csrf"], operation_id=uuid.uuid4().hex, error=error)
+        csrf=session["csrf"], operation_id=uuid.uuid4().hex, error=error), (409 if error else 200)
