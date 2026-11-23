@@ -138,13 +138,13 @@ class ProductProceedTests(unittest.TestCase):
         ident = request_to_proceed(self.basket, self.cid, first_op)
         with self.assertRaisesRegex(ValueError, "previously used"):
             request_to_proceed(uuid.uuid4().hex, self.cid, first_op)
-        with self.assertRaises(ValueError):
+        with app.app_context(), self.assertRaises(ValueError):
             owner_review_proceed(ident, 55, "approved", "", "synthetic-owner")
         self.owner_login()
-        with self.assertRaisesRegex(ValueError, "customer-visible note|too long"):
+        with app.app_context(), self.assertRaisesRegex(ValueError, "customer-visible note|too long"):
             owner_review_proceed(ident, 0, "approved", "x" * 401, "synthetic-owner")
         change_product_quote_status(self.basket, 2, "withdrawn")
-        with self.assertRaisesRegex(ValueError, "changed or withdrawn"):
+        with app.app_context(), self.assertRaisesRegex(ValueError, "changed or withdrawn"):
             owner_review_proceed(ident, 0, "approved", "", "synthetic-owner")
         with connect() as db:
             self.assertEqual(db.execute(
