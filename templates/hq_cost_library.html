@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>HQ Cost Library | Tommy Tints</title>
+<style>
+:root{color-scheme:dark;background:#090b10;color:#f6f7fa;font-family:system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;padding:clamp(12px,3vw,30px)}
+main{max-width:1050px;margin:auto}a{color:#ff747d}p{color:#c7cbd3;line-height:1.5}
+.panel{border:1px solid #3d414b;background:#171a21;border-radius:14px;padding:clamp(14px,3vw,22px);margin:16px 0}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 16px}
+label{font-weight:650;display:block;margin:12px 0 5px}
+input,textarea,select{display:block;background:#0e131b;color:white;border:1px solid #6a7180;padding:11px;border-radius:8px;width:100%;font:inherit}
+textarea{min-height:90px}
+button,.button{display:inline-block;background:#c9102b;border:1px solid #ed4354;border-radius:8px;color:white;padding:11px 17px;cursor:pointer;font:inherit;font-weight:700;text-decoration:none;margin:8px 7px 8px 0}
+.secondary{background:#242b35;border-color:#667181}
+table{width:100%;border-collapse:collapse}
+th,td{padding:12px 9px;border-bottom:1px solid #3c414a;text-align:left}
+.table-wrap{overflow-x:auto}.alert{border-left:4px solid #f4cc29;background:#382b19;padding:12px}
+:focus-visible{outline:3px solid #ffda40;outline-offset:2px}
+@media(max-width:620px){.grid{grid-template-columns:1fr}}
+</style></head><body><main>
+<nav><a href="/">HQ Dashboard</a> · <a href="/hq/customers">Customers</a> · <a href="/hq/work/new">Jobs &amp; Quotes</a> · <a href="/hq/services">Service Tariffs</a></nav>
+<h1>Native HQ Cost Library</h1>
+<p>Editable workshop service cost <strong>assumptions</strong> stored in persistent HQ SQLite. This is not a record of actual materials or hours used on a job, and editing it does not automatically change existing quotes or live Retail, Trade, Maintenance and Insurance prices.</p>
+<p>The historical Google Sheets Cost Library remains read-only. No historical entries are automatically imported, linked or overwritten. This new catalogue is separately owned until reconciliation is approved.</p>
+{% if items is not none %}
+<div class="panel">
+<a class="button" href="{{ url_for('cost_library.new_item') }}">+ Create service cost assumption</a>
+<form method="get" action="{{ url_for('cost_library.index') }}">
+<div class="grid"><div><label for="q">Search service</label><input id="q" name="q" maxlength="80" value="{{ query }}"></div>
+<div><label for="scope">Catalogue view</label><select id="scope" name="scope">
+<option value="active" {% if scope == 'active' %}selected{% endif %}>Active</option>
+<option value="archived" {% if scope == 'archived' %}selected{% endif %}>Archived</option></select></div></div>
+<button class="secondary">Search</button></form>
+<div class="table-wrap"><table><thead><tr><th>Service</th><th>Baseline hours</th><th>Materials + consumables</th><th>Revision</th><th>Action</th></tr></thead>
+<tbody>{% for item in items %}<tr>
+<td>{{ item.service_name }}</td>
+<td>{{ '%.2f' % (item.default_hours_hundredths / 100) }}</td>
+<td>£{{ '%.2f' % ((item.material_pence + item.consumables_pence) / 100) }}</td>
+<td>{{ item.revision }}</td>
+<td><a href="{{ url_for('cost_library.edit_item',item_id=item.id) }}">{{ 'Restore or inspect' if item.is_archived else 'Edit' }}</a></td></tr>
+{% else %}<tr><td colspan="5">No {{ scope }} HQ cost records match. Historical Sheets entries have not been imported.</td></tr>{% endfor %}
+</tbody></table></div></div>
+{% else %}
+{% set creating = record is none %}
+<div class="panel">
+<h2>{{ 'Create service baseline' if creating else 'Edit service baseline · revision ' ~ record.revision }}</h2>
+{% if error %}<p role="alert" class="alert">{{ error }}</p>{% endif %}
+{% if request.args.get('saved') %}<p role="status">Saved in HQ. You can reload this page to verify persistence.</p>{% endif %}
+{% if record and record.is_archived %}<p role="status" class="alert">Archived records cannot be edited until restored. No historical records or completed jobs are deleted.</p>{% endif %}
+{% if creating or not record.is_archived %}
+<form method="post" action="{{ url_for('cost_library.new_item') if creating else url_for('cost_library.edit_item',item_id=record.id) }}">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="operation_id" value="{{ operation_id }}">
+<input type="hidden" name="action" value="{{ 'create' if creating else 'save' }}">
+{% if record %}<input type="hidden" name="revision" value="{{ record.revision }}">{% endif %}
+<div class="grid">
+<div><label for="service_name">Service name *</label><input id="service_name" name="service_name" required maxlength="120" value="{{ values.get('service_name','') }}"></div>
+<div><label for="default_hours">Baseline labour hours *</label><input id="default_hours" name="default_hours" required type="number" step="0.01" min="0" max="200" value="{{ values.get('default_hours','') }}"></div>
+<div><label for="material_cost">Estimated material cost (£) *</label><input id="material_cost" name="material_cost" required type="number" step="0.01" min="0" max="1000000" value="{{ values.get('material_cost','') }}"></div>
+<div><label for="consumables_cost">Estimated consumables (£) *</label><input id="consumables_cost" name="consumables_cost" required type="number" step="0.01" min="0" max="1000000" value="{{ values.get('consumables_cost','') }}"></div>
+{% for tier in ['retail','trade','maintenance','insurance'] %}
+<div><label for="{{ tier }}_multiplier">{{ tier|title }} multiplier *</label>
+<input id="{{ tier }}_multiplier" name="{{ tier }}_multiplier" required type="number" step="0.0001" min="0.0001" max="10" value="{{ values.get(tier ~ '_multiplier', {'retail':'1.3500','trade':'1.0000','maintenance':'1.1000','insurance':'1.5500'}[tier]) }}"></div>
+{% endfor %}</div>
+<label for="pricing_method">Pricing method</label><input id="pricing_method" name="pricing_method" maxlength="250" value="{{ values.get('pricing_method','') }}">
+<label for="approval_rule">Customer approval rule</label><textarea id="approval_rule" name="approval_rule" maxlength="250">{{ values.get('approval_rule','') }}</textarea>
+<label for="breakdown_note">Quote breakdown note</label><textarea id="breakdown_note" name="breakdown_note" maxlength="500">{{ values.get('breakdown_note','') }}</textarea>
+<label for="notes">Private workshop assumptions</label><textarea id="notes" name="notes" maxlength="800">{{ values.get('notes','') }}</textarea>
+<p>These multipliers are retained as versioned assumptions only; they are not applied to customer selling prices until pricing parity and approval are verified. Missing actual costs must not be treated as £0.</p>
+<button type="submit">{{ 'Create & save service assumption' if creating else 'Save changes' }}</button>
+</form>{% endif %}
+{% if record %}
+<form method="post" action="{{ url_for('cost_library.edit_item',item_id=record.id) }}">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="operation_id" value="{{ operation_id }}">
+<input type="hidden" name="revision" value="{{ record.revision }}">
+<button class="secondary" type="submit" name="action" value="{{ 'restore' if record.is_archived else 'archive' }}">{{ 'Restore record' if record.is_archived else 'Archive record' }}</button>
+</form>
+{% endif %}</div>
+<p><a href="{{ url_for('cost_library.index') }}">Return to active Cost Library</a></p>
+{% endif %}
+</main></body></html>
