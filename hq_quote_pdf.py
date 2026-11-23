@@ -107,7 +107,8 @@ def render_quote_pdf(snapshot):
     doc = SimpleDocTemplate(out, pagesize=(210*mm, 297*mm), leftMargin=19*mm,
                             rightMargin=19*mm, topMargin=18*mm,
                             bottomMargin=19*mm, pageCompression=1,
-                            title="Tommy Tints - Approved Service Quote",
+                            title=("Tommy Tints - Approved Combined Quote" if snapshot.get("combined")
+                                   else "Tommy Tints - Approved Service Quote"),
                             author="Tommy Tints Ltd")
     title = ParagraphStyle("brand", fontName="Helvetica-Bold", fontSize=19,
                            leading=23, textColor=colors.HexColor("#b5192e"))
@@ -121,7 +122,9 @@ def render_quote_pdf(snapshot):
     story = [
         Paragraph("TOMMY TINTS", title),
         Spacer(1, 3*mm),
-        Paragraph("Approved service quote - not an invoice", heading),
+        Paragraph("Approved services &amp; products quote - not an invoice"
+                  if snapshot.get("combined") else
+                  "Approved service quote - not an invoice", heading),
         Paragraph("Reference: " + esc(snapshot["reference"]) + " | Enquiry date: "
                   + esc(snapshot["date"]), body),
         HRFlowable(width="100%", thickness=0.8, color=colors.HexColor("#b5192e")),
@@ -130,9 +133,11 @@ def render_quote_pdf(snapshot):
         Paragraph("<b>Vehicle:</b> " + esc(snapshot["vehicle"]) +
                   " | <b>Registration:</b> " + esc(snapshot["registration"]) , body),
         Spacer(1, 6*mm),
-        Paragraph("Approved services", heading),
+        Paragraph("Approved services &amp; products" if snapshot.get("combined")
+                  else "Approved services", heading),
     ]
-    rows = [[Paragraph("<b>Service</b>", cell), Paragraph("<b>Approved amount</b>", cell)]]
+    rows = [[Paragraph("<b>Item</b>" if snapshot.get("combined") else "<b>Service</b>", cell),
+             Paragraph("<b>Approved amount</b>", cell)]]
     for item in snapshot["services"]:
         rows.append([Paragraph(esc(item["name"]), cell),
                      Paragraph(esc(_money(item["pence"])), cell)])
