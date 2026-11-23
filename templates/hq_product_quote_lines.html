@@ -1,0 +1,23 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Product-only quote item prices · Tommy Tints HQ</title><link rel="stylesheet" href="/static/commerce.css"></head><body><main>
+<p><a href="/hq/combined-enquiries">Combined enquiry inbox</a> · <a href="/hq">HQ</a></p>
+<h1>Product-only quotation · Item prices</h1>
+<p>Customer {{ quote.customer_name }} · Quote {{ quote.id[:8] }} · {{ quote.status|title }} · Revision {{ quote.revision }}</p>
+<p>Owner-approved total: <strong>£{{ '%.2f'|format(quote.approved_total_pence/100) }}</strong>. Include every product and delivery line. The prices must reconcile exactly before a PDF is available.</p>
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+{% if request.args.get('saved') %}<p role="status">Item prices saved to persistent HQ records.</p>{% endif %}
+{% if quote.editable %}
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="revision" value="{{ quote.revision }}">
+{% for line in quote.lines %}<label>{{ line.quantity }} × {{ line.label if line.line_type == 'product' else 'Delivery' }} — approved amount (£)
+<input type="text" name="price_{{ loop.index0 }}" inputmode="decimal" maxlength="12" required pattern="[0-9]{1,7}(\.[0-9]{1,2})?" value="{{ form_values.get('price_' ~ loop.index0, '%.2f'|format(line.amount_pence/100) if line.amount_pence is not none else '') }}"></label>{% endfor %}
+<button type="submit">Save and reconcile item prices</button>
+</form>
+{% else %}<p>The quotation is no longer draft. Its item allocations are locked.</p>
+<ul>{% for line in quote.lines %}<li>{{ line.quantity }} × {{ line.label }} — {{ '£%.2f'|format(line.amount_pence/100) if line.amount_pence is not none else 'Not allocated' }}</li>{% endfor %}</ul>{% endif %}
+{% if quote.status == 'approved' and quote.fully_allocated %}
+<p><a href="/hq/combined-enquiries/{{ quote.basket_id }}/product-quote.pdf">Download approved itemised product quotation PDF</a></p>
+{% elif quote.status == 'approved' %}
+<p>Approved before item prices were saved: itemised PDF is blocked. Do not assume reference retail prices are agreed amounts.</p>
+{% endif %}
+<p>This is only a quotation. No stock reservation, order, appointment, receipt, invoice or payment is created here.</p>
+</main></body></html>
