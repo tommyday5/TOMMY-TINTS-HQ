@@ -103,7 +103,7 @@ class CustomerFieldReviewTests(unittest.TestCase):
             self.assertEqual(page.status_code,200)
             self.assertIn(b"Synthetic Owner Customer",page.data)
             self.assertIn(b"Not mapped in core HQ customer",page.data)
-            self.assertIn(b"no-store",page.headers["Cache-Control"])
+            self.assertIn("no-store",page.headers["Cache-Control"])
             self.assertEqual(self.client.post(self.url,data=self.data(csrf="bad")).status_code,403)
             self.assertEqual(self.client.post(self.url,data=self.data(revision="x")).status_code,400)
             saved=self.client.post(self.url,data=self.data())
