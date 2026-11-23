@@ -39,6 +39,7 @@ from hq_version import ICON_VERSION, UPDATE_SCRIPT_VERSION, build_version
 from hq_commerce import commerce
 from hq_shop_enquiries import shop_enquiries
 from hq_combined_baskets import combined_baskets
+from hq_combined_quote_lines import combined_quote_lines
 from hq_service_quotes import service_quotes
 from hq_quote_pdf import service_quote_pdfs
 from customer_edits import customer_edits
@@ -79,6 +80,7 @@ app.register_blueprint(maintenance_plans)
 app.register_blueprint(commerce)
 app.register_blueprint(shop_enquiries)
 app.register_blueprint(combined_baskets)
+app.register_blueprint(combined_quote_lines)
 app.register_blueprint(service_quotes)
 app.register_blueprint(service_quote_pdfs)
 app.register_blueprint(square_payments.payment_evidence)

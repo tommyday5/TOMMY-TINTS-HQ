@@ -414,7 +414,17 @@ def customer_history():
     if not customer_id:
         return redirect("/customer/login")
     try:
-        return render_template("customer_combined_history.html", enquiries=_list(customer_id))
+        from hq_combined_quote_lines import approved_combined_snapshot, QuoteNotPrintable
+        enquiries = _list(customer_id)
+        for entry in enquiries:
+            entry["pdf_ready"] = False
+            if entry["linked_work_status"] in ("approved", "in_progress", "completed"):
+                try:
+                    approved_combined_snapshot(entry["id"], customer_id=customer_id)
+                    entry["pdf_ready"] = True
+                except (ValueError, LookupError, QuoteNotPrintable):
+                    pass  # A partial, stale or changed quote never exposes a PDF link.
+        return render_template("customer_combined_history.html", enquiries=enquiries)
     except (sqlite3.Error, OSError, RuntimeError):
         current_app.logger.exception("Combined basket history unavailable")
         abort(503)
