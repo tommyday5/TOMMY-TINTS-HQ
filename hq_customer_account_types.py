@@ -223,3 +223,8 @@ def edit_account_type(customer_id):
                            customer_name=name, status=status, types=TYPES, basis=BASIS,
                            basis_labels=BASIS_LABELS, history=history,
                            operation_id=uuid.uuid4().hex, csrf=session["csrf"])
+
+
+# Keep the owner postcode editor on the same authenticated customer blueprint.
+from hq_customer_postcodes import register_routes as _register_postcode_routes
+_register_postcode_routes(account_types)
