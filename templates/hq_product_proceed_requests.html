@@ -1,0 +1,18 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Product proceed requests · Tommy Tints HQ</title><link rel="stylesheet" href="/static/commerce.css"></head><body><main>
+<p><a href="/hq/combined-enquiries">Combined enquiries</a> · <a href="/hq">HQ</a></p>
+<h1>Customer product proceed requests</h1>
+<p>A request to proceed is not an order, invoice, stock reservation, booking or payment. Review the exact approved product quote before any external action.</p>
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+{% for item in rows %}<article><h2>{{ item.customer_name }} · {{ item.id[:8] }}</h2>
+<p>Request {{ item.status|replace('_',' ')|title }} · Quote {{ item.quote_status|title }} · £{{ '%.2f'|format(item.approved_total_pence/100) }} · {{ item.created_at }}</p>
+<p><a href="/hq/combined-enquiries/{{ item.basket_id }}/product-line-prices">Review original itemised quote</a> · <a href="/hq/combined-enquiries/{{ item.basket_id }}/product-quote.pdf">Approved quote PDF</a></p>
+{% if item.status == 'pending' %}
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="request_id" value="{{ item.id }}"><input type="hidden" name="revision" value="{{ item.revision }}">
+<label>Customer-visible message <textarea name="public_note" rows="3" maxlength="400" placeholder="What happens next? This is not a payment confirmation.">{{ item.public_note }}</textarea></label>
+<button name="status" value="approved" type="submit">Approve request to proceed</button>
+<button name="status" value="declined" type="submit">Decline request</button>
+</form>
+{% else %}<p>Decision {{ item.status|title }}{% if item.public_note %} · Customer message: {{ item.public_note }}{% endif %}</p>{% endif %}
+</article>{% else %}<p>No customer product proceed requests yet.</p>{% endfor %}
+<p>Approval does not charge cards, deduct inventory, send messages, create orders or mark payment as received.</p>
+</main></body></html>
