@@ -38,11 +38,11 @@ h1{font-size:clamp(23px,4vw,34px)}.danger{color:#ffb1b8}
 <select name="account_type_decision" id="account_type_decision">
 {% for value in options.account_type %}<option value="{{ value }}" {% if snapshot.account_type_decision == value %}selected{% endif %}>{{ value.replace("_"," ").title() }}</option>{% endfor %}
 </select><small>Only a reviewed HQ tier that agrees with the source can be marked provisionally consistent. No pricing changes.</small></td></tr>
-<tr><td>Customers C — postcode</td><td>{{ snapshot.source_postcode or "(blank)" }}</td><td>Not mapped in core HQ customer table</td>
+<tr><td>Customers C — postcode</td><td>{{ snapshot.source_postcode or "(blank)" }}</td><td>{% if snapshot.native_postcode.postcode %}{{ snapshot.native_postcode.postcode }} (owner-recorded, not independently verified; revision {{ snapshot.native_postcode.revision }}){% else %}Not mapped in core HQ customer table{% endif %}<br><a href="/hq/customers/{{ snapshot.customer_id }}/postcode">Edit native HQ postcode</a></td>
 <td><label for="postcode_decision">Postcode disposition</label>
 <select name="postcode_decision" id="postcode_decision">
 {% for value in options.postcode %}<option value="{{ value }}" {% if snapshot.postcode_decision == value %}selected{% endif %}>{{ value.replace("_"," ").title() }}</option>{% endfor %}
-</select><small>Cannot mark a postcode as matched until a verified canonical address field exists.</small></td></tr>
+</select><small>Cannot mark a postcode as matched until address evidence is verified and mapped. Recording a postcode in HQ does not by itself establish identity.</small></td></tr>
 </tbody></table></div>
 <p class="note">No PII is stored in this review ledger. Only field decisions, keyed source/native stamps, account-tier revision, operation IDs and actor audit fingerprints are saved. Every submission re-reads the original workbook and checks the current HQ identity.</p>
 <button type="submit">Save field review in HQ</button>
