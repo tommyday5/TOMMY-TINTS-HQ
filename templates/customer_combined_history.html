@@ -9,6 +9,12 @@
 {% for p in e.products %}<li>Product: {{ p.quantity }} × {{ p.name }} {{ p.variant }} — Retail reference £{{ '%.2f'|format(p.total_pence/100) }}</li>{% endfor %}</ul>
 <p>Indicative Retail total: £{{ '%.2f'|format(e.indicative_total_pence/100) }} (includes any delivery reference)</p>
 {% if e.status == 'quoted' and e.approved_total_pence is not none %}<strong>Owner-approved quote: £{{ '%.2f'|format(e.approved_total_pence/100) }}</strong>{% endif %}
+{% if e.linked_work_status in ('approved','in_progress','completed') and e.linked_price_pence is not none %}
+<p><strong>HQ work status: {{ e.linked_work_status|replace('_',' ')|title }}</strong></p>
+<p>Current owner-approved work amount: £{{ '%.2f'|format(e.linked_price_pence/100) }}. This is not a payment receipt or an appointment confirmation.</p>
+{% elif e.linked_work_status == 'cancelled' %}
+<p>HQ work status: Cancelled. Please contact Tommy Tints before proceeding.</p>
+{% endif %}
 {% if e.public_note %}<p>Message from Tommy Tints: {{ e.public_note }}</p>{% endif %}
 </article>{% else %}<p>No combined requests yet.</p>{% endfor %}
 </main></body></html>

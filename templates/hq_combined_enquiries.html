@@ -11,7 +11,22 @@
 <p>Product reference: £{{ '%.2f'|format(e.product_retail_pence/100) }} · Service reference: £{{ '%.2f'|format(e.service_retail_pence/100) }} · Delivery reference: £{{ '%.2f'|format(e.delivery_pence/100) }}</p>
 <p><strong>Indicative Retail basket: £{{ '%.2f'|format(e.indicative_total_pence/100) }}</strong></p>
 {% if e.notes %}<p>Customer scope: {{ e.notes }}</p>{% endif %}
-{% if e.status not in ('declined','closed') %}<form method="post">
+{% if e.linked_work_id %}
+<p><strong>Linked native HQ quote:</strong> <a href="/hq/work/{{ e.linked_work_id }}/edit">{{ e.linked_work_id[:8] }} · Open quote and work stages</a></p>
+<p>The saved basket and approved total are locked. No booking, payment or stock reservation has been made.</p>
+{% elif e.status == 'quoted' and e.approved_total_pence is not none and e.services %}
+<form action="/hq/combined-enquiries/{{ e.id }}/create-work" method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="revision" value="{{ e.revision }}">
+<label>Owner-verified pricing tier
+<select name="customer_tier" required><option value="">Select after checking entitlement</option>
+<option value="retail">Retail</option><option value="trade">Trade</option><option value="maintenance">Maintenance</option></select></label>
+<button type="submit">Create linked native HQ quote</button>
+</form>
+<p>The entire approved total is saved as the native draft amount. Individual product/service price allocation is not yet verified; review before approving the resulting job.</p>
+{% elif e.status == 'quoted' and not e.services %}
+<p>Product-only quote: retained in the owner inbox. Creating a vehicle job would invent a vehicle; a product order workflow is still required.</p>
+{% endif %}
+{% if not e.linked_work_id and e.status not in ('declined','closed') %}<form method="post">
 <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="enquiry_id" value="{{ e.id }}"><input type="hidden" name="revision" value="{{ e.revision }}">
 <label>Review stage<select name="status"><option value="reviewing" {{ 'selected' if e.status=='reviewing' else '' }}>Reviewing</option><option value="quoted" {{ 'selected' if e.status=='quoted' else '' }}>Quoted</option><option value="declined">Declined</option><option value="closed">Closed</option></select></label>
 <label>Owner-approved total (£, required when quoted)<input name="approved_pounds" inputmode="decimal" value="{{ '%.2f'|format(e.approved_total_pence/100) if e.approved_total_pence is not none else '' }}"></label>
