@@ -62,6 +62,7 @@ from hq_passkeys import passkeys, registered_passkeys
 from hq_google_connections import connection, save_connection, stored_grant_present
 from hq_sheets_link_inspection import sheet_link_inspection
 from hq_historical_preview import migration_preview
+from hq_historical_customer_links import customer_migration
 app = Flask(__name__)
 app.secret_key = os.environ.get('HQ_SESSION_SECRET') or secrets.token_hex(32)
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SECURE=os.environ.get('HQ_DEV_HTTP') != '1', SESSION_COOKIE_SAMESITE='Lax', PERMANENT_SESSION_LIFETIME=3600)
@@ -98,6 +99,7 @@ app.register_blueprint(payment_review)
 app.register_blueprint(transaction_preview)
 app.register_blueprint(sheet_link_inspection)
 app.register_blueprint(migration_preview)
+app.register_blueprint(customer_migration)
 PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tommy Tints HQ</title><meta name="theme-color" content="#0b0f16"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Tommy Tints HQ"><link rel="icon" type="image/png" sizes="180x180" href="/favicon.ico?v=20261117d"><link rel="apple-touch-icon" sizes="180x180" href="/hq-icon-180.png?v=20261117d"><link rel="manifest" href="/static/manifest.webmanifest?v=20261117d"><style>
 :root{font-family:system-ui,Arial;color:#eef2f8;background:#0b0f16}*{box-sizing:border-box}body{margin:0}.shell{display:flex;min-height:100vh}aside{width:235px;background:#111824;padding:24px;border-right:1px solid #283344}main{padding:30px;flex:1;min-width:0;max-width:1250px}h1{font-size:32px;margin:0 0 8px}h2{font-size:21px}p,small{color:#aab6c8}.brand{font-size:23px;font-weight:900;margin-bottom:28px}.brand b{color:#f0444d}button,.button{background:#263447;color:white;border:1px solid #43536a;padding:11px 14px;border-radius:9px;cursor:pointer;font-weight:650}button:hover{background:#364c67}button.active,.primary{background:#c82737;border-color:#e03a49}.nav{display:block;width:100%;text-align:left;margin:7px 0}.card{background:#151e2b;border:1px solid #2c394b;padding:20px;border-radius:14px;margin:15px 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:13px}.grid .card{margin:0}.muted{color:#9baac0}.value{font-size:27px;font-weight:800}.hidden{display:none}label{display:block;margin:12px 0 5px;color:#c6d0df}input,select{background:#0d1420;color:white;border:1px solid #45536a;padding:11px;border-radius:8px;width:100%;max-width:420px}table{border-collapse:collapse;width:100%;margin-top:12px}td,th{padding:11px;border-bottom:1px solid #344055;text-align:left}a{color:#ff7c84}.notice{border-left:3px solid #eab44c;padding:12px 15px;background:#302718;margin:15px 0;color:#f0d99d}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}#timer{font-size:40px;font-variant-numeric:tabular-nums} @media(max-width:750px){.shell{display:block}aside{width:100%;padding:14px}.brand{margin-bottom:8px}.nav{display:inline-block;width:auto;margin:4px;font-size:12px}main{padding:17px}}
 
