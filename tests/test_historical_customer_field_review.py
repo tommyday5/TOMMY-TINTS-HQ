@@ -111,7 +111,7 @@ class CustomerFieldReviewTests(unittest.TestCase):
             self.assertEqual(self.client.post(self.url,data=self.data()).status_code,303)
             self.assertIn(b"field review was saved",
                           self.client.get(self.url+"?saved=1").data)
-            self.assertEqual(read.call_count,5)
+            self.assertEqual(read.call_count,4)
         with connect() as db:
             result=db.execute("""SELECT * FROM hq_historical_customer_field_reviews
                 WHERE candidate_id=?""",(self.candidate,)).fetchone()
