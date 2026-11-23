@@ -558,6 +558,14 @@ def customer_history():
         enquiries = _list(customer_id)
         for entry in enquiries:
             entry["pdf_ready"] = False
+            entry["product_pdf_ready"] = False
+            if entry["product_quote_status"] == "approved":
+                try:
+                    from hq_product_quote_lines import approved_product_quote_snapshot
+                    approved_product_quote_snapshot(entry["id"], customer_id=customer_id)
+                    entry["product_pdf_ready"] = True
+                except (ValueError, LookupError):
+                    pass  # Partial/unreconciled product quotes never show PDF links.
             if entry["linked_work_status"] in ("approved", "in_progress", "completed"):
                 try:
                     approved_combined_snapshot(entry["id"], customer_id=customer_id)
