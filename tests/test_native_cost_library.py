@@ -112,7 +112,7 @@ class NativeCostLibraryTests(unittest.TestCase):
             self.assertEqual(len(events[1]["owner_fingerprint"]),64)
             self.assertNotIn("synthetic-owner",str(tuple(events[1])))
             self.assertEqual(db.execute("SELECT count(*) FROM hq_cost_library_operations").fetchone()[0],2)
-            self.assertEqual(db.execute("SELECT count(*) FROM hq_work_records").fetchone()[0],0)
+            self.assertIsNone(db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_work_records'").fetchone())
 
     def test_archive_restore_and_duplicate_service_names(self):
         self.login()
