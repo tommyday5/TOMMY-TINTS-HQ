@@ -22,7 +22,7 @@ button.alt{background:#333842;border-color:#90949b}button:focus-visible,a:focus-
 <input type="hidden" name="action" value="request">
 <label for="work">Approved quote or job</label>
 <select id="work" name="work_id" required>
-{% for work in works %}<option value="{{ work.id }}">{{ work.service }} · {{ work.registration or 'Vehicle not registered' }} · {{ work.id[:8] }}</option>{% endfor %}
+{% for work in works %}<option value="{{ work.id }}" {% if work.id == selected_work_id %}selected{% endif %}>{{ work.service }} · {{ work.registration or 'Vehicle not registered' }} · {{ work.id[:8] }}</option>{% endfor %}
 </select>
 <label for="date">Preferred date (not confirmed)</label><input id="date" name="date" type="date" required>
 <label for="time">Preferred hour</label><select id="time" name="time" required>

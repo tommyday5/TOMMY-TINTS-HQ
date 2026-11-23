@@ -556,7 +556,21 @@ def customer_history():
     try:
         from hq_combined_quote_lines import approved_combined_snapshot, QuoteNotPrintable
         enquiries = _list(customer_id)
+        # The appointment inbox is keyed to the same canonical work/customer IDs.
+        # Its snapshot is already tenant-filtered; never join another customer's
+        # booking through an unverified basket or vehicle reference.
+        from hq_appointment_requests import customer_availability_snapshot
+        eligible_works, appointments = customer_availability_snapshot(customer_id)
+        eligible_ids = {work["id"] for work in eligible_works}
+        latest_by_work = {}
+        for appointment in appointments:  # newest first
+            latest_by_work.setdefault(appointment["work_id"], appointment)
         for entry in enquiries:
+            work_id = entry.get("linked_work_id")
+            entry["availability_eligible"] = (
+                entry["linked_work_status"] in ("approved", "in_progress")
+                and work_id in eligible_ids)
+            entry["booking"] = latest_by_work.get(work_id) if work_id else None
             entry["pdf_ready"] = False
             entry["product_pdf_ready"] = False
             if entry["product_quote_status"] == "approved":

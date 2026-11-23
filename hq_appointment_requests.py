@@ -203,6 +203,8 @@ def customer_availability_snapshot(customer_id):
             WHERE w.customer_id=? AND w.status IN ('approved','in_progress')
               AND NOT EXISTS (SELECT 1 FROM hq_work_archive_state a
                   WHERE a.work_id=w.id AND a.is_archived=1)
+              AND NOT EXISTS (SELECT 1 FROM hq_portal_booking_confirmations b
+                  WHERE b.work_id=w.id AND b.status='confirmed')
             ORDER BY w.created_at DESC LIMIT 100""",(customer_id,))]
         requests = [dict(r) for r in db.execute("""SELECT a.id,a.work_id,a.requested_date,
             a.requested_time,a.note,a.status,a.offered_date,a.offered_time,a.owner_message,
@@ -551,7 +553,13 @@ def _customer_page(customer_id, error=None, status=200):
     except (sqlite3.Error, OSError):
         current_app.logger.exception("Availability snapshot unavailable")
         abort(503)
+    # A GET deep link never authorises a work record. Only a customer-owned,
+    # active and unbooked work ID from the tenant-filtered query can be selected.
+    requested_work = request.args.get("work_id", "")
+    selected_work_id = requested_work if any(
+        work["id"] == requested_work for work in works) else ""
     return render_template("customer_availability.html", works=works, items=items,
+                           selected_work_id=selected_work_id,
                            csrf=session["customer_portal_csrf"], error=error,
                            operation_id=secrets.token_hex(16),
                            saved=request.args.get("saved") == "1"), status
