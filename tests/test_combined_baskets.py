@@ -161,7 +161,7 @@ class CombinedBasketTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Duplicate service"):
             submit_combined(self.a, uuid.uuid4().hex, self.vehicle, "retail",
                             [self.service, self.service], [], "collection")
-        with self.assertRaisesRegex(ValueError, "account"):
+        with self.assertRaisesRegex(ValueError, "Retail, Trade or Maintenance"):
             submit_combined(self.a, uuid.uuid4().hex, self.vehicle, "wholesale",
                             [self.service], [], "collection")
         with self.assertRaises(ValueError):
