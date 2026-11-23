@@ -20,8 +20,8 @@ from hq_core_records import _schema
 from hq_cost_library import _tables as _library_tables
 
 estimate_workspace = Blueprint("estimate_workspace", __name__)
-_HEX = re.compile(r"[0-9a-f]{32}\\Z")
-_NUMBER = re.compile(r"(?:0|[1-9][0-9]{0,6})(?:\\.[0-9]{1,2})?\\Z")
+_HEX = re.compile(r"[0-9a-f]{32}\Z")
+_NUMBER = re.compile(r"(?:0|[1-9][0-9]{0,6})(?:\.[0-9]{1,2})?\Z")
 
 
 def _now():
@@ -127,7 +127,7 @@ def _fields(payload, action):
     if action == "save":
         note = payload.get("note", "")
         if not isinstance(note, str) or len(note.strip()) > 300 or any(
-            ord(char) < 32 and char not in "\\n\\t" for char in note
+            ord(char) < 32 and char not in "\n\t" for char in note
         ):
             raise ValueError("Estimate notes must be 300 characters or fewer")
         values.update({
