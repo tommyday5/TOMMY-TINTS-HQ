@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -22,6 +23,7 @@ from hq_product_proceed_requests import (
     request_to_proceed, customer_proceed_state, owner_proceed_requests,
     owner_review_proceed, owner_set_preparation,
     owner_create_product_order, owner_save_product_order,
+    owner_save_product_handover,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -307,6 +309,115 @@ class ProductProceedTests(unittest.TestCase):
             self.assertEqual(db.execute(
                 "SELECT COUNT(*) FROM hq_product_orders").fetchone()[0], 0)
 
+
+
+    def test_owner_order_handover_is_audited_private_and_customer_visible(self):
+        """Synthetic end-to-end owner record and dispute; no provider or inventory writes."""
+        self.login_customer(self.mine, self.cid)
+        self.login_customer(self.other, self.stranger)
+        ident = request_to_proceed(self.basket, self.cid, uuid.uuid4().hex)
+        self.owner_login()
+        url = "/hq/product-proceed-requests"
+        with app.app_context():
+            with self.assertRaises(LookupError):
+                owner_save_product_handover(ident, 0, "record",
+                    "collection_confirmation", "proof-001",
+                    datetime.now(timezone.utc).date().isoformat(), "", "owner")
+            owner_review_proceed(ident, 0, "approved", "", "owner")
+            order_id = owner_create_product_order(ident, 1, "owner")
+        page = self.owner.get(url)
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Record owner-reported handover evidence", page.data)
+        self.assertEqual(self.owner.post(url, data={
+            "csrf": "invalid", "action": "handover_record", "request_id": ident,
+            "revision": "0", "evidence_type": "collection_confirmation",
+            "evidence_reference": "proof-001",
+            "handover_date": datetime.now(timezone.utc).date().isoformat(),
+        }).status_code, 403)
+        today = datetime.now(timezone.utc).date().isoformat()
+        with app.app_context():
+            with self.assertRaisesRegex(ValueError, "fulfilment method"):
+                owner_save_product_handover(ident, 0, "record",
+                    "carrier_handover_receipt", "proof-001", today, "", "owner")
+            with self.assertRaisesRegex(ValueError, "future"):
+                owner_save_product_handover(ident, 0, "record",
+                    "collection_confirmation", "proof-001",
+                    (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat(),
+                    "", "owner")
+        payload = {"csrf": "owner-csrf", "action": "handover_record",
+                   "request_id": ident, "revision": "0",
+                   "evidence_type": "collection_confirmation",
+                   "evidence_reference": "private-collection-signature-001",
+                   "handover_date": today,
+                   "handover_note": "Your order was handed over."}
+        self.assertEqual(self.owner.post(url, data=payload).status_code, 303)
+        state = customer_proceed_state(self.basket, self.cid)
+        self.assertEqual(state["handover_state"], "recorded")
+        self.assertEqual(state["handover_date"], today)
+        self.assertEqual(state["handover_note"], "Your order was handed over.")
+        self.assertNotIn("evidence_reference", state)
+        self.assertIsNone(customer_proceed_state(self.basket, self.stranger))
+        customer_page = self.mine.get("/customer/basket-requests").data
+        self.assertIn(b"Handover recorded by Tommy Tints", customer_page)
+        self.assertNotIn(b"private-collection-signature-001", customer_page)
+        self.assertNotIn(b"private-collection-signature-001",
+                         self.other.get("/customer/basket-requests").data)
+        with app.app_context():
+            self.assertEqual(owner_save_product_handover(
+                ident, 0, "record", "collection_confirmation",
+                "private-collection-signature-001", today,
+                "Your order was handed over.", "owner"), 1)
+            with self.assertRaisesRegex(ValueError, "already recorded"):
+                owner_save_product_handover(
+                    ident, 1, "record", "collection_confirmation",
+                    "another-proof", today, "", "owner")
+            with self.assertRaisesRegex(ValueError, "changed"):
+                owner_save_product_handover(ident, 0, "dispute", "", "", "",
+                    "Earlier record needs checking with customer.", "owner")
+        dispute = {"csrf": "owner-csrf", "action": "handover_dispute",
+                   "request_id": ident, "revision": "1",
+                   "handover_note": "Collection signature needs manual review."}
+        self.assertEqual(self.owner.post(url, data=dispute).status_code, 303)
+        self.assertEqual(customer_proceed_state(
+            self.basket, self.cid)["handover_state"], "disputed")
+        self.assertIn(b"Handover under review",
+                      self.mine.get("/customer/basket-requests").data)
+        self.assertIn(b"Handover audit history (2 events)", self.owner.get(url).data)
+        with connect() as db:
+            events = db.execute("""SELECT revision,state,evidence_reference
+                FROM hq_product_order_handover_events
+                WHERE order_id=? ORDER BY revision""", (order_id,)).fetchall()
+            self.assertEqual([(r[0], r[1]) for r in events],
+                             [(1, "recorded"), (2, "disputed")])
+            self.assertEqual({r[2] for r in events},
+                             {"private-collection-signature-001"})
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM hq_work_records").fetchone()[0], 0)
+        with commerce_db() as db:
+            self.assertEqual(db.execute(
+                "SELECT stock FROM products WHERE id=?",
+                (self.product,)).fetchone()[0], 5)
+
+    def test_product_handover_requires_current_approved_open_order(self):
+        ident = request_to_proceed(self.basket, self.cid, uuid.uuid4().hex)
+        with app.app_context():
+            owner_review_proceed(ident, 0, "approved", "", "owner")
+            owner_create_product_order(ident, 1, "owner")
+            owner_save_product_order(ident, 0, "on_hold", "", "owner")
+            with self.assertRaisesRegex(ValueError, "Only open approved"):
+                owner_save_product_handover(ident, 0, "record",
+                    "collection_confirmation", "proof-001",
+                    datetime.now(timezone.utc).date().isoformat(), "", "owner")
+            owner_save_product_order(ident, 1, "open", "", "owner")
+        change_product_quote_status(self.basket, 2, "withdrawn")
+        with app.app_context(), self.assertRaisesRegex(
+                ValueError, "changed or withdrawn"):
+            owner_save_product_handover(ident, 0, "record",
+                "collection_confirmation", "proof-001",
+                datetime.now(timezone.utc).date().isoformat(), "", "owner")
+        with connect() as db:
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM hq_product_order_handover").fetchone()[0], 0)
 
 
 if __name__ == "__main__":
