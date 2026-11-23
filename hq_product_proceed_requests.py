@@ -424,6 +424,7 @@ def owner_proceed_requests():
                 COALESCE(f.public_note,'') AS preparation_note,
                 COALESCE(f.revision,0) AS preparation_revision,
                 o.id AS order_id,o.status AS order_status,
+                o.fulfilment AS order_fulfilment,
                 o.public_note AS order_note,COALESCE(o.revision,0) AS order_revision,
                 h.state AS handover_state,h.evidence_type AS handover_evidence_type,
                 h.evidence_reference AS handover_evidence_reference,
