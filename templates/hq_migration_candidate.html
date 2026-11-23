@@ -57,7 +57,7 @@ select{padding:10px;background:#0d1420;color:white;border:1px solid #718097;bord
 <p>Proposed canonical HQ customer <code>{{ candidate.identity_review.customer_id }}</code></p>
 <p>Decision: <strong>{{ candidate.identity_review.decision.replace("_"," ") }}</strong> · evidence basis: {{ candidate.identity_review.basis.replace("_"," ") }}</p>
 <p class="muted">Recorded {{ candidate.identity_review.updated_at }}. This is an inactive owner judgement, NOT a verified identity, import approval or historical/customer link. The review is invalidated if the source, HQ work, customer record or field assessment subsequently changes.</p>
-{% if not candidate.field_review or candidate.identity_review.assessment_revision != candidate.field_review.revision %}
+{% if candidate.identity_review.assessment_revision != (candidate.field_review.revision if candidate.field_review else 0) %}
 <p class="warning">Customer field assessment changed: the saved identity judgement needs revalidation.</p>
 {% endif %}
 </div>
