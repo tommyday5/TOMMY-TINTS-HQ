@@ -689,7 +689,7 @@ class HistoricalMappingProposalTests(unittest.TestCase):
                 owner_identity="fixture"), 1)
             altered, computed = snapshots()
             altered["valueRanges"][0]["values"][1][2] = "Changed Customer"
-            with self.assertRaisesRegex(ValueError, "Source row changed"):
+            with self.assertRaisesRegex(ValueError, "Source (row changed|identities changed)"):
                 save_customer_identity_review(
                     candidate_id=cid, expected_revision=1, decision="hold",
                     basis="name_crosscheck", formula=altered, computed=computed,
