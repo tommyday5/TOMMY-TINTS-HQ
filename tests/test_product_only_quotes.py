@@ -64,7 +64,7 @@ class ProductOnlyQuoteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 303)
 
     def test_durable_idempotent_quote_with_immutable_source_and_no_stock_changes(self):
-        with self.assertRaisesRegex(ValueError, "vehicle services"):
+        with self.assertRaisesRegex(ValueError, "Invalid vehicle"):
             service = submit_combined(
                 self.cid, uuid.uuid4().hex, None, "retail",
                 ["Window Tinting"], [], "collection")
