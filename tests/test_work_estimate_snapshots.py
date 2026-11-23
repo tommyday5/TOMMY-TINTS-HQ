@@ -197,7 +197,7 @@ class WorkEstimateTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 409)
         with app.app_context():
             self.assertIsNone(estimate_snapshot(self.work_id)[1])
-        self.assertEqual(self.other.get("/book").status_code, 200)
+        self.assertEqual(self.other.get("/book").status_code, 302)
         self.assertNotIn(b"Synthetic scope", self.other.get("/book").data)
 
 
