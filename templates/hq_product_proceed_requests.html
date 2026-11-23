@@ -12,7 +12,29 @@
 <button name="status" value="approved" type="submit">Approve request to proceed</button>
 <button name="status" value="declined" type="submit">Decline request</button>
 </form>
-{% else %}<p>Decision {{ item.status|title }}{% if item.public_note %} · Customer message: {{ item.public_note }}{% endif %}</p>{% endif %}
+{% else %}
+<p>Decision {{ item.status|title }}{% if item.public_note %} · Customer message: {{ item.public_note }}{% endif %}</p>
+{% if item.status == 'approved' %}
+<h3>Preparation progress (owner controlled)</h3>
+<p>Current: <strong>{{ item.preparation_stage|replace('_',' ')|title }}</strong>. This is a manual workshop update, not a payment, dispatch, stock reservation or order confirmation.</p>
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="action" value="preparation">
+<input type="hidden" name="request_id" value="{{ item.id }}">
+<input type="hidden" name="revision" value="{{ item.preparation_revision }}">
+<label for="stage-{{ item.id }}">Preparation stage</label>
+<select id="stage-{{ item.id }}" name="stage">
+{% for stage, name in [('not_started','Not started'),('planning','Planning'),('awaiting_customer_details','Awaiting customer details'),('preparing','Preparing'),('ready_for_collection','Ready for collection'),('ready_for_delivery','Ready for delivery'),('paused','Paused')] %}
+<option value="{{ stage }}" {% if stage == item.preparation_stage %}selected{% endif %}>{{ name }}</option>
+{% endfor %}
+</select>
+<label for="prep-note-{{ item.id }}">Customer-visible progress note</label>
+<textarea id="prep-note-{{ item.id }}" name="preparation_note" rows="3" maxlength="400" placeholder="Optional progress update; no message is sent automatically.">{{ item.preparation_note }}</textarea>
+<button type="submit">Save preparation progress</button>
+</form>
+<p>Choose the readiness stage matching the quote's collection/delivery method. Do not mark readiness without checking actual products.</p>
+{% endif %}
+{% endif %}
 </article>{% else %}<p>No customer product proceed requests yet.</p>{% endfor %}
 <p>Approval does not charge cards, deduct inventory, send messages, create orders or mark payment as received.</p>
 </main></body></html>
