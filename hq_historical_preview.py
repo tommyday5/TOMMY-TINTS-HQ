@@ -491,6 +491,14 @@ def _candidate_for_review(candidate_id):
             if ownership:
                 item["field_ownership"] = dict(ownership)
                 item["field_ownership"]["selections"] = json.loads(ownership["selections"])
+        if db.execute("""SELECT 1 FROM sqlite_master WHERE type='table'
+            AND name='hq_historical_identity_reviews'""").fetchone():
+            identity = db.execute("""SELECT revision,source_stamp,work_revision,
+                customer_id,customer_stamp,assessment_revision,decision,basis,updated_at
+                FROM hq_historical_identity_reviews WHERE candidate_id=?""",
+                (candidate_id,)).fetchone()
+            if identity:
+                item["identity_review"] = dict(identity)
         return item
 
 
@@ -717,6 +725,143 @@ def save_candidate_field_ownership(*, candidate_id, expected_revision, selection
         return revision
 
 
+
+# Identity review is an owner-authored, INACTIVE mapping proposal. It does not
+# assert verified identity, copy Sheets cells, or update canonical customers.
+_IDENTITY_DECISIONS = ("hold", "potential_match", "conflict")
+_IDENTITY_BASIS = ("none", "name_crosscheck", "owner_document_review")
+
+
+def _identity_review_tables(db):
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_historical_identity_reviews (
+        candidate_id TEXT PRIMARY KEY REFERENCES hq_historical_j_candidates(id),
+        revision INTEGER NOT NULL CHECK(revision >= 1),
+        source_stamp TEXT NOT NULL,
+        work_revision INTEGER NOT NULL,
+        customer_id TEXT NOT NULL REFERENCES hq_customers(id),
+        customer_stamp TEXT NOT NULL,
+        assessment_revision INTEGER NOT NULL,
+        decision TEXT NOT NULL CHECK(decision IN ('hold','potential_match','conflict')),
+        basis TEXT NOT NULL CHECK(basis IN ('none','name_crosscheck','owner_document_review')),
+        actor_fingerprint TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_historical_identity_review_events (
+        id TEXT PRIMARY KEY,
+        candidate_id TEXT NOT NULL REFERENCES hq_historical_j_candidates(id),
+        revision INTEGER NOT NULL,
+        source_stamp TEXT NOT NULL,
+        work_revision INTEGER NOT NULL,
+        customer_id TEXT NOT NULL,
+        customer_stamp TEXT NOT NULL,
+        assessment_revision INTEGER NOT NULL,
+        decision TEXT NOT NULL,
+        basis TEXT NOT NULL,
+        actor_fingerprint TEXT NOT NULL,
+        occurred_at TEXT NOT NULL,
+        UNIQUE(candidate_id,revision)
+    )""")
+
+
+def _identity_evidence(db, candidate, formula, computed):
+    """Recheck both source lists and current HQ customer without storing PII."""
+    _verified_source_candidate(formula, computed, candidate["sheet_row"],
+                               candidate["job_ref"], candidate["source_stamp"])
+    jobs, customers = _check_source(formula, computed)
+    name = _cell(jobs[candidate["sheet_row"] - 4], 2)
+    source_name = _norm(name)
+    work = db.execute("""SELECT w.revision,w.customer_id,c.name,c.email,c.phone
+        FROM hq_work_records w JOIN hq_customers c ON c.id=w.customer_id
+        WHERE w.id=?""", (candidate["work_id"],)).fetchone()
+    if work is None or work["revision"] != candidate["work_revision"]:
+        raise ValueError("Native work changed; withdraw and restage this candidate")
+    current = [str(work[key]) for key in ("customer_id", "name", "email", "phone")]
+    stamp = hashlib.sha256(json.dumps(current, ensure_ascii=True,
+                                      separators=(",", ":")).encode()).hexdigest()
+    source_count = sum(_norm(_cell(row, 0)) == source_name
+                       for row in customers[1:]) if source_name else 0
+    native_count = sum(_norm(row["name"]) == _norm(work["name"])
+                       for row in db.execute("SELECT name FROM hq_customers"))
+    return {"customer_id": work["customer_id"], "stamp": stamp,
+            "same_name": bool(source_name and source_name == _norm(work["name"])),
+            "source_count": source_count, "native_count": native_count}
+
+
+def save_customer_identity_review(*, candidate_id, expected_revision, decision, basis,
+                                  formula, computed, owner_identity):
+    """Save a provisional customer match decision; NEVER import/link a customer."""
+    if not storage_ready() or not isinstance(candidate_id, str) or not _HEX.fullmatch(candidate_id):
+        raise ValueError("Invalid candidate or persistent storage")
+    if type(expected_revision) is not int or not 0 <= expected_revision < 2**31:
+        raise ValueError("Invalid identity-review revision")
+    if decision not in _IDENTITY_DECISIONS or basis not in _IDENTITY_BASIS:
+        raise ValueError("Invalid identity review decision or basis")
+    if decision == "potential_match" and basis == "none":
+        raise ValueError("Potential match requires an explicit evidence basis")
+    actor, now = _actor_fingerprint(owner_identity), datetime.now(timezone.utc).isoformat()
+    with connect() as db:
+        db.execute("PRAGMA foreign_keys=ON")
+        _schema(db)
+        _review_tables(db)
+        _field_review_tables(db)
+        _identity_review_tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        candidate = db.execute("""SELECT work_id,work_revision,job_ref,sheet_row,
+            source_stamp,withdrawn_at FROM hq_historical_j_candidates WHERE id=?""",
+            (candidate_id,)).fetchone()
+        if candidate is None or candidate["withdrawn_at"] is not None:
+            raise ValueError("Historical candidate withdrawn or missing")
+        evidence = _identity_evidence(db, candidate, formula, computed)
+        assessment = db.execute("""SELECT revision,assessments,source_stamp,work_revision
+            FROM hq_historical_candidate_field_reviews WHERE candidate_id=?""",
+            (candidate_id,)).fetchone()
+        assessment_revision = 0
+        if assessment and (assessment["source_stamp"], assessment["work_revision"]) == (
+                candidate["source_stamp"], candidate["work_revision"]):
+            assessment_revision = assessment["revision"]
+        customer_assessment = (json.loads(assessment["assessments"]).get("customer")
+                               if assessment_revision else None)
+        if decision == "potential_match":
+            if customer_assessment != "appears_consistent":
+                raise ValueError("Assess customer identity as consistent first")
+            if not (evidence["same_name"] and evidence["source_count"] == 1
+                    and evidence["native_count"] == 1):
+                raise ValueError("Ambiguous or mismatched customer identity; hold for evidence")
+        elif decision == "conflict" and customer_assessment != "conflict":
+            raise ValueError("Record a conflicting customer field assessment first")
+        prior = db.execute("""SELECT revision,source_stamp,work_revision,customer_id,
+            customer_stamp,assessment_revision,decision,basis
+            FROM hq_historical_identity_reviews WHERE candidate_id=?""",
+            (candidate_id,)).fetchone()
+        current = (candidate["source_stamp"], candidate["work_revision"],
+                   evidence["customer_id"], evidence["stamp"], assessment_revision,
+                   decision, basis)
+        if prior and tuple(prior[key] for key in (
+                "source_stamp", "work_revision", "customer_id", "customer_stamp",
+                "assessment_revision", "decision", "basis")) == current:
+            return prior["revision"]  # exact retry, no new audit event
+        if (prior["revision"] if prior else 0) != expected_revision:
+            raise ValueError("Identity review changed; reload before saving")
+        revision = expected_revision + 1
+        db.execute("""INSERT INTO hq_historical_identity_reviews
+            (candidate_id,revision,source_stamp,work_revision,customer_id,
+             customer_stamp,assessment_revision,decision,basis,actor_fingerprint,updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(candidate_id) DO UPDATE SET
+             revision=excluded.revision,source_stamp=excluded.source_stamp,
+             work_revision=excluded.work_revision,customer_id=excluded.customer_id,
+             customer_stamp=excluded.customer_stamp,assessment_revision=excluded.assessment_revision,
+             decision=excluded.decision,basis=excluded.basis,
+             actor_fingerprint=excluded.actor_fingerprint,updated_at=excluded.updated_at""",
+            (candidate_id,revision,*current,actor,now))
+        db.execute("""INSERT INTO hq_historical_identity_review_events
+            (id,candidate_id,revision,source_stamp,work_revision,customer_id,
+             customer_stamp,assessment_revision,decision,basis,actor_fingerprint,occurred_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (uuid.uuid4().hex,candidate_id,revision,*current,actor,now))
+        return revision
+
+
 @migration_preview.route("/hq/migration/candidates/<candidate_id>/review", methods=["GET", "POST"])
 @required
 def candidate_field_review_page(candidate_id):
@@ -735,7 +880,7 @@ def candidate_field_review_page(candidate_id):
                 request.form.get("csrf", ""), session.get("csrf", "not-set")):
             abort(403)
         action = request.form.get("action", "")
-        if action not in ("inspect", "save", "save_ownership"):
+        if action not in ("inspect", "save", "save_ownership", "save_identity"):
             abort(400)
         provider = current_app.extensions["hq_sheets_connection"]()
         if not provider or provider[1] <= time.time():
@@ -750,6 +895,14 @@ def candidate_field_review_page(candidate_id):
                     save_candidate_field_review(
                         candidate_id=candidate_id, expected_revision=revision,
                         assessments=assessments, formula=formula, computed=computed,
+                        owner_identity=session.get("google_sub"))
+                elif action == "save_identity":
+                    revision = int(request.form.get("identity_revision", "-1"))
+                    save_customer_identity_review(
+                        candidate_id=candidate_id, expected_revision=revision,
+                        decision=request.form.get("identity_decision", ""),
+                        basis=request.form.get("identity_basis", ""),
+                        formula=formula, computed=computed,
                         owner_identity=session.get("google_sub"))
                 elif action == "save_ownership":
                     revision = int(request.form.get("ownership_revision", "-1"))
