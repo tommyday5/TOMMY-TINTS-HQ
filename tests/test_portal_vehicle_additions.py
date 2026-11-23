@@ -141,7 +141,7 @@ class CustomerVehicleAdditionTests(unittest.TestCase):
                 "operation_id": uuid.uuid4().hex}, "fixture-owner")
             with self.assertRaises(ValueError):
                 decide_vehicle_request(ref, "linked", foreign)
-            with self.assertRaises(ValueError):
+            with self.assertRaises(LookupError):
                 owner_prefill(ref, self.other_id)
             self.assertEqual(owner_prefill(ref, self.customer_id)["make"], "Hyundai")
             decide_vehicle_request(ref, "declined")
