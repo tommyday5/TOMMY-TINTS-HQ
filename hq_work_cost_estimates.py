@@ -198,12 +198,13 @@ def apply_estimate(work_id, action, payload, owner_identity, secret):
             if item is None:
                 raise ValueError("Choose an existing HQ cost assumption")
             same_snapshot = previous and previous["source_item_id"] == item["id"]
-            if same_snapshot:
-                if values["source_item_revision"] != previous["source_item_revision"]:
-                    raise ValueError("The selected source snapshot changed. Reload")
+            if same_snapshot and values["source_item_revision"] == previous["source_item_revision"]:
+                # Editing the old snapshot must never silently absorb newer assumptions.
                 source_revision = previous["source_item_revision"]
                 service = previous["service_snapshot"]
             else:
+                # Selecting an updated baseline explicitly is allowed only when
+                # the owner has loaded the exact current active library revision.
                 if item["is_archived"] or item["revision"] != values["source_item_revision"]:
                     raise ValueError("Cost Library source changed or is archived. Reload")
                 source_revision = item["revision"]
