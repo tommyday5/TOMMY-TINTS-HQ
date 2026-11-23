@@ -1,0 +1,27 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Services & products basket · Tommy Tints</title><link rel="stylesheet" href="/static/commerce.css"></head><body><main>
+<p><a href="/book">Bookings</a> · <a href="/book/services">Service-only requests</a> · <a href="/book/shop">Product shop</a> · <a href="/customer/basket-requests">My combined requests</a></p>
+<h1>Services & products — one quote request</h1>
+<p>Select workshop services and products together for one owner-reviewed quote. Prices below are indicative Retail references only. Selecting Trade or Maintenance does not grant discounts. No appointment, invoice, deposit, purchase or stock reservation is created.</p>
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="operation_id" value="{{ operation_id }}">
+<fieldset><legend>Vehicle services (up to 5)</legend>
+{% for s in services %}<label><input type="checkbox" name="services" value="{{ s.service }}"> {{ s.service }} — Retail reference £{{ '%.2f'|format(s.retail_pence/100) }}</label>
+{% else %}<p>Vehicle service prices have not been published yet.</p>{% endfor %}
+</fieldset>
+<label>Vehicle for selected services<select name="vehicle_id"><option value="">No vehicle / products only</option>
+{% for v in vehicles %}<option value="{{ v.id }}">{{ v.make }} {{ v.model }} — {{ v.registration or 'No registration recorded' }}</option>{% endfor %}
+</select></label>
+<p>Vehicle selection is required when requesting services. Only vehicles linked to your account are accepted.</p>
+<fieldset><legend>Products (quantity 0 means not selected)</legend>
+{% for p in products %}<label>{{ p.name }} {{ p.variant }} — £{{ '%.2f'|format(p.retail/100) }} each ({{ p.stock }} listed)
+<input aria-label="Quantity for {{ p.name }} {{ p.variant }}" type="number" inputmode="numeric" name="quantity_{{ p.id }}" value="0" min="0" max="{{ [p.stock,100]|min }}" step="1"></label>
+{% else %}<p>No published products available for enquiry.</p>{% endfor %}
+</fieldset>
+<label>Requested account type<select name="requested_tier"><option value="retail">Retail</option><option value="trade">Trade — owner verification required</option><option value="maintenance">Maintenance — entitlement verification required</option></select></label>
+<label>Product fulfilment<select name="fulfilment"><option value="collection">Collection</option><option value="delivery">Delivery (indicative charge added)</option></select></label>
+<label>Scope or delivery notes<textarea name="notes" maxlength="1000" rows="4" placeholder="Tell us what you need"></textarea></label>
+<button type="submit">Save combined quote request</button>
+</form>
+<p>The complete selection is saved in your Tommy Tints customer record for manual owner review. Retail reference totals and product availability may change until the quote is approved.</p>
+</main></body></html>

@@ -1,5 +1,5 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tommy Tints Shop</title><link rel="stylesheet" href="/static/commerce.css"><script defer src="/static/commerce-shop.js"></script><link rel="stylesheet" href="/static/tommy-bot.css?v=1"><script defer src="/static/tommy-bot.js?v=1"></script></head>
-<body><main><a class="brand" href="/book"><img src="/static/company-logo-header.webp" alt="Tommy Tints Bookings">Back to bookings</a><h1>Tommy Tints Shop</h1><p><a href="/book/services">Request vehicle services</a></p>
+<body><main><a class="brand" href="/book"><img src="/static/company-logo-header.webp" alt="Tommy Tints Bookings">Back to bookings</a><h1>Tommy Tints Shop</h1><p><a href="/book/services">Request vehicle services</a> · <a href="/book/basket">Combine services and products in one quote request</a></p>
 <p>Automotive accessories selected by Tommy Tints.</p><section class="grid">
 {% for product in products %}<article><h2>{{ product.name }}</h2><p>{{ product.variant }}</p><p>{{ product.description }}</p><strong>£{{ '%.2f'|format(product.retail/100) }}</strong><p>{{ product.stock }} available</p>
 <button data-product="{{ product.id }}" data-name="{{ product.name }} {{ product.variant }}" {{ 'disabled' if product.stock<1 else '' }}>Add to basket</button></article>

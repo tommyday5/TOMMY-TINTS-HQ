@@ -1,0 +1,14 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>My combined quote requests</title><link rel="stylesheet" href="/static/commerce.css"></head><body><main>
+<p><a href="/book/basket">New combined request</a> · <a href="/book">Bookings</a></p>
+<h1>My services & products requests</h1>
+<p>Only your own requests appear. A quoted amount is owner-reviewed; it is not a confirmed booking, invoice or payment.</p>
+{% for e in enquiries %}<article><h2>Request {{ e.id[:8] }} · {{ e.status }}</h2>
+<p>{{ e.created_at }} · {{ e.requested_tier|title }} requested · {{ e.fulfilment }}</p>
+{% if e.vehicle_id %}<p>Vehicle: {{ e.make }} {{ e.model }} {{ e.registration }}</p>{% endif %}
+<ul>{% for s in e.services %}<li>Service: {{ s.service }} (Retail reference £{{ '%.2f'|format(s.retail_pence/100) }})</li>{% endfor %}
+{% for p in e.products %}<li>Product: {{ p.quantity }} × {{ p.name }} {{ p.variant }} — Retail reference £{{ '%.2f'|format(p.total_pence/100) }}</li>{% endfor %}</ul>
+<p>Indicative Retail total: £{{ '%.2f'|format(e.indicative_total_pence/100) }} (includes any delivery reference)</p>
+{% if e.status == 'quoted' and e.approved_total_pence is not none %}<strong>Owner-approved quote: £{{ '%.2f'|format(e.approved_total_pence/100) }}</strong>{% endif %}
+{% if e.public_note %}<p>Message from Tommy Tints: {{ e.public_note }}</p>{% endif %}
+</article>{% else %}<p>No combined requests yet.</p>{% endfor %}
+</main></body></html>
