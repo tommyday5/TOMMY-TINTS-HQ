@@ -8,7 +8,7 @@ h1{font-size:clamp(24px,4vw,34px)}h2{font-size:21px}
 a{color:#ff727c}p{line-height:1.5;color:#bdc2cf;overflow-wrap:anywhere}
 .panel,article{background:#171a21;border:1px solid #3b3f48;border-radius:14px;margin:14px 0;padding:clamp(14px,2vw,22px)}
 article p{margin:6px 0}.button{display:inline-block;background:#d0142a;border:1px solid #fa3348;color:white;text-decoration:none;padding:11px 15px;border-radius:8px;font-weight:700}
-code{overflow-wrap:anywhere}a:focus-visible{outline:2px solid #f4d129;outline-offset:3px}
+code{overflow-wrap:anywhere}button.button{font:inherit;cursor:pointer}form{margin:12px 0}a:focus-visible,button:focus-visible{outline:2px solid #f4d129;outline-offset:3px}
 </style></head><body><main>
 <nav><a href="/hq/customers">← HQ customer directory</a> · <a href="/?page=jobs">Job cards</a></nav>
 <h1>{{ customer.name }}</h1>
@@ -16,6 +16,14 @@ code{overflow-wrap:anywhere}a:focus-visible{outline:2px solid #f4d129;outline-of
 <h2>Customer details</h2>
 <p>{{ customer.email or 'Email not recorded' }} · {{ customer.phone or 'Phone not recorded' }}</p>
 <p>Canonical HQ customer ID: <code>{{ customer.id }}</code></p>
+<p role="status"><strong>Directory status: {{ 'Archived' if archived else 'Active' }}</strong> · revision {{ archive_revision }}. Archiving hides the contact from the active customer directory only. It does not delete or change linked vehicles, jobs, approved quotes, customer portal access, payments, invoices or historical Sheets evidence.</p>
+<form method="post" action="/hq/customers/{{ customer.id }}/archive">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="operation_id" value="{{ operation_id }}">
+<input type="hidden" name="revision" value="{{ archive_revision }}">
+<input type="hidden" name="archived" value="{{ '0' if archived else '1' }}">
+<button class="button" type="submit">{{ 'Restore customer to active directory' if archived else 'Archive customer from active directory' }}</button>
+</form>
 <p>{% if customer.source_request_id %}Origin: reviewed public request{% else %}Origin: owner-created HQ contact{% endif %}. Historical Sheets identity and pricing tier require separate verification.</p>
 <a class="button" href="/hq/customers/{{ customer.id }}/edit">Edit customer details</a>
 <a class="button" href="/hq/customers/{{ customer.id }}/portal-access">Manage customer portal access</a>
