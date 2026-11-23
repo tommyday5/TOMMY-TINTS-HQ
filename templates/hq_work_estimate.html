@@ -65,4 +65,9 @@ table{border-collapse:collapse;width:100%;min-width:520px}td,th{text-align:left;
 <button type="submit" name="action" value="{{ 'restore' if existing.is_archived else 'archive' }}" class="secondary">{{ 'Restore estimate' if existing.is_archived else 'Archive estimate' }}</button>
 </form></div>{% endif %}
 {% else %}<p role="status">This work is approved, closed or archived. The existing estimate remains read-only to protect the historical decision.</p>{% endif %}
+{% if history %}<section class="panel"><h2>Estimate revision history</h2>
+<p>This ledger preserves the change sequence without displaying historical customer details or private note contents.</p>
+<div class="table"><table><thead><tr><th>Revision</th><th>Action</th><th>Recorded (UTC)</th></tr></thead><tbody>
+{% for event in history %}<tr><td>{{ event.revision }}</td><td>{{ event.action|capitalize }}</td><td>{{ event.occurred_at }}</td></tr>{% endfor %}
+</tbody></table></div></section>{% endif %}
 </main></body></html>
