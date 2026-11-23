@@ -1014,3 +1014,8 @@ def page():
     return render_template("hq_migration_preview.html", result=result,
                            error=error, csrf=session.get("csrf", ""),
                            candidates=candidates, work_options=options, saved=saved)
+
+
+# Additive owner-only historical batch workspace; no import endpoint.
+from hq_historical_job_batches import register_routes as _register_job_batch_routes
+_register_job_batch_routes(migration_preview)
