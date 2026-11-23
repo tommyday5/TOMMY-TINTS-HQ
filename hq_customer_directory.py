@@ -297,3 +297,141 @@ def new_customer():
         current_app.logger.exception("HQ standalone customer creation unavailable")
         abort(503)
     return redirect(url_for(".profile", customer_id=customer_id), code=303)
+
+
+class VehicleCreationConflict(Exception):
+    """An owner reused a vehicle-creation operation for a different submission."""
+
+
+def _vehicle_creation_tables(db):
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_standalone_vehicle_creations(
+        operation_id TEXT PRIMARY KEY,
+        vehicle_id TEXT NOT NULL UNIQUE REFERENCES hq_vehicles(id),
+        customer_id TEXT NOT NULL REFERENCES hq_customers(id),
+        payload_fingerprint TEXT NOT NULL,
+        actor_fingerprint TEXT NOT NULL,
+        created_at TEXT NOT NULL)""")
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_standalone_vehicle_events(
+        event_id TEXT PRIMARY KEY,
+        vehicle_id TEXT NOT NULL REFERENCES hq_vehicles(id),
+        customer_id TEXT NOT NULL REFERENCES hq_customers(id),
+        event_type TEXT NOT NULL CHECK(event_type='created'),
+        actor_fingerprint TEXT NOT NULL,
+        occurred_at TEXT NOT NULL)""")
+
+
+def create_standalone_vehicle(customer_id, payload, owner_identity):
+    """Create a vehicle for an existing HQ customer, independently of any job.
+
+    Atomic, idempotent and owner-gated by the calling route. Never creates
+    work, allocates a historical J-series number or sends provider writes.
+    """
+    from hq_native_work import _vehicle_fields
+    if not isinstance(customer_id, str) or not HEX_ID.fullmatch(customer_id):
+        raise ValueError("Invalid HQ customer reference")
+    if not hasattr(payload, "get"):
+        raise ValueError("Invalid vehicle submission")
+    operation_id = payload.get("operation_id", "")
+    if not isinstance(operation_id, str) or not HEX_ID.fullmatch(operation_id):
+        raise ValueError("Invalid vehicle submission identifier")
+    fields = _vehicle_fields(payload)
+    secret = current_app.secret_key
+    if not isinstance(secret, str) or not secret:
+        raise RuntimeError("Persistent HQ session secret required")
+    raw = json.dumps({"customer_id": customer_id, **fields},
+                     sort_keys=True, separators=(",", ":")).encode()
+    fingerprint = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+    actor = _actor_fingerprint(owner_identity)
+    with connect() as db:
+        db.execute("PRAGMA foreign_keys=ON")
+        _schema(db)
+        _archive_tables(db)
+        _vehicle_creation_tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        prior = db.execute("""SELECT vehicle_id,customer_id,payload_fingerprint
+            FROM hq_standalone_vehicle_creations WHERE operation_id=?""",
+            (operation_id,)).fetchone()
+        if prior is not None:
+            if prior["customer_id"] != customer_id or not hmac.compare_digest(
+                    prior["payload_fingerprint"], fingerprint):
+                raise VehicleCreationConflict(
+                    "This vehicle form was already submitted with different details. Open a new form.")
+            return prior["vehicle_id"]
+        if db.execute("SELECT 1 FROM hq_customers WHERE id=?",
+                      (customer_id,)).fetchone() is None:
+            raise LookupError("HQ customer not found")
+        if db.execute("""SELECT 1 FROM hq_customer_archive_state
+            WHERE customer_id=? AND is_archived=1""", (customer_id,)).fetchone():
+            raise ValueError("Restore this archived customer before adding vehicles")
+        registration = fields["registration"]
+        if registration:
+            normalised = registration.replace(" ", "").replace("-", "")
+            if db.execute("""SELECT 1 FROM hq_vehicles WHERE
+                replace(replace(upper(registration),' ',''),'-','')=? LIMIT 1""",
+                (normalised,)).fetchone():
+                raise ValueError(
+                    "That registration already exists in HQ. Open the existing vehicle instead.")
+        elif db.execute("""SELECT 1 FROM hq_vehicles
+            WHERE customer_id=? AND registration=''
+            AND lower(trim(make))=lower(trim(?))
+            AND lower(trim(model))=lower(trim(?))
+            AND model_year=? LIMIT 1""",
+            (customer_id, fields["make"], fields["model"],
+             fields["model_year"])).fetchone():
+            raise ValueError(
+                "An unregistered vehicle with these details already belongs to this customer. Review it first.")
+        vehicle_id = uuid.uuid4().hex
+        now = datetime.now(timezone.utc).isoformat()
+        db.execute("""INSERT INTO hq_vehicles
+            (id,customer_id,make,model,model_year,registration,created_at)
+            VALUES (?,?,?,?,?,?,?)""",
+            (vehicle_id, customer_id, fields["make"], fields["model"],
+             fields["model_year"], registration, now))
+        db.execute("""INSERT INTO hq_standalone_vehicle_creations
+            (operation_id,vehicle_id,customer_id,payload_fingerprint,actor_fingerprint,created_at)
+            VALUES (?,?,?,?,?,?)""",
+            (operation_id, vehicle_id, customer_id, fingerprint, actor, now))
+        db.execute("""INSERT INTO hq_standalone_vehicle_events
+            (event_id,vehicle_id,customer_id,event_type,actor_fingerprint,occurred_at)
+            VALUES (?,?,?,'created',?,?)""",
+            (uuid.uuid4().hex, vehicle_id, customer_id, actor, now))
+    return vehicle_id
+
+
+@customer_directory.route("/hq/customers/<customer_id>/vehicles/new", methods=["GET", "POST"])
+@required
+def new_vehicle(customer_id):
+    """Responsive owner-only form, tied to the canonical customer directory."""
+    try:
+        customer, _, _, _ = customer_snapshot(customer_id)
+        archived, _ = archive_status(customer_id)
+    except (ValueError, LookupError):
+        abort(404)
+    except (OSError, sqlite3.Error):
+        current_app.logger.exception("HQ vehicle creation unavailable")
+        abort(503)
+    if request.method == "GET":
+        return render_template("hq_vehicle_create.html", customer=customer,
+            archived=archived, csrf=session["csrf"],
+            operation_id=uuid.uuid4().hex, values={}, error=None)
+    if request.content_length is None or request.content_length > 8192:
+        abort(413)
+    if not secrets.compare_digest(request.form.get("csrf", ""),
+                                  session.get("csrf", "not-set")):
+        abort(403)
+    payload = request.form.to_dict(flat=True)
+    try:
+        create_standalone_vehicle(customer_id, payload, session.get("google_sub"))
+    except (ValueError, VehicleCreationConflict) as exc:
+        return render_template("hq_vehicle_create.html", customer=customer,
+            archived=archived, csrf=session["csrf"],
+            operation_id=payload.get("operation_id", ""),
+            values=payload, error=str(exc)), (
+                409 if isinstance(exc, VehicleCreationConflict) else 400)
+    except LookupError:
+        abort(404)
+    except (OSError, sqlite3.Error, RuntimeError):
+        current_app.logger.exception("HQ vehicle creation write unavailable")
+        abort(503)
+    return redirect(url_for(".profile", customer_id=customer_id,
+                            vehicle_created="1"), code=303)
