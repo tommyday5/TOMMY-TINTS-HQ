@@ -26,6 +26,23 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
 <p>Year: {{ v.model_year or 'Not recorded' }} · Registration: {{ v.registration or 'Not recorded' }}</p>
 </article>{% else %}<div class="card">No saved HQ vehicle profiles are available yet.</div>{% endfor %}
 <section class="card">
+<h2>Request to add a vehicle</h2>
+<p>Send a new vehicle to Tommy Tints for verification. It will not appear in your bookings list until the owner saves it to HQ and links the approved request.</p>
+{% if vehicle_submitted %}<p role="status"><strong>Vehicle addition request received for owner review.</strong></p>{% endif %}
+<form method="post" action="/customer/profile/vehicle-request">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="operation_id" value="{{ vehicle_operation_id }}">
+<label for="new_make">Make</label><input id="new_make" name="make" required maxlength="60">
+<label for="new_model">Model</label><input id="new_model" name="model" required maxlength="60">
+<label for="new_year">Model year (optional)</label><input id="new_year" name="model_year" inputmode="numeric" pattern="[0-9]{4}" maxlength="4">
+<label for="new_reg">Registration (optional)</label><input id="new_reg" name="registration" maxlength="20" autocapitalize="characters">
+<button type="submit">Request vehicle addition</button>
+</form>
+{% if vehicle_requests %}<h3>Your vehicle addition requests</h3>
+{% for item in vehicle_requests %}<p>{{ item.make }} {{ item.model }} {{ item.model_year }} · {{ item.registration or 'No registration yet' }} — <strong>{{ item.status|title }}</strong>{% if item.status=='linked' %} (saved in HQ){% elif item.status=='pending' %} (not yet approved){% else %} (not added){% endif %}</p>{% endfor %}
+{% endif %}
+</section>
+<section class="card">
 <h2>Request a correction</h2>
 <p>Select a customer detail or one of your vehicles. Requests are checked against your authenticated account and cannot be applied automatically.</p>
 <form method="post" action="/customer/profile/correction">

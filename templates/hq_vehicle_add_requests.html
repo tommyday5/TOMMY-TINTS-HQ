@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>Vehicle addition reviews — Tommy Tints HQ</title>
+<style>
+:root{color-scheme:dark;background:#090b10;color:#fff;font-family:system-ui,sans-serif}*{box-sizing:border-box}
+body{padding:clamp(12px,3vw,30px);margin:0}main{max-width:950px;margin:auto}
+a{color:#ff8995}.card{padding:clamp(14px,3vw,22px);border:1px solid #454956;background:#171a22;border-radius:12px;margin:16px 0}
+p{line-height:1.55;color:#d0d3dd;overflow-wrap:anywhere}select{width:100%;padding:12px;margin:10px 0;border:1px solid #717c91;border-radius:8px;background:#0a111c;color:white;font:inherit}
+button{padding:12px 18px;margin:8px 8px 8px 0;font-weight:700;color:white;background:#b4172e;border:1px solid #ec4055;border-radius:8px;cursor:pointer}
+button.alt{background:#343a48;border-color:#7e879a}:focus-visible{outline:3px solid #ffdd40;outline-offset:2px}
+</style></head><body><main>
+<nav><a href="/hq/customers">← Customer directory</a> · <a href="/hq/profile-change-requests">Profile corrections</a></nav>
+<h1>New vehicle addition requests</h1>
+<p>Customers can propose vehicles, but only you can create and link canonical HQ records. Verify customer ownership, registration and supporting evidence first. Do not duplicate a vehicle already recorded for someone else. Linking cannot modify an existing vehicle.</p>
+{% if saved %}<div class="card" role="status">Review decision saved in HQ.</div>{% endif %}
+{% if error %}<div class="card" role="alert">{{ error }}</div>{% endif %}
+{% for item in pending %}
+<article class="card">
+<h2>{{ item.customer_name }}</h2>
+<p><strong>Proposed:</strong> {{ item.make }} {{ item.model }}{% if item.model_year %} · {{ item.model_year }}{% endif %} · {{ item.registration or 'No registration provided' }}</p>
+<p><a href="/hq/customers/{{ item.customer_id }}">Review customer and job history</a> ·
+<a href="/hq/customers/{{ item.customer_id }}/vehicles/new?vehicle_request={{ item.id }}">Review and save this vehicle in HQ</a></p>
+<p>After saving, return here to link the matching vehicle. The match check covers the customer ID, make, model, year and normalised registration. If you changed any proposed detail, decline this request and ask for corrected evidence.</p>
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="request_id" value="{{ item.id }}">
+<label for="vehicle-{{ item.id }}">Existing saved vehicle to link</label>
+<select id="vehicle-{{ item.id }}" name="vehicle_id">
+<option value="">Choose matching HQ vehicle</option>
+{% for v in item.vehicles %}
+<option value="{{ v.id }}">{{ v.make }} {{ v.model }} · {{ v.model_year or 'No year' }} · {{ v.registration or 'No registration' }}</option>
+{% endfor %}
+</select>
+<button name="decision" value="linked" type="submit">Link matching saved vehicle</button>
+</form>
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="request_id" value="{{ item.id }}">
+<button name="decision" value="declined" class="alt" type="submit">Decline without adding</button>
+</form>
+</article>
+{% else %}<section class="card"><p>No pending vehicle addition requests.</p></section>{% endfor %}
+<p>No request approval creates a booking, charges a payment, sends an email, reserves inventory, changes historical J-series work or writes to Google Sheets.</p>
+</main></body></html>

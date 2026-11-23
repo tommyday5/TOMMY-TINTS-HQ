@@ -17,6 +17,10 @@ from customer_request_store import connect
 from hq_auth import required
 from hq_core_records import _schema
 from hq_customer_portal import active_customer
+from hq_portal_vehicle_additions import (
+    submit_vehicle_request, customer_vehicle_requests, owner_vehicle_requests,
+    decide_vehicle_request,
+)
 
 profile_requests = Blueprint("profile_requests", __name__)
 _ID = re.compile(r"[0-9a-f]{32}\Z")
@@ -214,9 +218,12 @@ def customer_profile():
         abort(503)
     return render_template("customer_profile.html", customer=customer,
                            vehicles=vehicles, pending=pending,
+                           vehicle_requests=customer_vehicle_requests(customer_id),
                            csrf=session["customer_portal_csrf"],
                            operation_id=secrets.token_hex(16),
+                           vehicle_operation_id=secrets.token_hex(16),
                            submitted=request.args.get("submitted") == "1",
+                           vehicle_submitted=request.args.get("vehicle_submitted") == "1",
                            error=None)
 
 
@@ -238,8 +245,11 @@ def customer_correction():
         customer, vehicles, pending = customer_profile_snapshot(customer_id)
         return render_template("customer_profile.html", customer=customer,
                                vehicles=vehicles, pending=pending,
+                               vehicle_requests=customer_vehicle_requests(customer_id),
                                csrf=session["customer_portal_csrf"],
-                               operation_id=secrets.token_hex(16), submitted=False,
+                               operation_id=secrets.token_hex(16),
+                               vehicle_operation_id=secrets.token_hex(16),
+                               submitted=False, vehicle_submitted=False,
                                error=str(exc)), 400
     except (sqlite3.Error, OSError):
         current_app.logger.exception("Customer correction unavailable")
@@ -279,3 +289,68 @@ def owner_corrections():
     return render_template("hq_profile_change_requests.html", pending=pending,
                            csrf=session["csrf"], error=None,
                            saved=request.args.get("saved") == "1")
+
+
+@profile_requests.post("/customer/profile/vehicle-request")
+def customer_vehicle_addition():
+    """Customer proposes a vehicle; never saves it to the canonical vehicle table."""
+    customer_id = active_customer()
+    if not customer_id:
+        return redirect("/customer/login", code=302)
+    if request.content_length is None or request.content_length > 2048:
+        abort(413)
+    if not secrets.compare_digest(request.form.get("csrf", ""),
+                                  session.get("customer_portal_csrf", "not-set")):
+        abort(403)
+    try:
+        submit_vehicle_request(customer_id, request.form)
+    except (ValueError, LookupError) as exc:
+        try:
+            customer, vehicles, pending = customer_profile_snapshot(customer_id)
+            additions = customer_vehicle_requests(customer_id)
+        except (sqlite3.Error, OSError):
+            abort(503)
+        return render_template("customer_profile.html", customer=customer,
+            vehicles=vehicles, pending=pending, vehicle_requests=additions,
+            csrf=session["customer_portal_csrf"], operation_id=secrets.token_hex(16),
+            vehicle_operation_id=secrets.token_hex(16),
+            submitted=False, vehicle_submitted=False, error=str(exc)), 400
+    except (sqlite3.Error, OSError):
+        current_app.logger.exception("Customer vehicle request unavailable")
+        abort(503)
+    return redirect(url_for(".customer_profile", vehicle_submitted="1"), code=303)
+
+
+@profile_requests.route("/hq/vehicle-add-requests", methods=["GET", "POST"])
+@required
+def owner_vehicle_additions():
+    """Owner reviews requested additions; must separately save an actual vehicle."""
+    if request.method == "POST":
+        if request.content_length is None or request.content_length > 2048:
+            abort(413)
+        if not secrets.compare_digest(request.form.get("csrf", ""),
+                                      session.get("csrf", "not-set")):
+            abort(403)
+        try:
+            decide_vehicle_request(request.form.get("request_id", ""),
+                request.form.get("decision", ""), request.form.get("vehicle_id", ""))
+        except LookupError:
+            abort(404)
+        except ValueError as exc:
+            try:
+                pending = owner_vehicle_requests()
+            except (sqlite3.Error, OSError):
+                abort(503)
+            return render_template("hq_vehicle_add_requests.html", pending=pending,
+                csrf=session["csrf"], error=str(exc), saved=False), 409
+        except (sqlite3.Error, OSError):
+            current_app.logger.exception("Vehicle addition decision unavailable")
+            abort(503)
+        return redirect(url_for(".owner_vehicle_additions", saved="1"), code=303)
+    try:
+        pending = owner_vehicle_requests()
+    except (sqlite3.Error, OSError):
+        current_app.logger.exception("Vehicle addition inbox unavailable")
+        abort(503)
+    return render_template("hq_vehicle_add_requests.html", pending=pending,
+        csrf=session["csrf"], error=None, saved=request.args.get("saved") == "1")
