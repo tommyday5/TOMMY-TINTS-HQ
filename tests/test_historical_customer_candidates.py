@@ -140,8 +140,9 @@ class CustomerHistoricalCandidateTests(unittest.TestCase):
 
     def test_withdraw_retains_history_and_allows_restaging(self):
         cid=self.stage()
-        withdraw_customer_candidate(cid,0,"synthetic-owner")
-        withdraw_customer_candidate(cid,0,"synthetic-owner")
+        with app.app_context():
+            withdraw_customer_candidate(cid,0,"synthetic-owner")
+            withdraw_customer_candidate(cid,0,"synthetic-owner")
         self.assertEqual(current_candidates(),[])
         with connect() as db:
             actions=[r[0] for r in db.execute("""SELECT action FROM
