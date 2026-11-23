@@ -34,6 +34,34 @@
 </form>
 <p>Choose the readiness stage matching the quote's collection/delivery method. Do not mark readiness without checking actual products.</p>
 {% endif %}
+<h3>Native product order (owner controlled)</h3>
+{% if not item.order_id %}
+<p>No product order has been created. Approval and preparation updates alone do not create an order, reserve stock or accept payment.</p>
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="action" value="order_create">
+<input type="hidden" name="request_id" value="{{ item.id }}">
+<input type="hidden" name="revision" value="{{ item.revision }}">
+<button type="submit">Create native product order record</button>
+</form>
+{% else %}
+<p><strong>Order {{ item.order_id[:8]|upper }}</strong> · {{ item.order_status|replace('_',' ')|title }}. Owner-entered administrative record; no receipt, stock reservation or dispatch is implied.</p>
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="action" value="order_edit">
+<input type="hidden" name="request_id" value="{{ item.id }}">
+<input type="hidden" name="revision" value="{{ item.order_revision }}">
+<label for="order-status-{{ item.id }}">Order administration status</label>
+<select id="order-status-{{ item.id }}" name="order_status" {% if item.order_status in ('closed','cancelled') %}disabled{% endif %}>
+{% for stage,name in [('open','Open'),('on_hold','On hold'),('closed','Administratively closed'),('cancelled','Cancelled')] %}
+<option value="{{ stage }}" {% if stage == item.order_status %}selected{% endif %}>{{ name }}</option>
+{% endfor %}
+</select>
+<label for="order-note-{{ item.id }}">Customer-visible order note</label>
+<textarea id="order-note-{{ item.id }}" name="order_note" maxlength="400" rows="3" {% if item.order_status in ('closed','cancelled') %}disabled{% endif %}>{{ item.order_note }}</textarea>
+{% if item.order_status not in ('closed','cancelled') %}<button type="submit">Save order status</button>{% endif %}
+</form>
+{% endif %}
 {% endif %}
 </article>{% else %}<p>No customer product proceed requests yet.</p>{% endfor %}
 <p>Approval does not charge cards, deduct inventory, send messages, create orders or mark payment as received.</p>
