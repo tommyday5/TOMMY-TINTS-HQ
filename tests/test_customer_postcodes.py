@@ -14,6 +14,7 @@ from hq_auth import issue_session
 from hq_auth_store import auth_db
 from hq_core_records import _schema
 from hq_customer_archive import set_archived
+from hq_customer_portal import issue_customer_invite, redeem_customer_invite
 from hq_customer_postcodes import normalize_postcode, save_postcode, snapshot
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -105,6 +106,22 @@ class CustomerPostcodeTests(unittest.TestCase):
             self.assertEqual(restored.execute("SELECT count(*) FROM hq_customer_postcode_events").fetchone()[0],1)
             self.assertEqual(restored.execute("SELECT is_archived FROM hq_customer_archive_state WHERE customer_id=?",
                 (self.customer,)).fetchone()[0],1)
+        self.assertEqual(snapshot(self.customer)[1]["postcode"],"SW1A 1AA")
+
+    def test_customer_portal_session_cannot_edit_or_view_owner_postcode(self):
+        save_postcode(self.customer,"SW1A 1AA",0,"f"*32,"synthetic-owner")
+        invite=issue_customer_invite(self.customer,"e"*32)
+        sid=redeem_customer_invite(invite,"synthetic-client")
+        self.assertTrue(sid)
+        with self.client.session_transaction() as sess:
+            sess["customer_portal_sid"]=sid
+            sess["customer_portal_csrf"]="customer-only-csrf"
+        account=self.client.get("/customer/account")
+        self.assertEqual(account.status_code,200)
+        self.assertNotIn(b"SW1A 1AA",account.data)
+        self.assertEqual(self.client.get(self.url).status_code,302)
+        self.assertEqual(self.client.get("/hq/customers/"+self.other+"/postcode").status_code,302)
+        self.assertEqual(self.client.post(self.url,data=self.data(csrf="customer-only-csrf")).status_code,302)
         self.assertEqual(snapshot(self.customer)[1]["postcode"],"SW1A 1AA")
 
     def test_format_and_missing_customer(self):
