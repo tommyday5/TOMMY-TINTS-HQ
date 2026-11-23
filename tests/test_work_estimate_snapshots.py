@@ -184,6 +184,36 @@ class WorkEstimateTests(unittest.TestCase):
                     "SELECT COUNT(*) FROM hq_work_cost_estimates"
                 ).fetchone()[0], 1)
 
+    def test_explicit_current_revision_rebaseline_does_not_silently_reprice(self):
+        self.save()
+        with app.app_context():
+            apply_change(
+                action="save", item_id=self.item_id, expected_revision=0,
+                operation_id=uuid.uuid4().hex,
+                fields={**self.library, "material_cost": "88.80"},
+                owner="synthetic-owner", secret=app.secret_key)
+            self.assertEqual(estimate_snapshot(self.work_id)[1]["material_pence"], 1925)
+        selected = self.owner.get(self.path + "?library_id=" + self.item_id)
+        self.assertEqual(selected.status_code, 200)
+        self.assertIn(b"88.80", selected.data)
+        invalid = {**self.form, "operation_id": uuid.uuid4().hex,
+                   "source_item_revision": "2", "materials": "88.80"}
+        self.assertEqual(self.owner.post(self.path, data=invalid).status_code, 409)
+        with app.app_context():
+            self.assertEqual(estimate_snapshot(self.work_id)[1]["revision"], 0)
+        fresh = {**invalid, "source_item_revision": "1",
+                 "operation_id": uuid.uuid4().hex}
+        self.assertEqual(self.owner.post(self.path, data=fresh).status_code, 303)
+        with app.app_context(), connect() as db:
+            saved = estimate_snapshot(self.work_id)[1]
+            self.assertEqual(saved["revision"], 1)
+            self.assertEqual(saved["source_item_revision"], 1)
+            self.assertEqual(saved["material_pence"], 8880)
+            old = db.execute("""SELECT after_state FROM hq_work_cost_estimate_events
+                WHERE work_id=? AND revision=0""", (self.work_id,)).fetchone()
+            self.assertIn('"material_pence": 1925', old["after_state"])
+        self.assertIn(b"Estimate revision history", self.owner.get(self.path).data)
+
     def test_invalid_submission_cannot_mutate_real_work_or_public_app(self):
         self.login()
         for patch_values in (
