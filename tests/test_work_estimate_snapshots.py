@@ -117,15 +117,14 @@ class WorkEstimateTests(unittest.TestCase):
         with app.app_context():
             self.assertEqual(estimate_snapshot(self.work_id)[1]["material_pence"], 2470)
         stale = {**self.form, "operation_id": uuid.uuid4().hex}
-        self.assertEqual(self.owner.post(self.path, data=stale).status_code, 200)
-        self.assertIn(b"Estimate changed", self.owner.get(self.path).data) if False else None
+        self.assertEqual(self.owner.post(self.path, data=stale).status_code, 409)
         archived = {"csrf": self.csrf, "operation_id": uuid.uuid4().hex,
                     "action": "archive", "work_revision": "0", "expected_revision": "1"}
         self.assertEqual(self.owner.post(self.path, data=archived).status_code, 303)
         self.assertEqual(self.owner.post(self.path, data=archived).status_code, 303)
         self.assertEqual(self.owner.post(self.path, data={
             **changed, "operation_id": uuid.uuid4().hex,
-            "expected_revision": "2"}).status_code, 200)
+            "expected_revision": "2"}).status_code, 409)
         restored = {**archived, "operation_id": uuid.uuid4().hex,
                     "action": "restore", "expected_revision": "2"}
         self.assertEqual(self.owner.post(self.path, data=restored).status_code, 303)
@@ -177,7 +176,7 @@ class WorkEstimateTests(unittest.TestCase):
         self.assertEqual(self.owner.post(self.path, data={
             **self.form, "operation_id": uuid.uuid4().hex,
             "expected_revision": "1", "work_revision": "3",
-        }).status_code, 200)
+        }).status_code, 409)
         with app.app_context():
             self.assertEqual(estimate_snapshot(self.work_id)[1]["material_pence"], 1925)
             with connect() as db:
@@ -195,7 +194,7 @@ class WorkEstimateTests(unittest.TestCase):
             with self.subTest(patch=patch_values):
                 response = self.owner.post(self.path, data={
                     **self.form, **patch_values, "operation_id": uuid.uuid4().hex})
-                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.status_code, 409)
         with app.app_context():
             self.assertIsNone(estimate_snapshot(self.work_id)[1])
         self.assertEqual(self.other.get("/book").status_code, 200)
