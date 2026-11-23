@@ -92,7 +92,8 @@ def review_rows(formula, computed, page_index=0):
                      "type": str(_cell(row, 1))[:50],
                      "postcode": str(_cell(row, 2))[:30],
                      "status": label,
-                     "source_stamp": source_stamp(formula, computed, idx)
+                     "source_stamp": _stamp([WORKBOOK, CUSTOMERS_SHEET_ID, idx,
+                                              row, compared[idx]])
                      if label == "review" else None,
                      "operation_id": uuid.uuid4().hex})
     page_count = max(1, (len(rows) + PAGE_SIZE - 1) // PAGE_SIZE)
