@@ -47,6 +47,47 @@
 </form>
 {% else %}
 <p><strong>Order {{ item.order_id[:8]|upper }}</strong> · {{ item.order_status|replace('_',' ')|title }}. Owner-entered administrative record; no receipt, stock reservation or dispatch is implied.</p>
+<h4>Product handover evidence (owner reported)</h4>
+<p>Record handover only after reviewing a collection signature or carrier receipt. This creates an audit entry, not independently verified delivery, payment or stock movement. The private evidence reference never appears in the customer portal.</p>
+{% if item.handover_state %}
+<p role="status"><strong>Handover {{ item.handover_state|replace('_',' ')|title }}</strong> · {{ item.handover_date }} · {{ item.handover_evidence_type|replace('_',' ')|title }}</p>
+<p>Private evidence reference: <code>{{ item.handover_evidence_reference }}</code></p>
+{% if item.handover_note %}<p>Customer-visible handover note: {{ item.handover_note }}</p>{% endif %}
+{% if item.handover_state == 'recorded' %}
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="action" value="handover_dispute">
+<input type="hidden" name="request_id" value="{{ item.id }}">
+<input type="hidden" name="revision" value="{{ item.handover_revision }}">
+<label>Dispute / correct handover record (10–400 characters)
+<textarea name="handover_note" required minlength="10" maxlength="400" rows="3" placeholder="Explain why the earlier handover record needs review"></textarea></label>
+<button type="submit">Flag handover evidence as disputed</button>
+</form>
+{% else %}
+<p>Evidence is flagged for review. The original reference and audit record are retained and cannot be overwritten.</p>
+{% endif %}
+{% elif item.order_status == 'open' %}
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="action" value="handover_record">
+<input type="hidden" name="request_id" value="{{ item.id }}">
+<input type="hidden" name="revision" value="0">
+<input type="hidden" name="evidence_type" value="{{ 'collection_confirmation' if item.order_fulfilment == 'collection' else 'carrier_handover_receipt' }}">
+<p>Expected evidence: {{ 'collection signature / confirmation' if item.order_fulfilment == 'collection' else 'carrier handover receipt' }}</p>
+<label>Handover date <input type="date" name="handover_date" required></label>
+<label>Private evidence/document reference <input type="text" name="evidence_reference" minlength="3" maxlength="120" autocomplete="off" required></label>
+<label>Customer-visible handover update (optional)
+<textarea name="handover_note" maxlength="400" rows="3" placeholder="No external message is sent automatically."></textarea></label>
+<button type="submit">Record owner-reported handover evidence</button>
+</form>
+{% else %}<p>Handover recording is available only for open orders. A closed, cancelled or held order cannot be marked handed over.</p>
+{% endif %}
+{% if item.handover_history %}
+<details><summary>Handover audit history ({{ item.handover_history|length }} events)</summary>
+<ul>{% for event in item.handover_history %}
+<li>Revision {{ event.revision }} · {{ event.state|title }} · {{ event.occurred_at }}{% if event.public_note %} — {{ event.public_note }}{% endif %}</li>
+{% endfor %}</ul></details>
+{% endif %}
 <form method="post">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <input type="hidden" name="action" value="order_edit">
