@@ -204,7 +204,7 @@ def save_field_review(*, candidate_id, formula, computed, decisions, expected_re
                  candidate["native_stamp"],tier["revision"],
                  decisions["name"],decisions["account_type"],decisions["postcode"],now))
             db.execute("""INSERT INTO hq_historical_customer_field_events
-                VALUES(?,?,?,?,?,?,?)""",
+                VALUES(?,?,?,?,?,?,?,?)""",
                 (uuid.uuid4().hex,candidate_id,resulting_revision,
                  decisions["name"],decisions["account_type"],decisions["postcode"],
                  actor,now))
