@@ -411,9 +411,20 @@ def new_vehicle(customer_id):
         current_app.logger.exception("HQ vehicle creation unavailable")
         abort(503)
     if request.method == "GET":
+        values = {}
+        request_ref = request.args.get("vehicle_request", "")
+        if request_ref:
+            from hq_portal_vehicle_additions import owner_prefill
+            try:
+                values = owner_prefill(request_ref, customer_id)
+            except (ValueError, LookupError):
+                abort(404)
+            except (sqlite3.Error, OSError):
+                current_app.logger.exception("Vehicle request prefill unavailable")
+                abort(503)
         return render_template("hq_vehicle_create.html", customer=customer,
             archived=archived, csrf=session["csrf"],
-            operation_id=uuid.uuid4().hex, values={}, error=None)
+            operation_id=uuid.uuid4().hex, values=values, error=None)
     if request.content_length is None or request.content_length > 8192:
         abort(413)
     if not secrets.compare_digest(request.form.get("csrf", ""),
