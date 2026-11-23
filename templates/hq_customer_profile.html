@@ -33,6 +33,8 @@ code{overflow-wrap:anywhere}button.button{font:inherit;cursor:pointer}form{margi
 <a class="button" href="/hq/maintenance/visits/new?customer_id={{ customer.id }}">Log maintenance visit</a>
 </section>
 <h2>Saved vehicles ({{ vehicles|length }})</h2>
+{% if request.args.get('vehicle_created') == '1' %}<p role="status">Vehicle saved to this HQ customer. Reload to confirm it remains in the list.</p>{% endif %}
+{% if not archived %}<p><a class="button" href="/hq/customers/{{ customer.id }}/vehicles/new">Add vehicle without a job</a></p>{% endif %}
 {% for v in vehicles %}<article>
 <strong>{{ v.make }} {{ v.model }}</strong>
 <p>{{ v.model_year or 'Year not recorded' }} · {{ v.registration or 'Registration not recorded' }}</p>
