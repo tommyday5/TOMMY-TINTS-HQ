@@ -6,7 +6,7 @@ main{max-width:920px;margin:auto;padding:20px}a{color:#ff7881}section{background
 </style></head><body><main>
 <p><a href="/hq/migration/preview">Historical Jobs review</a> · <a href="/hq/customers">HQ Customers</a></p>
 <h1>Historical job review batches</h1>
-<p class="warning">Review only — no import, active link, authority change, payment or booking. The current source fingerprint covers Jobs columns A–AZ only, not the remaining historical financial and agreement fields. Source and native data must be reverified before any future import.</p>
+<p class="warning">Review only — no import, active link, authority change, payment or booking. Legacy proposal fingerprints cover Jobs A–AZ. Save separate immutable A–CP evidence for all 94 columns, including historical financial and agreement fields. Evidence records a past source snapshot, not field reconciliation or verified payments. Source and native data must be reverified before any future import.</p>
 {% if error %}<p role="alert">{{ error }}</p>{% endif %}
 {% if saved %}<p role="status">Review batch change saved. No original job was modified.</p>{% endif %}
 {% set ns=namespace(active=[]) %}
@@ -25,6 +25,8 @@ main{max-width:920px;margin:auto;padding:20px}a{color:#ff7881}section{background
 {% for batch in batches %}
 <section><h3>Batch {{ batch.id[:12] }} · {{ "Archived" if batch.archived_at else "Review only" }}</h3><p>{{ batch.created_at }} · {{ batch['items']|length }} proposals</p>
 <ul>{% for item in batch['items'] %}<li>{{ item.job_ref }} · source row {{ item.sheet_row }} · HQ {{ item.work_id[:8] }} (rev {{ item.work_revision }}) — {% if item.stale %}Native changed / proposal unavailable{% else %}Native revision unchanged; source not rechecked{% endif %}</li>{% endfor %}</ul>
+<p>{% if batch.full_evidence_at %}94-column source evidence v2 saved at {{ batch.full_evidence_at }} (not freshly checked).{% else %}No 94-column source evidence saved; legacy scope only.{% endif %}</p>
+{% if not batch.archived_at %}<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="full_evidence"><input type="hidden" name="batch_id" value="{{ batch.id }}"><input type="hidden" name="revision" value="{{ batch.revision }}"><button type="submit">{{ "Recheck saved full-width evidence" if batch.full_evidence_at else "Save 94-column source evidence" }}</button></form><p><small>If the source changes after evidence is saved, archive and restage the batch. No historical record will be changed.</small></p>{% endif %}
 {% if not batch.archived_at %}<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="archive"><input type="hidden" name="batch_id" value="{{ batch.id }}"><input type="hidden" name="revision" value="{{ batch.revision }}"><button type="submit">Archive batch</button></form>{% endif %}
 </section>
 {% else %}<p>No review batches saved.</p>{% endfor %}
