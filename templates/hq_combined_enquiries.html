@@ -24,8 +24,24 @@
 <button type="submit">Create linked native HQ quote</button>
 </form>
 <p>The approved total becomes the native draft price. Allocate each service, product and delivery line in the linked HQ quote before issuing an itemised PDF.</p>
+{% elif not e.services and e.product_quote_id %}
+<p><strong>Native HQ product-only quote:</strong> {{ e.product_quote_id[:8] }} · {{ e.product_quote_status|title }} · £{{ '%.2f'|format(e.approved_total_pence/100) }}</p>
+<p>No vehicle was invented. Quote status is not payment, fulfilment, stock reservation or a confirmed order.</p>
+{% if e.product_quote_status in ('draft','approved') %}
+<form method="post" action="/hq/combined-enquiries/{{ e.id }}/product-quote-status">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="revision" value="{{ e.product_quote_revision }}">
+{% if e.product_quote_status == 'draft' %}
+<button name="status" value="approved" type="submit">Approve product-only quotation</button>
+{% endif %}
+<button name="status" value="withdrawn" type="submit">Withdraw quotation</button>
+</form>
+{% endif %}
 {% elif e.status == 'quoted' and not e.services %}
-<p>Product-only quote: retained in the owner inbox. Creating a vehicle job would invent a vehicle; a product order workflow is still required.</p>
+<form method="post" action="/hq/combined-enquiries/{{ e.id }}/create-product-quote">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="revision" value="{{ e.revision }}">
+<button type="submit">Create native product-only HQ quote</button>
+</form>
+<p>Create an editable-status vehicle-free quotation linked to this exact basket and canonical customer. An additional owner approval is required. No stock movement, invoice, booking or payment is created.</p>
 {% endif %}
 {% if not e.linked_work_id and e.status not in ('declined','closed') %}<form method="post">
 <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="enquiry_id" value="{{ e.id }}"><input type="hidden" name="revision" value="{{ e.revision }}">
