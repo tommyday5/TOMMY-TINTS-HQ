@@ -149,12 +149,10 @@ def register_routes(bp):
             if not secrets.compare_digest(request.form.get("csrf", ""), session.get("csrf", "not-set")):
                 abort(403)
             action = request.form.get("action")
-            if action not in ("create", "archive"):
+            if action not in ("create", "archive") or (action == "archive" and request.form.get("revision") != "0"):
                 abort(400)
             try:
                 if action == "archive":
-                    if request.form.get("revision") != "0":
-                        abort(400)
                     archive_batch(request.form.get("batch_id", ""), 0, session.get("google_sub"))
                 else:
                     provider = current_app.extensions["hq_sheets_connection"]()
