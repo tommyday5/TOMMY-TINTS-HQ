@@ -16,6 +16,12 @@
 {% elif e.linked_work_status == 'cancelled' %}
 <p>HQ work status: Cancelled. Please contact Tommy Tints before proceeding.</p>
 {% endif %}
+{% if e.product_quote_status == 'approved' and e.approved_product_quote_pence is not none %}
+<p><strong>Product-only HQ quote approved: £{{ '%.2f'|format(e.approved_product_quote_pence/100) }}</strong></p>
+<p>This is a confirmed quotation only. No product has been reserved, no sale or delivery arranged, and no payment received.</p>
+{% elif e.product_quote_status == 'withdrawn' %}
+<p>Product-only HQ quotation withdrawn. Please contact Tommy Tints for updated pricing.</p>
+{% endif %}
 {% if e.public_note %}<p>Message from Tommy Tints: {{ e.public_note }}</p>{% endif %}
 </article>{% else %}<p>No combined requests yet.</p>{% endfor %}
 </main></body></html>
