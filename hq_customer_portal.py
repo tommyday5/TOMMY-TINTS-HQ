@@ -18,6 +18,7 @@ from customer_request_store import connect, storage_ready
 from hq_auth import required
 from hq_core_records import _schema
 from hq_customer_documents import _tables as _document_tables
+from hq_customer_account_types import public_account_label
 
 customer_portal = Blueprint("customer_portal", __name__)
 _ID = re.compile(r"[0-9a-f]{32}\Z")
@@ -338,6 +339,7 @@ def customer_account():
         current_app.logger.exception("Customer account read unavailable")
         abort(503)
     return render_template("customer_portal_account.html", name=name,
+                           account_type=public_account_label(customer_id),
                            works=works, csrf=session["customer_portal_csrf"])
 
 
