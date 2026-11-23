@@ -13,6 +13,18 @@
 <p><strong>HQ work status: {{ e.linked_work_status|replace('_',' ')|title }}</strong></p>
 <p>Current owner-approved work amount: £{{ '%.2f'|format(e.linked_price_pence/100) }}. This is not a payment receipt or an appointment confirmation.</p>
 {% if e.pdf_ready %}<p><a href="/customer/basket-requests/{{ e.id }}/quote.pdf">Download itemised approved services &amp; products quote (PDF)</a></p>{% endif %}
+{% if e.booking and e.booking.booking_status == 'confirmed' %}
+<p role="status"><strong>Appointment confirmed in HQ:</strong> {{ e.booking.offered_date }} at {{ e.booking.offered_time }} ({{ e.booking.duration_hours }} hour(s)). This is not a payment receipt or a claim that an external calendar was updated.</p>
+{% elif e.booking and e.booking.booking_status == 'cancelled' %}
+<p role="status">The previous HQ appointment was cancelled. Review your appointment history before requesting a replacement.</p>
+{% elif e.booking and e.booking.status == 'offered' %}
+<p role="status">Tommy Tints has proposed a tentative appointment. Review and respond; it is not booked.</p>
+{% elif e.booking and e.booking.status == 'requested' %}
+<p role="status">Your preferred appointment date is awaiting owner review. No appointment is booked.</p>
+{% endif %}
+{% if e.booking or e.availability_eligible %}
+<p><a href="{{ url_for('availability_requests.customer_availability', work_id=e.linked_work_id) }}">{{ 'View appointment request / confirmation' if e.booking else 'Request an appointment preference' }}</a></p>
+{% endif %}
 {% elif e.linked_work_status == 'cancelled' %}
 <p>HQ work status: Cancelled. Please contact Tommy Tints before proceeding.</p>
 {% endif %}
