@@ -19,6 +19,7 @@
 {% if e.product_quote_status == 'approved' and e.approved_product_quote_pence is not none %}
 <p><strong>Product-only HQ quote approved: £{{ '%.2f'|format(e.approved_product_quote_pence/100) }}</strong></p>
 <p>This is a confirmed quotation only. No product has been reserved, no sale or delivery arranged, and no payment received.</p>
+{% if e.product_pdf_ready %}<p><a href="/customer/basket-requests/{{ e.id }}/product-quote.pdf">Download itemised approved products quotation (PDF)</a></p>{% endif %}
 {% elif e.product_quote_status == 'withdrawn' %}
 <p>Product-only HQ quotation withdrawn. Please contact Tommy Tints for updated pricing.</p>
 {% endif %}
