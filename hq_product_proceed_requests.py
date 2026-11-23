@@ -24,6 +24,8 @@ product_proceed = Blueprint("product_proceed", __name__)
 _ID = re.compile(r"[0-9a-f]{32}\Z")
 _REV = re.compile(r"(?:0|[1-9][0-9]{0,8})\Z")
 _STATUSES = ("pending", "approved", "declined")
+_PREPARATION_STAGES = ("not_started", "planning", "awaiting_customer_details",
+                       "preparing", "ready_for_collection", "ready_for_delivery", "paused")
 
 
 def _now():
@@ -58,6 +60,26 @@ def _tables(db):
         request_id TEXT NOT NULL REFERENCES hq_product_proceed_requests(id),
         revision INTEGER NOT NULL,
         status TEXT NOT NULL,
+        public_note TEXT NOT NULL,
+        actor_fingerprint TEXT NOT NULL,
+        occurred_at TEXT NOT NULL,
+        UNIQUE(request_id,revision)
+    )""")
+    # Separate additive ledger: existing approved requests need no ALTER TABLE or rewrite.
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_product_preparation(
+        request_id TEXT PRIMARY KEY REFERENCES hq_product_proceed_requests(id),
+        stage TEXT NOT NULL CHECK(stage IN
+            ('not_started','planning','awaiting_customer_details','preparing',
+             'ready_for_collection','ready_for_delivery','paused')),
+        public_note TEXT NOT NULL DEFAULT '',
+        revision INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+    )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_product_preparation_events(
+        id TEXT PRIMARY KEY,
+        request_id TEXT NOT NULL REFERENCES hq_product_proceed_requests(id),
+        revision INTEGER NOT NULL,
+        stage TEXT NOT NULL,
         public_note TEXT NOT NULL,
         actor_fingerprint TEXT NOT NULL,
         occurred_at TEXT NOT NULL,
@@ -110,12 +132,21 @@ def customer_proceed_state(basket_id, customer_id):
     _id(customer_id)
     with canonical_db() as db:
         _tables(db)
-        row = db.execute("""SELECT p.status,p.public_note
+        row = db.execute("""SELECT p.status,p.public_note,
+            COALESCE(f.stage,'not_started') AS preparation_stage,
+            COALESCE(f.public_note,'') AS preparation_note
             FROM hq_product_proceed_requests p
             JOIN hq_combined_product_quotes q ON q.id=p.quote_id
+            LEFT JOIN hq_product_preparation f ON f.request_id=p.id
             WHERE p.basket_id=? AND p.customer_id=?
             AND q.customer_id=p.customer_id""", (basket_id, customer_id)).fetchone()
-        return {"status": row["status"], "public_note": row["public_note"]} if row else None
+        if not row:
+            return None
+        result = {"status": row["status"], "public_note": row["public_note"]}
+        if row["status"] == "approved":
+            result["preparation_stage"] = row["preparation_stage"]
+            result["preparation_note"] = row["preparation_note"]
+        return result
 
 
 def owner_proceed_requests():
@@ -126,10 +157,14 @@ def owner_proceed_requests():
             SELECT p.id,p.basket_id,p.customer_id,p.quote_id,p.status,
                 p.revision,p.public_note,p.created_at,p.updated_at,
                 c.name AS customer_name, q.status AS quote_status,
-                q.approved_total_pence
+                q.approved_total_pence,
+                COALESCE(f.stage,'not_started') AS preparation_stage,
+                COALESCE(f.public_note,'') AS preparation_note,
+                COALESCE(f.revision,0) AS preparation_revision
             FROM hq_product_proceed_requests p
             JOIN hq_combined_product_quotes q ON q.id=p.quote_id
             JOIN hq_customers c ON c.id=p.customer_id
+            LEFT JOIN hq_product_preparation f ON f.request_id=p.id
             ORDER BY CASE p.status WHEN 'pending' THEN 0 ELSE 1 END,
                      p.created_at DESC LIMIT 100""")]
 
@@ -180,6 +215,71 @@ def owner_review_proceed(ident, expected_revision, status, public_note, actor):
         return expected_revision+1
 
 
+def owner_set_preparation(ident, expected_revision, stage, public_note, actor):
+    """Owner-only, versioned product preparation notes; never creates an order or payment.
+
+    A stage is an owner-entered operational statement, not evidence that stock,
+    payment, a carrier or a customer confirmation has been independently checked.
+    The approved, unchanged quotation remains the approval gate.
+    """
+    _id(ident)
+    if type(expected_revision) is not int or not 0 <= expected_revision < 100000000:
+        raise ValueError("Invalid preparation revision")
+    if stage not in _PREPARATION_STAGES:
+        raise ValueError("Choose a valid preparation stage")
+    if not isinstance(public_note, str) or len(public_note.strip()) > 400:
+        raise ValueError("Customer-visible preparation note is too long")
+    public_note = public_note.strip()
+    fingerprint = _actor_fingerprint(actor)
+    with canonical_db() as db:
+        _tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        req = db.execute("SELECT * FROM hq_product_proceed_requests WHERE id=?",
+                         (ident,)).fetchone()
+        if req is None:
+            raise LookupError("Proceed request not found")
+        if req["status"] != "approved":
+            raise ValueError("Owner approval is required before preparing products")
+        quote = _load(db, req["basket_id"])
+        if (quote["id"] != req["quote_id"] or
+                quote["customer_id"] != req["customer_id"] or
+                quote["status"] != "approved" or
+                quote["revision"] != req["quote_revision"] or
+                not quote["fully_allocated"]):
+            raise ValueError("Quotation changed or withdrawn; preparation is locked")
+        if stage == "ready_for_collection" and quote["fulfilment"] != "collection":
+            raise ValueError("This quotation requires delivery, not collection")
+        if stage == "ready_for_delivery" and quote["fulfilment"] != "delivery":
+            raise ValueError("This quotation requires collection, not delivery")
+        prior = db.execute("SELECT * FROM hq_product_preparation WHERE request_id=?",
+                           (ident,)).fetchone()
+        revision = prior["revision"] if prior else 0
+        if prior and prior["stage"] == stage and prior["public_note"] == public_note:
+            return revision  # Safe idempotent retry even if original form is stale.
+        if not prior and stage == "not_started" and not public_note:
+            return 0
+        if revision != expected_revision:
+            raise ValueError("Preparation changed; reload before saving")
+        now = _now()
+        if prior:
+            changed = db.execute("""UPDATE hq_product_preparation
+                SET stage=?, public_note=?, revision=revision+1, updated_at=?
+                WHERE request_id=? AND revision=?""",
+                (stage, public_note, now, ident, expected_revision))
+            if changed.rowcount != 1:
+                raise ValueError("Preparation changed; reload before saving")
+        else:
+            db.execute("""INSERT INTO hq_product_preparation
+                (request_id,stage,public_note,revision,updated_at)
+                VALUES (?,?,?,1,?)""", (ident, stage, public_note, now))
+        db.execute("""INSERT INTO hq_product_preparation_events
+            (id,request_id,revision,stage,public_note,actor_fingerprint,occurred_at)
+            VALUES (?,?,?,?,?,?,?)""",
+            (uuid.uuid4().hex, ident, revision+1, stage, public_note,
+             fingerprint, now))
+        return revision+1
+
+
 @product_proceed.after_request
 def private_cache(response):
     response.headers["Cache-Control"] = "private, no-store"
@@ -223,10 +323,18 @@ def owner_inbox():
         if not _REV.fullmatch(raw):
             abort(400)
         try:
-            owner_review_proceed(
-                request.form.get("request_id"), int(raw),
-                request.form.get("status"), request.form.get("public_note", ""),
-                session.get("google_sub", ""))
+            if request.form.get("action") == "preparation":
+                owner_set_preparation(
+                    request.form.get("request_id"), int(raw),
+                    request.form.get("stage"), request.form.get("preparation_note", ""),
+                    session.get("google_sub", ""))
+            elif request.form.get("action", "review") == "review":
+                owner_review_proceed(
+                    request.form.get("request_id"), int(raw),
+                    request.form.get("status"), request.form.get("public_note", ""),
+                    session.get("google_sub", ""))
+            else:
+                raise ValueError("Unknown product request action")
             return redirect("/hq/product-proceed-requests?saved=1", code=303)
         except (ValueError, LookupError) as exc:
             error = str(exc)

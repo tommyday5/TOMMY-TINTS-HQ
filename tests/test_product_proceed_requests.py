@@ -20,7 +20,7 @@ from hq_customer_portal import issue_customer_invite
 from hq_product_quote_lines import save_product_quote_lines
 from hq_product_proceed_requests import (
     request_to_proceed, customer_proceed_state, owner_proceed_requests,
-    owner_review_proceed,
+    owner_review_proceed, owner_set_preparation,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -153,6 +153,74 @@ class ProductProceedTests(unittest.TestCase):
         with commerce_db() as db:
             self.assertEqual(db.execute(
                 "SELECT stock FROM products WHERE id=?", (self.product,)).fetchone()[0], 5)
+
+
+    def test_owner_preparation_ledger_is_editable_audited_and_customer_scoped(self):
+        self.login_customer(self.mine, self.cid)
+        self.login_customer(self.other, self.stranger)
+        ident = request_to_proceed(self.basket, self.cid, uuid.uuid4().hex)
+        self.owner_login()
+        path = "/hq/product-proceed-requests"
+        with self.assertRaisesRegex(ValueError, "Owner approval"):
+            with app.app_context():
+                owner_set_preparation(ident, 0, "planning", "", "synthetic-owner")
+        self.assertEqual(self.owner.post(path, data={
+            "csrf": "owner-csrf", "request_id": ident, "revision": "0",
+            "status": "approved", "public_note": "Proceed approved."
+        }).status_code, 303)
+        self.assertIn(b"Save preparation progress", self.owner.get(path).data)
+        self.assertEqual(self.owner.post(path, data={
+            "csrf": "wrong", "action": "preparation", "request_id": ident,
+            "revision": "0", "stage": "planning"
+        }).status_code, 403)
+        self.assertEqual(self.owner.post(path, data={
+            "csrf": "owner-csrf", "action": "preparation", "request_id": ident,
+            "revision": "0", "stage": "planning",
+            "preparation_note": "We are planning your collection."
+        }).status_code, 303)
+        progress = customer_proceed_state(self.basket, self.cid)
+        self.assertEqual(progress["preparation_stage"], "planning")
+        self.assertEqual(progress["preparation_note"],
+                         "We are planning your collection.")
+        self.assertIsNone(customer_proceed_state(self.basket, self.stranger))
+        self.assertIn(b"Product preparation: Planning",
+                      self.mine.get("/customer/basket-requests").data)
+        self.assertNotIn(b"Product preparation: Planning",
+                         self.other.get("/customer/basket-requests").data)
+        self.assertEqual(owner_proceed_requests()[0]["preparation_revision"], 1)
+        with app.app_context():
+            self.assertEqual(owner_set_preparation(
+                ident, 0, "planning", "We are planning your collection.",
+                "synthetic-owner"), 1)  # idempotent retry
+            with self.assertRaisesRegex(ValueError, "requires collection"):
+                owner_set_preparation(ident, 1, "ready_for_delivery", "",
+                                      "synthetic-owner")
+            with self.assertRaisesRegex(ValueError, "changed"):
+                owner_set_preparation(ident, 0, "preparing", "", "synthetic-owner")
+            with self.assertRaisesRegex(ValueError, "too long"):
+                owner_set_preparation(ident, 1, "preparing", "x" * 401,
+                                      "synthetic-owner")
+        self.assertEqual(self.owner.post(path, data={
+            "csrf": "owner-csrf", "action": "preparation", "request_id": ident,
+            "revision": "1", "stage": "ready_for_collection",
+            "preparation_note": "Products checked for collection."
+        }).status_code, 303)
+        self.assertIn(b"Product preparation: Ready For Collection",
+                      self.mine.get("/customer/basket-requests").data)
+        with connect() as db:
+            events = db.execute("""SELECT revision,stage FROM
+                hq_product_preparation_events WHERE request_id=?
+                ORDER BY revision""", (ident,)).fetchall()
+            self.assertEqual([(row[0], row[1]) for row in events],
+                             [(1, "planning"), (2, "ready_for_collection")])
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_work_records").fetchone()[0], 0)
+        with commerce_db() as db:
+            self.assertEqual(db.execute("SELECT stock FROM products WHERE id=?",
+                                        (self.product,)).fetchone()[0], 5)
+        change_product_quote_status(self.basket, 2, "withdrawn")
+        with app.app_context(), self.assertRaisesRegex(ValueError, "changed or withdrawn"):
+            owner_set_preparation(ident, 2, "paused", "", "synthetic-owner")
+
 
 
 if __name__ == "__main__":
