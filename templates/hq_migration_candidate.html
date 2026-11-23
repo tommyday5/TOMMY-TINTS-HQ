@@ -51,6 +51,17 @@ select{padding:10px;background:#0d1420;color:white;border:1px solid #718097;bord
 </tbody></table>
 </div>
 {% endif %}
+{% if candidate.identity_review %}
+<div class="panel">
+<h2>Saved customer identity review · revision {{ candidate.identity_review.revision }}</h2>
+<p>Proposed canonical HQ customer <code>{{ candidate.identity_review.customer_id }}</code></p>
+<p>Decision: <strong>{{ candidate.identity_review.decision.replace("_"," ") }}</strong> · evidence basis: {{ candidate.identity_review.basis.replace("_"," ") }}</p>
+<p class="muted">Recorded {{ candidate.identity_review.updated_at }}. This is an inactive owner judgement, NOT a verified identity, import approval or historical/customer link. The review is invalidated if the source, HQ work, customer record or field assessment subsequently changes.</p>
+{% if not candidate.field_review or candidate.identity_review.assessment_revision != candidate.field_review.revision %}
+<p class="warning">Customer field assessment changed: the saved identity judgement needs revalidation.</p>
+{% endif %}
+</div>
+{% endif %}
 {% if comparison %}
 <div class="panel">
 <h2>Fresh comparison — owner review</h2>
@@ -73,6 +84,33 @@ select{padding:10px;background:#0d1420;color:white;border:1px solid #718097;bord
 <button type="submit">Save field assessments</button>
 </form>
 </div>
+
+{% if candidate.field_review %}
+<div class="panel">
+<h2>Customer identity matching — provisional review</h2>
+<p class="muted">Review the customer names displayed in the comparison above. A possible match is only permitted when the source Customers tab contains one matching name, the HQ customer name is unique and the customer field has been assessed as consistent. Even then, a matching name alone does not prove identity.</p>
+<p class="warning">Saving only records an owner judgement, an evidence category and non-personal audit fingerprints. It does not merge accounts, assign a historical J number, import old work or mark any customer as verified.</p>
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="save_identity">
+<input type="hidden" name="identity_revision" value="{{ candidate.identity_review.revision if candidate.identity_review else 0 }}">
+<p><label for="identity-decision">Customer identity decision</label>
+<select id="identity-decision" name="identity_decision" required>
+{% set selected = candidate.identity_review.decision if candidate.identity_review else "hold" %}
+<option value="hold" {% if selected=="hold" %}selected{% endif %}>Hold — evidence unresolved</option>
+<option value="potential_match" {% if selected=="potential_match" %}selected{% endif %}>Potential match — NOT verified</option>
+<option value="conflict" {% if selected=="conflict" %}selected{% endif %}>Conflicting identity</option>
+</select></p>
+<p><label for="identity-basis">Evidence reviewed</label>
+<select id="identity-basis" name="identity_basis" required>
+{% set basis = candidate.identity_review.basis if candidate.identity_review else "none" %}
+<option value="none" {% if basis=="none" %}selected{% endif %}>None / unresolved</option>
+<option value="name_crosscheck" {% if basis=="name_crosscheck" %}selected{% endif %}>Names cross-checked against both directories</option>
+<option value="owner_document_review" {% if basis=="owner_document_review" %}selected{% endif %}>Other original customer evidence reviewed by owner</option>
+</select></p>
+<button type="submit">Save inactive customer identity review</button>
+</form>
+</div>
+{% endif %}
 
 {% if candidate.field_review %}
 <div class="panel">
