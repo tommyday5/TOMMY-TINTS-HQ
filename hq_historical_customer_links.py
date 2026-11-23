@@ -342,3 +342,9 @@ def page():
     return render_template("hq_historical_customers.html", csrf=session.get("csrf", ""),
                            result=result, error=error, saved=saved,
                            candidates=candidates, customers=customers)
+
+
+# Attach the field-by-field owner review to the existing registered blueprint.
+# This is an additive read/submit surface: no import or Sheet-write routes.
+from hq_historical_customer_field_review import register_routes as _register_field_review_routes
+_register_field_review_routes(customer_migration)
