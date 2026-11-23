@@ -10,7 +10,7 @@ main{max-width:920px;margin:auto;padding:20px}a{color:#ff7881}section{background
 {% if error %}<p role="alert">{{ error }}</p>{% endif %}
 {% if saved %}<p role="status">Review batch change saved. No original job was modified.</p>{% endif %}
 {% set ns=namespace(active=[]) %}
-{% for batch in batches if not batch.archived_at %}{% for item in batch.items %}{% set ns.active=ns.active+[item.candidate_id] %}{% endfor %}{% endfor %}
+{% for batch in batches if not batch.archived_at %}{% for item in batch['items'] %}{% set ns.active=ns.active+[item.candidate_id] %}{% endfor %}{% endfor %}
 <section><h2>Create review batch</h2>
 <p>Select up to 20 existing inactive J-series proposals. HQ rechecks their source fingerprints and work revisions before saving. Selection is frozen; archive a batch and create another to change membership.</p>
 {% if candidates %}
@@ -23,8 +23,8 @@ main{max-width:920px;margin:auto;padding:20px}a{color:#ff7881}section{background
 </section>
 <section><h2>Saved review batches</h2><p><small>Most recent 100, active first. “Native changed” is a local warning, not a fresh Sheets check. A batch is never an import approval.</small></p>
 {% for batch in batches %}
-<section><h3>Batch {{ batch.id[:12] }} · {{ "Archived" if batch.archived_at else "Review only" }}</h3><p>{{ batch.created_at }} · {{ batch.items|length }} proposals</p>
-<ul>{% for item in batch.items %}<li>{{ item.job_ref }} · source row {{ item.sheet_row }} · HQ {{ item.work_id[:8] }} (rev {{ item.work_revision }}) — {% if item.stale %}Native changed / proposal unavailable{% else %}Native revision unchanged; source not rechecked{% endif %}</li>{% endfor %}</ul>
+<section><h3>Batch {{ batch.id[:12] }} · {{ "Archived" if batch.archived_at else "Review only" }}</h3><p>{{ batch.created_at }} · {{ batch['items']|length }} proposals</p>
+<ul>{% for item in batch['items'] %}<li>{{ item.job_ref }} · source row {{ item.sheet_row }} · HQ {{ item.work_id[:8] }} (rev {{ item.work_revision }}) — {% if item.stale %}Native changed / proposal unavailable{% else %}Native revision unchanged; source not rechecked{% endif %}</li>{% endfor %}</ul>
 {% if not batch.archived_at %}<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="archive"><input type="hidden" name="batch_id" value="{{ batch.id }}"><input type="hidden" name="revision" value="{{ batch.revision }}"><button type="submit">Archive batch</button></form>{% endif %}
 </section>
 {% else %}<p>No review batches saved.</p>{% endfor %}
