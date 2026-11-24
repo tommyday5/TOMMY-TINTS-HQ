@@ -8,7 +8,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import abort, redirect, render_template, request, session, url_for
+from flask import abort, current_app, redirect, render_template, request, session, url_for
 from customer_request_store import SERVICES, connect, storage_ready
 from hq_auth import required
 from hq_historical_job_full_evidence import HEADERS, WIDTH, _digest
@@ -167,12 +167,45 @@ def register_mapping_route(bp):
         error = None
         rehearsal = None
         backup_saved = None
+        import_result = None
         if request.method == "POST":
             if request.content_length is None or request.content_length > 4096:
                 abort(413)
             if not secrets.compare_digest(request.form.get("csrf",""),session.get("csrf","not-set")):
                 abort(403)
-            if request.form.get("action") == "encrypted_export":
+            if request.form.get("action") in ("prepare_import","execute_import","reverse_import"):
+                from hq_historical_price_import import prepare, execute, reverse
+                import time
+                action = request.form["action"]
+                expected = {"csrf","action","snapshot_id"} if action == "prepare_import" else {"csrf","action","manifest_id","confirm_import"}
+                if set(request.form) != expected or any(len(request.form.getlist(k)) != 1 for k in request.form):
+                    abort(400)
+                if action != "prepare_import" and request.form.get("confirm_import") != "yes":
+                    abort(400)
+                try:
+                    owner = session.get("google_sub")
+                    if action == "reverse_import":
+                        reverse(batch_id,candidate_id,request.form["manifest_id"],owner)
+                        import_result = "Imported price reversed; revision and audit history retained."
+                    else:
+                        from hq_historical_preview import _read_live
+                        from hq_historical_job_full_evidence import read_full_width
+                        provider = current_app.extensions["hq_sheets_connection"]()
+                        if not provider or provider[1] <= time.time():
+                            raise ValueError("Read-only Sheets connection required")
+                        source = (*_read_live(provider[0]), *read_full_width(provider[0]))
+                        if action == "prepare_import":
+                            prepare(batch_id,candidate_id,request.form["snapshot_id"],source,owner)
+                            import_result = "Exact one-row approval manifest saved; no canonical data changed."
+                        else:
+                            execute(batch_id,candidate_id,request.form["manifest_id"],source,owner)
+                            import_result = "Historical quoted price imported and verified. No payment or booking recorded."
+                except (ValueError,LookupError,sqlite3.Error,OSError):
+                    error = "Import action blocked. Check current evidence, single-row batch, identity review, snapshot and draft state."
+                except Exception:
+                    current_app.logger.warning("Historical price import action unavailable")
+                    error = "Import action unavailable. Reload the saved manifest history before retrying."
+            elif request.form.get("action") == "encrypted_export":
                 if set(request.form) != {"csrf","action","snapshot_id","public_key","confirm_export"} or any(len(request.form.getlist(k)) != 1 for k in request.form) or request.form.get("confirm_export") != "yes":
                     abort(400)
                 from flask import Response
@@ -243,6 +276,8 @@ def register_mapping_route(bp):
                 db.execute("PRAGMA query_only=ON")
                 db.execute("BEGIN")
                 ctx = _context(db,batch_id,candidate_id)
+                from hq_historical_price_import import read_manifests
+                manifests = read_manifests(db,batch_id,candidate_id)
         except LookupError:
             abort(404)
         except (ValueError,sqlite3.Error,OSError):
@@ -254,4 +289,5 @@ def register_mapping_route(bp):
             backups = None
         return render_template("hq_historical_job_quote_mapping.html",ctx=ctx,error=error,
             backups=backups,backup_saved=backup_saved,backup_operation=secrets.token_hex(16),
+            manifests=manifests,import_result=import_result,
             csrf=session.get("csrf",""),saved=request.args.get("saved")=="1",rehearsal=rehearsal)
