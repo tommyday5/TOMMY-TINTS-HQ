@@ -351,7 +351,12 @@ class HistoricalJobBatchTests(unittest.TestCase):
         evidence = dict(csrf="test-csrf",action="full_evidence",batch_id=batch,revision="0")
         fields = dict(csrf="test-csrf",action="field_review",batch_id=batch,plan_revision="0",
                       **{"f"+str(i):"u" for i in range(94)})
-        fields["f16"] = "n"
+        fields["f16"] = fields["f5"] = fields["f3"] = "n"
+        from hq_native_work import _tables
+        with connect() as db:
+            _tables(db)
+            db.execute("INSERT INTO hq_native_work_details VALUES (?,?,?)",
+                       (self.work_ids[0],"trade","2026-01-01"))
         dry = dict(csrf="test-csrf",action="dry_run",batch_id=batch,plan_revision="1",dry_revision="0")
         stage = dict(csrf="test-csrf",action="stage_source",batch_id=batch,plan_revision="1",
                      dry_revision="1",confirm_stage="yes")
@@ -380,6 +385,27 @@ class HistoricalJobBatchTests(unittest.TestCase):
             self.assertIn("no-store",page.headers["Cache-Control"])
             self.assertIn(b"=25+50",page.data)
             self.assertIn(b"Original staged source cells (94 columns)",page.data)
+            self.assertIn(b"Save service mapping draft",page.data)
+            service = dict(csrf="test-csrf",revision="0",field="service",
+                           decision="propose",target="Window Tinting")
+            tier = dict(csrf="test-csrf",revision="0",field="tier",
+                        decision="propose",target="retail")
+            self.assertEqual(app.test_client().post(mapping,data=service).status_code,302)
+            self.assertEqual(self.client.post(mapping,data=dict(service,csrf="bad")).status_code,403)
+            self.assertIn(b"Mapping not saved",self.client.post(mapping,data=dict(service,target="invalid")).data)
+            self.assertIn(b"Mapping not saved",self.client.post(mapping,data=dict(tier,target="trade")).data)
+            self.assertEqual(self.client.post(mapping,data=service).status_code,303)
+            self.assertEqual(self.client.post(mapping,data=service).status_code,303)
+            self.assertEqual(self.client.post(mapping,data=tier).status_code,303)
+            self.assertIn(b"Window Tinting",self.client.get(mapping).data)
+            self.assertIn(b"Mapping not saved",self.client.post(mapping,data=dict(service,target="Vehicle Wrapping")).data)
+            self.assertEqual(self.client.post(mapping,data=dict(service,revision="1",decision="preserve")).status_code,303)
+            with connect() as db:
+                rows = db.execute("SELECT field,revision,decision,target FROM hq_historical_job_classification_mapping ORDER BY field,revision").fetchall()
+                self.assertEqual([tuple(r) for r in rows],[
+                    ("service",1,"propose","Window Tinting"),("service",2,"preserve",""),("tier",1,"propose","retail")])
+                self.assertEqual(db.execute("SELECT service FROM hq_work_records WHERE id=?",(self.work_ids[0],)).fetchone()[0],"Tinting")
+                self.assertEqual(db.execute("SELECT customer_tier FROM hq_native_work_details WHERE work_id=?",(self.work_ids[0],)).fetchone()[0],"trade")
             decision = dict(csrf="test-csrf",revision="0",decision="propose")
             self.assertEqual(self.client.post(mapping,data=dict(decision,csrf="bad")).status_code,403)
             self.assertEqual(self.client.post(mapping,data=decision).status_code,303)
@@ -395,6 +421,7 @@ class HistoricalJobBatchTests(unittest.TestCase):
             self.assertIn(b"Review changed since staging",self.client.get(self.url).data)
             self.assertIn(b"editing disabled",self.client.get(mapping).data)
             self.assertIn(b"Mapping not saved",self.client.post(mapping,data=dict(decision,revision="2")).data)
+            self.assertIn(b"Mapping not saved",self.client.post(mapping,data=dict(service,revision="2")).data)
             self.assertIn(b"Batch could not be saved",self.client.post(self.url,data=stage).data)
             self.assertEqual(self.client.post(self.url,data=dict(csrf="test-csrf",action="archive",batch_id=batch,revision="0")).status_code,303)
             self.assertIn(b"Source rows staged: 2",self.client.get(self.url).data)
@@ -409,3 +436,31 @@ class HistoricalJobBatchTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_historical_job_source_stages").fetchone()[0],1)
             self.assertEqual(db.execute("SELECT count(*) FROM hq_work_records WHERE revision=0 AND status='draft'").fetchone()[0],2)
             self.assertEqual(db.execute("SELECT count(*) FROM hq_historical_j_candidates WHERE withdrawn_at IS NULL").fetchone()[0],2)
+
+    def test_classification_mapping_rejects_multi_service_formula_and_unknown_tier(self):
+        from hq_historical_job_quote_mapping import _classification_context
+        from hq_historical_job_field_review import field_rows
+        from hq_native_work import _tables
+        raw = [""] * 94
+        raw[3], raw[5] = "Retail", "Tinting"
+        row = dict(work_id=self.work_ids[0], service="Tinting", status="draft",
+                   batch_id="a"*32,candidate_id=self.ids[0])
+        plan = {"fields":field_rows(["n"]*94)}
+        with connect() as db:
+            _tables(db)
+            db.execute("INSERT INTO hq_native_work_details VALUES (?,?,?)",
+                       (self.work_ids[0],"trade","2026-01-01"))
+            def fields(effective=None):
+                return {i["field"]:i for i in _classification_context(db,row,raw,
+                    raw[:] if effective is None else effective,plan,True)}
+            self.assertTrue(fields()["service"]["eligible"])
+            self.assertEqual(fields()["tier"]["choices"],["retail"])
+            raw[6]="Second service"
+            self.assertFalse(fields()["service"]["eligible"])
+            raw[6]=""
+            raw[5]="=A1"
+            effective=raw[:]
+            effective[5]="Tinting"
+            self.assertFalse(fields(effective)["service"]["eligible"])
+            raw[3]="Unknown"
+            self.assertFalse(fields()["tier"]["eligible"])

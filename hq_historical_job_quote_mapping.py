@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import abort, redirect, render_template, request, session, url_for
-from customer_request_store import connect, storage_ready
+from customer_request_store import SERVICES, connect, storage_ready
 from hq_auth import required
 from hq_historical_job_full_evidence import HEADERS, WIDTH, _digest
 from hq_historical_job_field_review import read_plan
@@ -21,7 +21,7 @@ def _context(db, batch_id, candidate_id):
     if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_historical_job_source_rows'").fetchone():
         raise LookupError("No stage")
     row = db.execute("""SELECT s.*,b.archived_at,t.plan_revision,t.dry_revision,t.headers,
-        i.work_id,i.work_revision,w.revision AS live_revision,w.price_pence,w.status,
+        i.work_id,i.work_revision,w.revision AS live_revision,w.price_pence,w.status,w.service,
         c.withdrawn_at,c.id AS live_candidate,c.source_stamp AS live_stamp,i.source_stamp,
         EXISTS(SELECT 1 FROM hq_work_archive_state a WHERE a.work_id=i.work_id AND a.is_archived=1) AS work_archived
         FROM hq_historical_job_source_rows s
@@ -51,8 +51,79 @@ def _context(db, batch_id, candidate_id):
         history = [dict(r) for r in db.execute("""SELECT revision,decision,source_pence,native_pence,created_at
             FROM hq_historical_job_quote_mapping WHERE batch_id=? AND candidate_id=?
             ORDER BY revision DESC LIMIT 50""",(batch_id,candidate_id))]
+    classification = _classification_context(db, row, raw, effective, plan, current)
     return {"row":dict(row),"cells":list(zip(HEADERS,raw,effective)),"current":current,
+            "classification":classification,
             "eligible":eligible,"source_pence":price,"history":history}
+
+
+def _classification_context(db, row, raw, effective, plan, current):
+    # Single-service drafts only. Do not collapse a multi-service job or infer
+    # a customer's account classification from a historical job's price tier.
+    tier = None
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_native_work_details'").fetchone():
+        detail = db.execute("SELECT customer_tier FROM hq_native_work_details WHERE work_id=?",
+                            (row["work_id"],)).fetchone()
+        if detail:
+            tier = detail["customer_tier"]
+    fields = []
+    for field, index, native, choices in (
+        ("service", 5, row["service"], sorted(SERVICES)),
+        ("tier", 3, tier, ["retail", "trade", "maintenance"]),
+    ):
+        value = raw[index]
+        literal = (isinstance(value, str) and bool(value.strip()) and len(value) <= 160
+                   and not value.lstrip().startswith("=") and value == effective[index])
+        eligible = bool(current and literal and row["status"] == "draft"
+                        and tier is not None and plan["fields"][index]["decision"] == "n")
+        if field == "service":
+            eligible = eligible and all(v in ("", None) for v in raw[6:10] + effective[6:10])
+        else:
+            # Tier is an exact, case-insensitive match; no arbitrary reclassification.
+            choices = [v for v in choices if literal and value.strip().casefold() == v]
+            eligible = eligible and bool(choices)
+        history = []
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_historical_job_classification_mapping'").fetchone():
+            history = [dict(r) for r in db.execute("""SELECT revision,decision,target,native_value,created_at
+                FROM hq_historical_job_classification_mapping
+                WHERE batch_id=? AND candidate_id=? AND field=? ORDER BY revision DESC LIMIT 50""",
+                (row["batch_id"], row["candidate_id"], field))]
+        fields.append(dict(field=field, label=HEADERS[index], source=effective[index],
+                           native=native, eligible=eligible, choices=choices, history=history))
+    return fields
+
+
+def save_classification(batch_id, candidate_id, expected, field, decision, target, owner):
+    if (not storage_ready() or type(expected) is not int or not 0 <= expected < 2**63-1
+            or field not in ("service", "tier") or decision not in ("preserve", "propose")
+            or not isinstance(target, str) or len(target) > 80
+            or (decision == "preserve" and target)):
+        raise ValueError("Invalid classification mapping")
+    actor = _actor_fingerprint(owner)
+    with closing(connect()) as db, db:
+        db.execute("PRAGMA foreign_keys=ON")
+        db.execute("""CREATE TABLE IF NOT EXISTS hq_historical_job_classification_mapping (
+            batch_id TEXT NOT NULL,candidate_id TEXT NOT NULL,field TEXT NOT NULL CHECK(field IN ('service','tier')),
+            revision INTEGER NOT NULL CHECK(revision>0),decision TEXT NOT NULL CHECK(decision IN ('preserve','propose')),
+            target TEXT NOT NULL,native_value TEXT,source_digest TEXT NOT NULL,work_revision INTEGER NOT NULL,
+            actor_fingerprint TEXT NOT NULL,created_at TEXT NOT NULL,
+            PRIMARY KEY(batch_id,candidate_id,field,revision),
+            FOREIGN KEY(batch_id,candidate_id) REFERENCES hq_historical_job_source_rows(batch_id,candidate_id))""")
+        db.execute("BEGIN IMMEDIATE")
+        ctx = _context(db,batch_id,candidate_id)
+        item = next(i for i in ctx["classification"] if i["field"] == field)
+        if not ctx["current"] or (decision == "propose" and (not item["eligible"] or target not in item["choices"])):
+            raise ValueError("Classification mapping not eligible")
+        prior = item["history"][0] if item["history"] else None
+        revision = prior["revision"] if prior else 0
+        if prior and prior["decision"] == decision and prior["target"] == target and expected in (revision,revision-1):
+            return
+        if expected != revision:
+            raise ValueError("Classification mapping changed")
+        row = ctx["row"]
+        db.execute("INSERT INTO hq_historical_job_classification_mapping VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (batch_id,candidate_id,field,revision+1,decision,target,item["native"],row["source_digest"],
+             row["work_revision"],actor,datetime.now(timezone.utc).isoformat()))
 
 
 def save_mapping(batch_id,candidate_id,expected,decision,owner):
@@ -101,7 +172,14 @@ def register_mapping_route(bp):
             try:
                 if not revision.isascii() or not revision.isdecimal() or len(revision)>18:
                     raise ValueError("Invalid revision")
-                save_mapping(batch_id,candidate_id,int(revision),request.form.get("decision"),session.get("google_sub"))
+                field = request.form.get("field", "quote")
+                if field == "quote":
+                    save_mapping(batch_id,candidate_id,int(revision),request.form.get("decision"),session.get("google_sub"))
+                else:
+                    decision = request.form.get("decision")
+                    save_classification(batch_id,candidate_id,int(revision),field,decision,
+                                        request.form.get("target","") if decision == "propose" else "",
+                                        session.get("google_sub"))
                 return redirect(url_for(".historical_quote_mapping",batch_id=batch_id,candidate_id=candidate_id,saved="1"),code=303)
             except (ValueError,LookupError,sqlite3.Error,OSError):
                 error = "Mapping not saved. Reload current evidence and revision."
