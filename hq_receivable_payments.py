@@ -135,7 +135,8 @@ def save(data):
             elif fields["status"] == "reported" and fields["evidence_ref"] and db.execute("""
                 SELECT 1 FROM hq_monzo_reported_links l JOIN hq_receivable_allocations a
                 ON a.id=l.allocation_id WHERE a.status='reported'
-                AND l.evidence_ref=? COLLATE NOCASE""",(fields["evidence_ref"],)).fetchone():
+                AND (l.evidence_ref=? COLLATE NOCASE OR l.source_id=? COLLATE NOCASE)""",
+                (fields["evidence_ref"],fields["evidence_ref"])).fetchone():
                 raise ValueError("Evidence already linked to a Monzo source; use its reconciliation workflow")
         counted = db.execute("""SELECT COALESCE(SUM(amount_pence),0) FROM hq_receivable_allocations
             WHERE invoice_id=? AND status='reported' AND id<>?""",
