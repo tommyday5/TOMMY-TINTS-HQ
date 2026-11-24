@@ -217,3 +217,37 @@ class HistoricalJobBatchTests(unittest.TestCase):
             db.execute("UPDATE hq_work_records SET revision=1 WHERE id=?",(self.work_ids[0],))
         with self.assertRaises(ValueError):
             save(full)
+
+
+    def test_field_review_ui_revision_history_and_source_guards(self):
+        from hq_historical_job_field_review import save_plan
+        batch = self.create(self.ids, "a"*32)
+        full = self.full_snapshots()
+        self.login()
+        data = {"csrf":"test-csrf","action":"field_review","batch_id":batch,"plan_revision":"0",
+                **{"f"+str(i):"u" for i in range(94)}}
+        data.update(f0="h", f16="n", f53="v")
+        evidence = dict(csrf="test-csrf",action="full_evidence",batch_id=batch,revision="0")
+        with patch.dict(app.extensions,{"hq_sheets_connection":lambda:("fixture",9999999999)}), patch("hq_historical_preview._read_live",return_value=(self.formula,self.computed)), patch("hq_historical_job_full_evidence.read_full_width",return_value=full):
+            self.assertIn(b"Batch could not be saved", self.client.post(self.url,data=data).data)
+            self.assertEqual(self.client.post(self.url,data=evidence).status_code,303)
+            self.assertIn(b"Save field review plan",self.client.get(self.url).data)
+            self.assertEqual(self.client.post(self.url,data=dict(data,csrf="bad")).status_code,403)
+            self.assertIn(b"Batch could not be saved",self.client.post(self.url,data=dict(data,f53="n")).data)
+            self.assertEqual(self.client.post(self.url,data=data).status_code,303)
+            self.assertEqual(self.client.post(self.url,data=data).status_code,303)
+            self.assertIn(b"3/94 classified",self.client.get(self.url).data)
+            self.assertIn(b"Batch could not be saved",self.client.post(self.url,data=dict(data,f1="h")).data)
+            self.assertEqual(self.client.post(self.url,data=dict(data,plan_revision="1",f1="h")).status_code,303)
+            self.assertEqual(list_batches()[0]["field_plan"]["revision"],2)
+            full[1]["valueRanges"][0]["values"][1][93]="Changed late field"
+            self.assertIn(b"Batch could not be saved",self.client.post(self.url,data=dict(data,plan_revision="2")).data)
+            full[1]["valueRanges"][0]["values"][1][93]="Awaiting agreement"
+            archive=dict(csrf="test-csrf",action="archive",batch_id=batch,revision="0")
+            self.assertEqual(self.client.post(self.url,data=archive).status_code,303)
+            self.assertIn(b"4/94 classified",self.client.get(self.url).data)
+            self.assertIn(b"Batch could not be saved",self.client.post(self.url,data=dict(data,plan_revision="2")).data)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_historical_job_field_review_events").fetchone()[0],2)
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_work_records WHERE revision=0 AND status='draft'").fetchone()[0],2)
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_historical_j_candidates WHERE withdrawn_at IS NULL").fetchone()[0],2)
