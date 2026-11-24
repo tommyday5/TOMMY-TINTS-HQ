@@ -13,9 +13,13 @@ MAX_SECONDS = 5
 
 
 def _snapshot(db, work_id):
-    row = db.execute("""SELECT w.*,d.customer_tier FROM hq_work_records w
-        LEFT JOIN hq_native_work_details d ON d.work_id=w.id WHERE w.id=?""",
-        (work_id,)).fetchone()
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_native_work_details'").fetchone():
+        row = db.execute("""SELECT w.*,d.customer_tier FROM hq_work_records w
+            LEFT JOIN hq_native_work_details d ON d.work_id=w.id WHERE w.id=?""",
+            (work_id,)).fetchone()
+    else:
+        row = db.execute("SELECT w.*,NULL AS customer_tier FROM hq_work_records w WHERE w.id=?",
+                         (work_id,)).fetchone()
     if row is None:
         raise LookupError("Native work missing")
     return dict(row)
