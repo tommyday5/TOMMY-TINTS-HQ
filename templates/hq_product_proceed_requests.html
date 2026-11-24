@@ -62,7 +62,7 @@
 </form>
 {% else %}<p>Deposit planning is locked for this order.</p>{% endif %}
 {% if item.deposit_history %}<details><summary>Deposit plan audit history ({{ item.deposit_history|length }} events)</summary>
-<ul>{% for event in item.deposit_history %}<li>Revision {{ event.revision }} · order revision {{ event.order_revision }} · {{ '£%.2f'|format(event.proposed_pence/100) if event.proposed_pence is not none else 'Withdrawn' }} · {{ event.occurred_at }}</li>{% endfor %}</ul></details>{% endif %}
+<ul>{% for event in item.deposit_history %}<li>Revision {{ event.revision }} · order revision {{ event.order_revision }} · {{ '£%.2f'|format(event.proposed_pence/100) if event.proposed_pence is not none else 'Withdrawn' }} · {{ event.occurred_at }} · {% if event.acknowledged_at %}Customer viewed {{ event.acknowledged_at }} (not payment or acceptance){% else %}No customer viewing acknowledgement{% endif %}</li>{% endfor %}</ul></details>{% endif %}
 <h4>Product handover evidence (owner reported)</h4>
 <p>Record handover only after reviewing a collection signature or carrier receipt. This creates an audit entry, not independently verified delivery, payment or stock movement. The private evidence reference never appears in the customer portal.</p>
 {% if item.handover_state %}
