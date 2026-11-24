@@ -15,7 +15,7 @@ The workbook remains read-only; no historical canonical import is authorised.
 | Finance / transactions | Native workspace, receivables, inactive payment reviews | Unverified | No / no | Provider / Sheets evidence remains separate |
 | Creditor / legal / affordability | Existing workbook and partial native functions; migration open | Unverified | No / no | Existing evidence retained |
 | Public booking | Native request and reviewed quote pathways; prior synthetic coverage | Unverified | Not applicable | HQ request records only; no implied booking/payment |
-| Recovery | On-volume private snapshot and isolated check deployed; encrypted export proposed in this PR | Unverified | Production snapshot not authorised or verified | No live restore |
+| Recovery | On-volume private snapshot and isolated check deployed; encrypted export deployed (PR #259; 660f82b8; Railway 549c4982-cd2d-40ca-94d5-37cc25f7caf6 SUCCESS) | Unverified | Production snapshot not authorised or verified | No live restore |
 | Provider integrations | Existing adapters; no new provider consent or cutover | Unverified | No / no | Providers for verified evidence only |
 
 ## Workbook inventory (48 tabs, read-only metadata)
@@ -109,3 +109,27 @@ Next implementation: versioned reversible execution of verified historical
 links with immutable source provenance; in parallel native transaction
 matching, splits and allocations; public customer acceptance/booking UI
 verification without synthetic live bookings or communications.
+
+## 24 November follow-up — bounded canonical price execution
+
+PR #259 deployment SUCCESS was independently checked against main and the
+existing 1024 MB /data volume. This change proposes actual execution for one
+historical quoted-price field on an existing unpriced owner-native draft only.
+It does not create customers/vehicles/jobs, merge records, move actual costs,
+record receipts, or change authority for historical Jobs. Existing canonical
+customer and vehicle relationships remain intact. Separate owner-document
+identity review and consistent vehicle/service assessments, literal unique
+registration, fresh read-only source comparisons and a verified recovery
+snapshot containing the same draft and staged evidence are required.
+
+In a singleton historical Jobs review, open its mapping editor, save the
+eligible price proposal (other proposals must be preserved, not applied),
+create the private recovery snapshot, select it and choose **Prepare exact
+one-row import approval**. Review actual J reference, source row, HQ IDs,
+price before/after, counts and snapshot. Only then explicitly confirm and
+choose **Apply this one-row historical price import**. The exact manifest is
+persisted and rechecked under the write transaction. **Reverse this imported
+price** is a separate approved compensating revision, available only while
+the draft is unchanged. History and original J reference are retained.
+No production import count is established or authorised by this code change.
+Deployment and owner acceptance must be recorded separately.
