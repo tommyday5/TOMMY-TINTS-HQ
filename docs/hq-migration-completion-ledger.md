@@ -282,3 +282,17 @@ No source cash, receipt allocation, invoice balance or customer status
 is changed by a candidate. Multi-invoice splitting and verified provider
 allocations remain outstanding, as do owner acceptance and actual
 historical import/reconciliation. This change is pending CI and deploy.
+
+
+## 24 November follow-up — multiple invoice candidates per source
+
+PR #268 merged at 57000609 after successful Actions run 45476711681;
+Railway deployment was building on initial inspection. The next proposed
+slice extends inactive Monzo matching to multiple invoices, with a global
+source ceiling, per-invoice capacity, source-evidence binding, exact
+preview revision, and independent withdrawals. Older candidates without
+the new source digest remain visible and withdrawable; withdraw and
+re-review before adding further candidates. No verified receipt, customer
+payment status, cash entry or live historical import is implied.
+Implementation and synthetic regression test are pending CI and deployment;
+owner acceptance, canonical migration, and verified allocation remain open.
