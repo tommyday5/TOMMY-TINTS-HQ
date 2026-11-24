@@ -296,3 +296,20 @@ re-review before adding further candidates. No verified receipt, customer
 payment status, cash entry or live historical import is implied.
 Implementation and synthetic regression test are pending CI and deployment;
 owner acceptance, canonical migration, and verified allocation remain open.
+
+
+## 24 November follow-up — evidence-linked owner-reported allocations
+
+PR #269 merged at 2eee922f after Actions run 45487206068 passed (127 + 635
+Python tests and 9 JavaScript tests). The existing /data volume was confirmed
+mounted; deployment initially building. This proposed change introduces an
+owner-only two-step review and approval of a saved Monzo candidate against a
+separate receipt/statement reference, recording an owner-reported allocation
+and immutable source linkage atomically. It reserves already reported source
+capacity, prevents exact evidence reuse by a different source or manual entry,
+and permits reversal without changing the evidence. A worksheet and an owner
+attestation are not independently verified bank/provider evidence. No customer
+payment status, actual cash entry, verified outstanding balance, production
+import or historical authority changes. Synthetic route tests are pending CI.
+Owner browser acceptance and independently verified provider allocation remain
+outstanding; no live receipt has been recorded in this development run.
