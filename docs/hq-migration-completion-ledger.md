@@ -166,3 +166,27 @@ evidence, no verified receipt, no income/profit or balance inference, no
 combination with Sheets. No real records changed; provider matching, actual
 bank settlement, customer/vehicle imports and historical parity remain open.
 This proposal's deployment and owner acceptance remain unverified.
+
+## 24 November follow-up — existing Monzo feed classification proposals
+
+PR #262 merged as a282c99d after successful CI 45421229623 (127 root and
+627 integration Python tests; 6 JS tests), Railway deployment
+31c9333f-92b6-4fd4-8687-aa615fe87cb7 SUCCESS at 16:03 UTC, original /data
+volume configured. Monthly manual classification view deployed; owner
+acceptance remains unverified.
+
+The read-only workbook Monzo Live Feed A7:I schema was checked: 4000
+populated unique source IDs in the bounded connector read, numeric date/time,
+GBP amounts with at most two decimals, three missing raw categories. S:U
+contains existing transaction IDs, HQ override and category source; those
+legacy overrides are NOT imported or superseded. New private owner review
+under Finance Command Centre > Transactions & reconciliation > Monzo
+transaction classification review stores only the original ID, source
+fingerprint and immutable category revisions. Explicit owner confirmation
+and fresh source read precede each save. A changed source or duplicate ID
+blocks review. No cash, Sheets cells, verified receipts or canonical
+financial records are created or changed. Selecting unclassified withdraws
+an earlier proposal without deleting history. Existing manual transactions
+and totals remain separate. Imported bank cash, split allocations, settlement,
+provider authentication, actual reconciliation, owner acceptance and domain
+cutover remain unverified. No real transaction was classified by development.

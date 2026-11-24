@@ -1,0 +1,22 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Monzo classification review · Tommy Tints HQ</title><link rel="stylesheet" href="/static/finance-command.css"></head><body><main>
+<header><a href="/hq/finance/command">Back to Finance Command Centre</a></header>
+<h1>Monzo transaction classification review</h1>
+<p>Read-only Monzo Live Feed worksheet; not an independently verified bank connection. HQ proposals are separate from the original Monzo category and existing Sheets overrides. No bank transaction, invoice, balance or spreadsheet cell is changed. Do not combine this screen with manual HQ cash totals.</p>
+<p><a href="/auth/sheets/connect">Connect existing Sheets read-only access</a></p>
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="load"><input type="hidden" name="offset" value="0"><button>Load current Monzo feed for review</button></form>
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+{% if notice %}<p role="status">{{ notice }}</p>{% endif %}
+{% if entries is not none %}
+<p>{{ count }} distinct source transactions · showing {{ entries|length }} from offset {{ offset }}. Amounts are source-reported GBP.</p>
+{% for entry in entries %}<article>
+<h2>{{ entry.name or "Unnamed transaction" }}</h2><p>{{ entry.day }} · {{ entry.kind }} · £{{ "%.2f"|format(entry.pence/100) }}</p>
+<p>Original ID: <code>{{ entry.ref }}</code> · Source category: {{ entry.category or "Unknown" }}</p>
+{% if entry.stale %}<p role="alert">Source changed since review. Saved proposal is stale; no further edits until separately investigated.</p>{% else %}
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="save"><input type="hidden" name="offset" value="{{ offset }}"><input type="hidden" name="ref" value="{{ entry.ref }}"><input type="hidden" name="revision" value="{{ entry.revision }}"><input type="hidden" name="evidence" value="{{ entry.evidence }}">
+<label>HQ proposed category<select name="category">{% for category in categories %}<option value="{{ category }}"{% if category == entry.proposal %} selected{% endif %}>{{ category|replace("_"," ") }}{% if category == "customer_income" %} candidate, not verified{% endif %}</option>{% endfor %}</select></label>
+<label><input type="checkbox" name="confirm" value="yes" required> Confirm saving only this private classification proposal. Select unclassified to withdraw a previous classification.</label><button>Save HQ classification proposal</button></form>{% endif %}
+{% if entry.history %}<details><summary>Saved revision {{ entry.revision }} · {{ entry.proposal|replace("_"," ") }} · history</summary>{% for event in entry.history %}<p>Revision {{ event.revision }} · {{ event.category|replace("_"," ") }} · {{ event.created }}</p>{% endfor %}</details>{% else %}<p>Not yet reviewed in HQ.</p>{% endif %}
+</article>{% endfor %}
+{% if offset>0 %}<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="load"><input type="hidden" name="offset" value="{{ [0, offset-page]|max }}"><button>Previous page</button></form>{% endif %}
+{% if offset+page<count %}<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="load"><input type="hidden" name="offset" value="{{ offset+page }}"><button>Next page</button></form>{% endif %}
+{% endif %}</main></body></html>
