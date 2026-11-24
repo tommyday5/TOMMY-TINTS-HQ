@@ -172,7 +172,24 @@ def register_mapping_route(bp):
                 abort(413)
             if not secrets.compare_digest(request.form.get("csrf",""),session.get("csrf","not-set")):
                 abort(403)
-            if request.form.get("action") == "private_backup":
+            if request.form.get("action") == "encrypted_export":
+                if set(request.form) != {"csrf","action","snapshot_id","public_key","confirm_export"} or any(len(request.form.getlist(k)) != 1 for k in request.form) or request.form.get("confirm_export") != "yes":
+                    abort(400)
+                from flask import Response
+                from hq_recovery_export import export_snapshot
+                from cryptography.exceptions import UnsupportedAlgorithm
+                try:
+                    envelope = export_snapshot(request.form.get("snapshot_id"),request.form.get("public_key"))
+                except (ValueError,LookupError,sqlite3.Error,OSError,UnsupportedAlgorithm):
+                    error = "Encrypted export not completed. Check snapshot and RSA public key."
+                else:
+                    return Response(envelope,mimetype="application/octet-stream",headers={
+                        "Content-Disposition": 'attachment; filename="tommy-tints-hq-recovery.tthq"',
+                        "Cache-Control": "private, no-store, max-age=0",
+                        "Pragma": "no-cache",
+                        "X-Content-Type-Options": "nosniff",
+                    })
+            elif request.form.get("action") == "private_backup":
                 if set(request.form) != {"csrf","action","operation_id","confirm_backup"} or any(len(request.form.getlist(k)) != 1 for k in request.form) or request.form.get("confirm_backup") != "yes":
                     abort(400)
                 from hq_private_recovery import create_snapshot
