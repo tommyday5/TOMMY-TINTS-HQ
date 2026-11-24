@@ -251,3 +251,50 @@ class HistoricalJobBatchTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT count(*) FROM hq_historical_job_field_review_events").fetchone()[0],2)
             self.assertEqual(db.execute("SELECT count(*) FROM hq_work_records WHERE revision=0 AND status='draft'").fetchone()[0],2)
             self.assertEqual(db.execute("SELECT count(*) FROM hq_historical_j_candidates WHERE withdrawn_at IS NULL").fetchone()[0],2)
+
+    def test_dry_run_saved_owner_comparison_missing_price_and_stale_plan(self):
+        from hq_historical_job_dry_run import _pence
+        self.assertEqual(_pence(0), 0)
+        self.assertEqual(_pence(125.23), 12523)
+        for invalid in ("125", "", True, float("nan"), float("inf"), -1, 1.001):
+            self.assertIsNone(_pence(invalid))
+        with connect() as db:
+            db.execute("UPDATE hq_work_records SET price_pence=12500 WHERE id=?", (self.work_ids[0],))
+        batch = self.create(self.ids, "a"*32)
+        full = self.full_snapshots()
+        self.login()
+        evidence = dict(csrf="test-csrf",action="full_evidence",batch_id=batch,revision="0")
+        fields = dict(csrf="test-csrf",action="field_review",batch_id=batch,plan_revision="0",
+                      **{"f"+str(i):"u" for i in range(94)})
+        fields["f16"] = "n"
+        dry = dict(csrf="test-csrf",action="dry_run",batch_id=batch,plan_revision="1",dry_revision="0")
+        with patch.dict(app.extensions,{"hq_sheets_connection":lambda:("fixture",9999999999)}), patch("hq_historical_preview._read_live",return_value=(self.formula,self.computed)), patch("hq_historical_job_full_evidence.read_full_width",return_value=full):
+            self.assertEqual(self.client.post(self.url,data=evidence).status_code,303)
+            self.assertIn(b"Batch could not be saved",self.client.post(self.url,data=dry).data)
+            self.assertEqual(self.client.post(self.url,data=fields).status_code,303)
+            self.assertEqual(self.client.post(self.url,data=dict(dry,csrf="bad")).status_code,403)
+            self.assertEqual(self.client.post(self.url,data=dry).status_code,303)
+            self.assertEqual(self.client.post(self.url,data=dry).status_code,303)
+            snapshot = list_batches()[0]["dry_run"]
+            self.assertEqual(snapshot["revision"],1)
+            rows = snapshot["report"]["rows"]
+            self.assertEqual(rows[0]["quote_comparison"],"Equal")
+            self.assertEqual(rows[1]["quote_comparison"],"Unknown / missing")
+            self.assertIsNone(rows[1]["native_quote_pence"])
+            self.assertEqual(rows[0]["customer_name_comparison"],"Equal")
+            self.assertEqual(snapshot["report"]["unresolved_fields"],93)
+            page = self.client.get(self.url)
+            self.assertIn(b"Saved dry-run comparison",page.data)
+            self.assertIn(b"Historical quote:",page.data)
+            self.assertIn(b"Unknown / missing",page.data)
+            self.assertEqual(self.client.post(self.url,data=dict(fields,plan_revision="1",f1="h")).status_code,303)
+            self.assertIn(b"Field plan changed since this comparison",self.client.get(self.url).data)
+            self.assertIn(b"Batch could not be saved",self.client.post(self.url,data=dry).data)
+            self.assertEqual(self.client.post(self.url,data=dict(dry,plan_revision="2",dry_revision="1")).status_code,303)
+            full[1]["valueRanges"][0]["values"][1][93] = "Changed"
+            self.assertIn(b"Batch could not be saved",self.client.post(self.url,data=dict(dry,plan_revision="2",dry_revision="2")).data)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_historical_job_dry_runs").fetchone()[0],2)
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_work_records WHERE revision=0 AND status='draft'").fetchone()[0],2)
+            self.assertEqual(db.execute("SELECT price_pence FROM hq_work_records WHERE id=?", (self.work_ids[0],)).fetchone()[0],12500)
+            self.assertIsNone(db.execute("SELECT price_pence FROM hq_work_records WHERE id=?", (self.work_ids[1],)).fetchone()[0])
