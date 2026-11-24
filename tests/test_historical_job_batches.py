@@ -597,3 +597,71 @@ class HistoricalJobBatchTests(unittest.TestCase):
         self.assertIsNone(_minutes(float("nan")))
         self.assertIsNone(_minutes(-1))
         self.assertEqual(_minutes(1.25),75)
+
+
+    def test_singleton_price_manifest_owner_execution_and_reversal(self):
+        from hq_native_work import _tables
+        from hq_historical_preview import save_candidate_field_review, save_customer_identity_review
+        from hq_historical_price_import import read_manifests
+        work, candidate = self.work_ids[0], self.ids[0]
+        with connect() as db:
+            _tables(db)
+            db.execute("UPDATE hq_work_records SET source_request_id=? WHERE id=?",("HQ-"+work,work))
+            db.execute("INSERT INTO hq_native_work_details VALUES (?,?,?)",(work,"retail","2026-01-01"))
+        batch = self.create([candidate],"a"*32)
+        full = self.full_snapshots()
+        self.login()
+        args = dict(candidate_id=candidate, expected_revision=0, formula=self.formula,
+                    computed=self.computed, owner_identity="synthetic-owner")
+        save_candidate_field_review(**args, assessments={
+            k:"appears_consistent" for k in ("customer","customer_tier","vehicle","services","quoted_price","lifecycle")})
+        save_customer_identity_review(**args,decision="potential_match",basis="owner_document_review")
+        mapping = self.url + "/" + batch + "/mapping/" + candidate
+        evidence = dict(csrf="test-csrf",action="full_evidence",batch_id=batch,revision="0")
+        fields = dict(csrf="test-csrf",action="field_review",batch_id=batch,plan_revision="0",
+                      **{"f"+str(i):"h" for i in range(94)})
+        fields["f16"] = "n"
+        dry = dict(csrf="test-csrf",action="dry_run",batch_id=batch,plan_revision="1",dry_revision="0")
+        stage = dict(csrf="test-csrf",action="stage_source",batch_id=batch,plan_revision="1",
+                     dry_revision="1",confirm_stage="yes")
+        backup = dict(csrf="test-csrf",action="private_backup",operation_id="b"*32,confirm_backup="yes")
+        prepare = dict(csrf="test-csrf",action="prepare_import",snapshot_id="b"*32)
+        with patch.dict(app.extensions,{"hq_sheets_connection":lambda:("fixture",9999999999)}), \
+             patch("hq_historical_preview._read_live",return_value=(self.formula,self.computed)), \
+             patch("hq_historical_job_full_evidence.read_full_width",return_value=full):
+            for data in (evidence,fields,dry,stage):
+                self.assertEqual(self.client.post(self.url,data=data).status_code,303)
+            self.assertEqual(self.client.post(mapping,data=dict(csrf="test-csrf",revision="0",decision="propose")).status_code,303)
+            self.assertIn(b"Import action blocked",self.client.post(mapping,data=prepare).data)
+            self.assertIn(b"Private recovery snapshot saved",self.client.post(mapping,data=backup).data)
+            self.assertEqual(app.test_client().post(mapping,data=prepare).status_code,302)
+            self.assertEqual(self.client.post(mapping,data=dict(prepare,csrf="bad")).status_code,403)
+            self.assertIn(b"Exact one-row approval manifest saved",self.client.post(mapping,data=prepare).data)
+            self.assertIn(b"Exact one-row approval manifest saved",self.client.post(mapping,data=prepare).data)
+            with connect() as db:
+                manifests = read_manifests(db,batch,candidate)
+                self.assertEqual(len(manifests),1)
+                mid = manifests[0]["id"]
+                self.assertIsNone(db.execute("SELECT price_pence FROM hq_work_records WHERE id=?",(work,)).fetchone()[0])
+            apply = dict(csrf="test-csrf",action="execute_import",manifest_id=mid,confirm_import="yes")
+            self.assertEqual(self.client.post(mapping,data=dict(apply,confirm_import="")).status_code,400)
+            self.assertEqual(self.client.post(mapping,data=dict(apply,csrf="bad")).status_code,403)
+            full[1]["valueRanges"][0]["values"][1][53]=76
+            self.assertIn(b"Import action blocked",self.client.post(mapping,data=apply).data)
+            full[1]["valueRanges"][0]["values"][1][53]=75
+            self.assertIn(b"Historical quoted price imported and verified",self.client.post(mapping,data=apply).data)
+            self.assertIn(b"Historical quoted price imported and verified",self.client.post(mapping,data=apply).data)
+            self.assertIn(b"Reverse this imported price",self.client.get(mapping).data)
+            with connect() as db:
+                self.assertEqual(tuple(db.execute("SELECT price_pence,revision,status,deposit_pence FROM hq_work_records WHERE id=?",(work,)).fetchone()),(12500,1,"draft",0))
+                self.assertIsNone(db.execute("SELECT price_pence FROM hq_work_records WHERE id=?",(self.work_ids[1],)).fetchone()[0])
+                self.assertEqual(db.execute("SELECT count(*) FROM hq_work_audit WHERE action='historical_price_import'").fetchone()[0],1)
+            undo = dict(apply,action="reverse_import")
+            self.assertEqual(self.client.post(mapping,data=dict(undo,confirm_import="")).status_code,400)
+            self.assertIn(b"Imported price reversed",self.client.post(mapping,data=undo).data)
+            self.assertIn(b"Imported price reversed",self.client.post(mapping,data=undo).data)
+            self.assertIn(b"Import action blocked",self.client.post(mapping,data=apply).data)
+            with connect() as db:
+                self.assertEqual(tuple(db.execute("SELECT price_pence,revision,status,deposit_pence FROM hq_work_records WHERE id=?",(work,)).fetchone()),(None,2,"draft",0))
+                self.assertEqual(db.execute("SELECT count(*) FROM hq_work_audit WHERE action='historical_price_reversal'").fetchone()[0],1)
+                self.assertIsNotNone(read_manifests(db,batch,candidate)[0]["rolled_back_at"])

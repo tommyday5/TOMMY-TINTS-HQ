@@ -2,7 +2,7 @@
 <style>:root{color-scheme:dark;background:#090b0f;color:#f4f5f9;font-family:system-ui,sans-serif}main{max-width:900px;margin:auto;padding:16px}a{color:#ff7881}section{border:1px solid #3b4659;background:#181d26;padding:14px;margin:14px 0;border-radius:12px}button,select{padding:12px;max-width:100%}td,th{padding:8px;text-align:left;vertical-align:top;overflow-wrap:anywhere;border-bottom:1px solid #3b4659}table{width:100%;table-layout:fixed}small{color:#c1c9d3}</style></head>
 <body><main><p><a href="/hq/migration/job-batches">Back to review batches</a></p>
 <h1>{{ ctx.row.job_ref }} — staged quote mapping</h1>
-<p>Private historical snapshot, source row {{ ctx.row.sheet_row }}. Not a fresh Sheets check, verified identity, import approval, invoice or receipt. This editor never changes the native job.</p>
+<p>Private historical snapshot, source row {{ ctx.row.sheet_row }}. Not a fresh Sheets check, verified identity, import approval, invoice or receipt. Mapping drafts never change the native job. Only the separate, confirmed one-row import below can change an eligible draft price.</p>
 {% if error %}<p role="alert">{{ error }}</p>{% endif %}{% if saved %}<p role="status">Mapping draft saved. No canonical record changed.</p>{% endif %}
 <section><h2>Quoted Price → native quoted price (pence)</h2>
 <p>Historical amount: {{ '£%.2f'|format(ctx.source_pence/100) if ctx.source_pence is not none else 'Unknown / missing' }}</p>
@@ -83,6 +83,35 @@
 </form>
 {% endif %}
 {% endif %}</section>
+<section><h2>First bounded canonical import — quoted price only</h2>
+<p>One source row, one existing unpriced owner-native draft, zero customer or vehicle edits. A current owner-document identity review, consistent customer, vehicle and service assessments, exact source registration, no other proposed mappings, and a recovery snapshot containing the unchanged draft and staged evidence are required. No payment, status, cost, receipt or booking is imported. All other fields remain historical.</p>
+{% if import_result %}<p role="status">{{ import_result }}</p>{% endif %}
+{% if ctx.current and backups %}
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="prepare_import">
+<label for="import-snapshot">Verified recovery snapshot</label>
+<select id="import-snapshot" name="snapshot_id" required>{% for item in backups %}<option value="{{ item.id }}">{{ item.id }}</option>{% endfor %}</select>
+<button type="submit">Prepare exact one-row import approval</button></form>
+{% endif %}
+{% for event in manifests %}
+{% set m=event.manifest %}
+<section><h3>Manifest {{ event.id[:12] }} — {{ 'Reversed' if event.rolled_back_at else 'Applied' if event.applied_at else 'Awaiting approval' }}</h3>
+<p>Prepared {{ event.prepared_at }} · Source {{ m.job_ref }}, Jobs row {{ m.sheet_row }} · Native draft {{ m.work_id }}</p>
+<p>Existing customer ID {{ m.customer_id }} · existing vehicle ID {{ m.vehicle_id }} · no relationship changes.</p>
+<p>Quoted price: unknown → £{{ '%.2f'|format(m.after_price/100) }}. One job, zero customer or vehicle changes. No conflicts detected within this narrow validation scope at preparation.</p>
+<p>Recovery snapshot {{ m.snapshot_id }} · draft revision {{ m.work_revision }} · source plan {{ m.plan_revision }} · mapping {{ m.mapping_revision }} · identity review {{ m.identity_revision }}.</p>
+<p>Application rechecks the exact manifest and fresh Sheets values. Reversal restores the missing price only if the draft remains unchanged; audit and original J reference are retained. This is not a complete domain migration.</p>
+{% if not event.applied_at and ctx.current %}
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="execute_import"><input type="hidden" name="manifest_id" value="{{ event.id }}">
+<label><input type="checkbox" name="confirm_import" value="yes" required> I independently verified the identities and authorise this exact one-price change.</label>
+<button type="submit">Apply this one-row historical price import</button></form>
+{% elif event.applied_at and not event.rolled_back_at %}
+<p>Applied {{ event.applied_at }}</p>
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="reverse_import"><input type="hidden" name="manifest_id" value="{{ event.id }}">
+<label><input type="checkbox" name="confirm_import" value="yes" required> I authorise restoring the previous missing price if the draft is unchanged.</label>
+<button type="submit">Reverse this imported price</button></form>
+{% elif event.rolled_back_at %}<p>Reversed {{ event.rolled_back_at }}. This manifest cannot be reapplied.</p>{% endif %}</section>
+{% else %}<p>No exact import approval manifest saved.</p>{% endfor %}
+</section>
 <section><h2>Original staged source cells (94 columns)</h2><p>Formula strings are displayed as text and are never executed. Blank is not zero.</p>
 <table><thead><tr><th>Field</th><th>Original / formula</th><th>Effective value</th></tr></thead><tbody>
 {% for field,raw,effective in ctx.cells %}<tr><th scope="row">{{ field }}</th><td>{{ raw if raw is not none and raw != '' else '—' }}</td><td>{{ effective if effective is not none and effective != '' else '—' }}</td></tr>{% endfor %}
