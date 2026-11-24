@@ -148,8 +148,8 @@ def report_preview(db, entry, invoice_ref, rev, evidence_ref):
         raise Conflict("Use the same independent evidence reference for this source.")
     if db.execute("""SELECT 1 FROM hq_receivable_allocations a
         LEFT JOIN hq_monzo_reported_links l ON l.allocation_id=a.id
-        WHERE a.status='reported' AND a.evidence_ref=? COLLATE NOCASE
-        AND (l.source_id IS NULL OR l.source_id<>?)""",(evidence_ref,entry["ref"])).fetchone():
+        WHERE a.status='reported' AND (a.evidence_ref=? COLLATE NOCASE OR a.evidence_ref=? COLLATE NOCASE)
+        AND (l.source_id IS NULL OR l.source_id<>?)""",(evidence_ref,entry["ref"],entry["ref"])).fetchone():
         raise Conflict("Evidence reference is already used by another active allocation; reconcile it first.")
     allocated = db.execute("""SELECT COALESCE(SUM(amount_pence),0)
         FROM hq_receivable_allocations WHERE invoice_id=? AND status='reported'""",(invoice["id"],)).fetchone()[0]
