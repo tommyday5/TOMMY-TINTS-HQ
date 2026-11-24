@@ -156,6 +156,8 @@ def list_batches():
 
 
 def register_routes(bp):
+    from hq_historical_job_quote_mapping import register_mapping_route
+    register_mapping_route(bp)
     @bp.route("/hq/migration/job-batches", methods=["GET", "POST"])
     @required
     def job_batches():
