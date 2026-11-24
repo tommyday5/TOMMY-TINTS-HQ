@@ -165,29 +165,39 @@ def register_mapping_route(bp):
         if not _HEX.fullmatch(batch_id) or not _HEX.fullmatch(candidate_id):
             abort(404)
         error = None
+        rehearsal = None
         if request.method == "POST":
             if request.content_length is None or request.content_length > 4096:
                 abort(413)
             if not secrets.compare_digest(request.form.get("csrf",""),session.get("csrf","not-set")):
                 abort(403)
-            revision = request.form.get("revision","")
-            try:
-                if not revision.isascii() or not revision.isdecimal() or len(revision)>18:
-                    raise ValueError("Invalid revision")
-                field = request.form.get("field", "quote")
-                if field == "quote":
-                    save_mapping(batch_id,candidate_id,int(revision),request.form.get("decision"),session.get("google_sub"))
-                elif field in FIELDS:
-                    save_actual_mapping(batch_id,candidate_id,int(revision),field,
-                                        request.form.get("decision"),session.get("google_sub"))
-                else:
-                    decision = request.form.get("decision")
-                    save_classification(batch_id,candidate_id,int(revision),field,decision,
-                                        request.form.get("target","") if decision == "propose" else "",
-                                        session.get("google_sub"))
-                return redirect(url_for(".historical_quote_mapping",batch_id=batch_id,candidate_id=candidate_id,saved="1"),code=303)
-            except (ValueError,LookupError,sqlite3.Error,OSError):
-                error = "Mapping not saved. Reload current evidence and revision."
+            if request.form.get("action") == "rehearse":
+                if set(request.form) != {"csrf","action"} or any(len(request.form.getlist(k)) != 1 for k in request.form):
+                    abort(400)
+                from hq_historical_job_rehearsal import rehearse_mapping
+                try:
+                    rehearsal = rehearse_mapping(batch_id,candidate_id)
+                except (ValueError,LookupError,sqlite3.Error,OSError):
+                    error = "Rehearsal not completed. Check current proposals, database availability and planned deposit."
+            else:
+                revision = request.form.get("revision","")
+                try:
+                    if not revision.isascii() or not revision.isdecimal() or len(revision)>18:
+                        raise ValueError("Invalid revision")
+                    field = request.form.get("field", "quote")
+                    if field == "quote":
+                        save_mapping(batch_id,candidate_id,int(revision),request.form.get("decision"),session.get("google_sub"))
+                    elif field in FIELDS:
+                        save_actual_mapping(batch_id,candidate_id,int(revision),field,
+                                            request.form.get("decision"),session.get("google_sub"))
+                    else:
+                        decision = request.form.get("decision")
+                        save_classification(batch_id,candidate_id,int(revision),field,decision,
+                                            request.form.get("target","") if decision == "propose" else "",
+                                            session.get("google_sub"))
+                    return redirect(url_for(".historical_quote_mapping",batch_id=batch_id,candidate_id=candidate_id,saved="1"),code=303)
+                except (ValueError,LookupError,sqlite3.Error,OSError):
+                    error = "Mapping not saved. Reload current evidence and revision."
         root = os.environ.get("HQ_DATA_DIR","")
         path = Path(root)/"customer_requests.sqlite3"
         if not root or not Path(root).is_absolute() or not path.is_file():
@@ -203,4 +213,4 @@ def register_mapping_route(bp):
         except (ValueError,sqlite3.Error,OSError):
             abort(409)
         return render_template("hq_historical_job_quote_mapping.html",ctx=ctx,error=error,
-            csrf=session.get("csrf",""),saved=request.args.get("saved")=="1")
+            csrf=session.get("csrf",""),saved=request.args.get("saved")=="1",rehearsal=rehearsal)

@@ -46,6 +46,17 @@
 <button type="submit">Save {{ item.label }} draft</button></form>{% endif %}
 {% for event in item.history %}<p>Revision {{ event.revision }} · {{ event.decision }} · {{ event.source_amount if event.source_amount is not none else 'unknown' }} {{ item.unit }} · {{ event.created_at }}</p>{% else %}<p>No mapping saved.</p>{% endfor %}
 {% endfor %}</section>
+<section><h2>Rehearse saved price, service and tier proposals</h2>
+<p>Run a bounded rehearsal against a temporary in-memory SQLite copy of HQ. This checks copied database integrity, applies only eligible saved proposals to the copy, verifies the resulting fields and rolls back the copied transaction. Nothing is imported or changed on the Railway volume. This is not a durable backup or migration approval.</p>
+{% if ctx.current %}<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="rehearse"><button type="submit">Run isolated migration rehearsal</button></form>{% endif %}
+{% if rehearsal %}<p role="status">Copied database integrity checked; isolated rollback verified.</p>
+<p>Snapshot work revision: {{ rehearsal.revision_before }} → {{ rehearsal.revision_after }} (copy only). Results are temporary and are not proof of current live state or customer identity.</p>
+<table><thead><tr><th>Proposed field</th><th>Before (copy)</th><th>After (copy)</th></tr></thead><tbody>
+{% for item in rehearsal.fields %}<tr><th scope="row">{{ {'price_pence':'Quoted price','service':'Service','customer_tier':'Job pricing tier'}[item.label] }}</th>
+{% for amount in [item.before,item.after] %}<td>{% if amount is none %}Unknown / missing{% elif item.label == 'price_pence' %}{{ '£%.2f'|format(amount/100) }}{% else %}{{ amount }}{% endif %}</td>{% endfor %}</tr>{% endfor %}
+</tbody></table>
+{% if rehearsal.excluded %}<p>Saved aggregate proposals excluded: {{ rehearsal.excluded|join(', ') }}.</p>{% endif %}
+<p>No customer, vehicle, invoice, deposit, receipt, inventory or actual cost ledger is migrated by this rehearsal.</p>{% endif %}</section>
 <section><h2>Original staged source cells (94 columns)</h2><p>Formula strings are displayed as text and are never executed. Blank is not zero.</p>
 <table><thead><tr><th>Field</th><th>Original / formula</th><th>Effective value</th></tr></thead><tbody>
 {% for field,raw,effective in ctx.cells %}<tr><th scope="row">{{ field }}</th><td>{{ raw if raw is not none and raw != '' else '—' }}</td><td>{{ effective if effective is not none and effective != '' else '—' }}</td></tr>{% endfor %}

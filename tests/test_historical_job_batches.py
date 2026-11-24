@@ -421,6 +421,36 @@ class HistoricalJobBatchTests(unittest.TestCase):
             self.assertEqual(self.client.post(mapping,data=service).status_code,303)
             self.assertEqual(self.client.post(mapping,data=tier).status_code,303)
             self.assertIn(b"Window Tinting",self.client.get(mapping).data)
+            quote = dict(csrf="test-csrf",revision="0",decision="propose")
+            self.assertEqual(self.client.post(mapping,data=quote).status_code,303)
+            rehearsal = dict(csrf="test-csrf",action="rehearse")
+            self.assertIn(b"Run isolated migration rehearsal",self.client.get(mapping).data)
+            self.assertEqual(app.test_client().post(mapping,data=rehearsal).status_code,302)
+            self.assertEqual(self.client.post(mapping,data=dict(rehearsal,csrf="bad")).status_code,403)
+            self.assertEqual(self.client.post(mapping,data=dict(rehearsal,extra="bad")).status_code,400)
+            from hq_historical_job_rehearsal import rehearse_mapping
+            with connect() as db:
+                before = [tuple(r) for r in db.execute("SELECT * FROM hq_work_records ORDER BY id")]
+                audit_before = [tuple(r) for r in db.execute("SELECT * FROM hq_work_audit")]
+            report = rehearse_mapping(batch,self.ids[0])
+            self.assertTrue(report["rollback_verified"])
+            self.assertTrue(report["copy_integrity_checked"])
+            self.assertEqual({x["label"]:(x["before"],x["after"]) for x in report["fields"]},
+                             {"price_pence":(None,12500),"service":("Tinting","Window Tinting"),
+                              "customer_tier":("trade","retail")})
+            self.assertEqual(report["revision_after"],1)
+            self.assertIn("Actual Materials £",report["excluded"])
+            page = self.client.post(mapping,data=rehearsal)
+            self.assertEqual(page.status_code,200)
+            self.assertIn(b"isolated rollback verified",page.data)
+            self.assertIn(b"Saved aggregate proposals excluded",page.data)
+            with patch("hq_historical_job_rehearsal.MAX_BYTES",1):
+                self.assertIn(b"Rehearsal not completed",self.client.post(mapping,data=rehearsal).data)
+            with connect() as db:
+                self.assertEqual([tuple(r) for r in db.execute("SELECT * FROM hq_work_records ORDER BY id")],before)
+                self.assertEqual([tuple(r) for r in db.execute("SELECT * FROM hq_work_audit")],audit_before)
+                self.assertEqual(db.execute("SELECT customer_tier FROM hq_native_work_details WHERE work_id=?",
+                                            (self.work_ids[0],)).fetchone()[0],"trade")
             self.assertIn(b"Mapping not saved",self.client.post(mapping,data=dict(service,target="Vehicle Wrapping")).data)
             self.assertEqual(self.client.post(mapping,data=dict(service,revision="1",decision="preserve")).status_code,303)
             with connect() as db:
@@ -443,6 +473,7 @@ class HistoricalJobBatchTests(unittest.TestCase):
             self.assertEqual(self.client.post(self.url,data=dict(fields,plan_revision="1",f0="h")).status_code,303)
             self.assertIn(b"Review changed since staging",self.client.get(self.url).data)
             self.assertIn(b"editing disabled",self.client.get(mapping).data)
+            self.assertIn(b"Rehearsal not completed",self.client.post(mapping,data=rehearsal).data)
             self.assertIn(b"Mapping not saved",self.client.post(mapping,data=dict(decision,revision="2")).data)
             self.assertIn(b"Mapping not saved",self.client.post(mapping,data=dict(service,revision="2")).data)
             self.assertIn(b"Mapping not saved",self.client.post(mapping,data=dict(actual,revision="2")).data)
