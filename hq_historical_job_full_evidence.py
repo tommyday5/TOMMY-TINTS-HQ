@@ -150,24 +150,8 @@ def save_full_width_evidence(batch_id, *, legacy_formula, legacy_computed,
             version INTEGER NOT NULL CHECK(version=2), evidence TEXT NOT NULL,
             actor_fingerprint TEXT NOT NULL, created_at TEXT NOT NULL)""")
         db.execute("BEGIN IMMEDIATE")
-        batch = db.execute("SELECT revision,archived_at FROM hq_historical_job_batches WHERE id=?",
-                           (batch_id,)).fetchone()
-        if not batch or batch["revision"] != 0 or batch["archived_at"] is not None:
-            raise ValueError("Only active batches can receive evidence")
-        items = [dict(r) for r in db.execute("""SELECT i.*,c.source_stamp AS live_stamp,
-            c.withdrawn_at,c.id AS live_candidate,w.revision AS live_revision,
-            EXISTS(SELECT 1 FROM hq_work_archive_state a WHERE a.work_id=i.work_id
-                   AND a.is_archived=1) AS work_archived
-            FROM hq_historical_job_batch_items i
-            LEFT JOIN hq_historical_j_candidates c ON c.id=i.candidate_id
-            LEFT JOIN hq_work_records w ON w.id=i.work_id
-            WHERE i.batch_id=? ORDER BY i.sheet_row""", (batch_id,))]
-        if not 1 <= len(items) <= 20 or any(
-                not r["live_candidate"] or r["withdrawn_at"] is not None
-                or r["live_revision"] != r["work_revision"] or r["work_archived"]
-                or r["live_stamp"] != r["source_stamp"] for r in items):
-            raise ValueError("Batch contains stale proposals")
-        evidence = evidence_for_items(items, legacy_formula, legacy_computed, full_formula, full_computed)
+        evidence = verified_batch_evidence(db, batch_id, legacy_formula, legacy_computed,
+                                           full_formula, full_computed)
         prior = db.execute("SELECT evidence FROM hq_historical_job_batch_full_evidence WHERE batch_id=?",
                            (batch_id,)).fetchone()
         if prior:
@@ -177,3 +161,26 @@ def save_full_width_evidence(batch_id, *, legacy_formula, legacy_computed,
         db.execute("""INSERT INTO hq_historical_job_batch_full_evidence
             (batch_id,version,evidence,actor_fingerprint,created_at) VALUES (?,2,?,?,?)""",
             (batch_id, evidence, actor, now))
+
+
+def verified_batch_evidence(db, batch_id, legacy_formula, legacy_computed, full_formula, full_computed):
+    """Revalidate an active batch inside the caller's write transaction."""
+    batch = db.execute("SELECT revision,archived_at FROM hq_historical_job_batches WHERE id=?",
+                       (batch_id,)).fetchone()
+    if not batch or batch["revision"] != 0 or batch["archived_at"] is not None:
+        raise ValueError("Only active batches can receive evidence")
+    items = [dict(r) for r in db.execute("""SELECT i.*,c.source_stamp AS live_stamp,
+        c.withdrawn_at,c.id AS live_candidate,w.revision AS live_revision,
+        EXISTS(SELECT 1 FROM hq_work_archive_state a WHERE a.work_id=i.work_id
+               AND a.is_archived=1) AS work_archived
+        FROM hq_historical_job_batch_items i
+        LEFT JOIN hq_historical_j_candidates c ON c.id=i.candidate_id
+        LEFT JOIN hq_work_records w ON w.id=i.work_id
+        WHERE i.batch_id=? ORDER BY i.sheet_row""", (batch_id,))]
+    if not 1 <= len(items) <= 20 or any(
+            not r["live_candidate"] or r["withdrawn_at"] is not None
+            or r["live_revision"] != r["work_revision"] or r["work_archived"]
+            or r["live_stamp"] != r["source_stamp"] for r in items):
+        raise ValueError("Batch contains stale proposals")
+    evidence = evidence_for_items(items, legacy_formula, legacy_computed, full_formula, full_computed)
+    return evidence
