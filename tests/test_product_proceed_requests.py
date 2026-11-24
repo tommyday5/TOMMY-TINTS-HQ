@@ -420,5 +420,51 @@ class ProductProceedTests(unittest.TestCase):
                 "SELECT COUNT(*) FROM hq_product_order_handover").fetchone()[0], 0)
 
 
+    def test_product_deposit_plan_owner_edit_customer_scope_and_revision(self):
+        ident = request_to_proceed(self.basket, self.cid, uuid.uuid4().hex)
+        self.owner_login()
+        self.login_customer(self.mine, self.cid)
+        self.login_customer(self.other, self.stranger)
+        with app.app_context():
+            owner_review_proceed(ident, 0, "approved", "", "owner")
+            order_id = owner_create_product_order(ident, 1, "owner")
+        url = "/hq/product-proceed-requests"
+        form = {"csrf":"owner-csrf","action":"deposit_plan","request_id":ident,
+                "revision":"0","order_revision":"0","deposit_amount":"12.50"}
+        self.assertIn(b"Save proposed deposit", self.owner.get(url).data)
+        self.assertEqual(self.owner.post(url,data={**form,"csrf":"bad"}).status_code,403)
+        self.assertNotEqual(self.other.post(url,data=form).status_code,303)
+        for invalid in ("40.01","-1","1.001","NaN"):
+            self.assertEqual(self.owner.post(url,data={**form,"deposit_amount":invalid}).status_code,409)
+        self.assertEqual(self.owner.post(url,data=form).status_code,303)
+        self.assertEqual(self.owner.post(url,data=form).status_code,303)
+        self.assertIn(b"Proposed deposit: ", self.mine.get("/customer/basket-requests").data)
+        self.assertNotIn(b"Proposed deposit:", self.other.get("/customer/basket-requests").data)
+        state = customer_proceed_state(self.basket,self.cid)
+        self.assertEqual(state["proposed_deposit_pence"],1250)
+        self.assertEqual(state["conditional_remainder_pence"],2750)
+        self.assertEqual(self.owner.post(url,data={**form,"deposit_amount":"1"}).status_code,409)
+        self.assertEqual(self.owner.post(url,data={**form,"revision":"1","deposit_amount":""}).status_code,303)
+        self.assertNotIn("proposed_deposit_pence",customer_proceed_state(self.basket,self.cid))
+        self.assertEqual(self.owner.post(url,data={**form,"revision":"2","deposit_amount":"0"}).status_code,303)
+        self.assertEqual(customer_proceed_state(self.basket,self.cid)["proposed_deposit_pence"],0)
+        with app.app_context():
+            owner_save_product_order(ident,0,"on_hold","","owner")
+            owner_save_product_order(ident,1,"open","","owner")
+        self.assertNotIn("proposed_deposit_pence",customer_proceed_state(self.basket,self.cid))
+        self.assertEqual(self.owner.post(url,data={**form,"revision":"3"}).status_code,409)
+        self.assertEqual(self.owner.post(url,data={**form,"revision":"3","order_revision":"2"}).status_code,303)
+        change_product_quote_status(self.basket,2,"withdrawn")
+        self.assertNotIn("proposed_deposit_pence",customer_proceed_state(self.basket,self.cid))
+        self.assertEqual(self.owner.post(url,data={**form,"revision":"4","order_revision":"2"}).status_code,409)
+        with connect() as db:
+            events=db.execute("""SELECT revision,proposed_pence FROM hq_product_order_deposit_events
+                WHERE order_id=? ORDER BY revision""",(order_id,)).fetchall()
+            self.assertEqual([tuple(r) for r in events],[(1,1250),(2,None),(3,0),(4,1250)])
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_work_records").fetchone()[0],0)
+        with commerce_db() as db:
+            self.assertEqual(db.execute("SELECT stock FROM products WHERE id=?",(self.product,)).fetchone()[0],5)
+
+
 if __name__ == "__main__":
     unittest.main()

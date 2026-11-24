@@ -136,6 +136,67 @@ def _tables(db):
         UNIQUE(order_id,revision)
     )""")
 
+    # Append-only planning ledger. An amount is a proposed deposit, never a receipt.
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_product_order_deposit_events (
+        order_id TEXT NOT NULL REFERENCES hq_product_orders(id),
+        revision INTEGER NOT NULL CHECK(revision>0),
+        order_revision INTEGER NOT NULL,
+        proposed_pence INTEGER CHECK(proposed_pence IS NULL OR proposed_pence>=0),
+        actor_fingerprint TEXT NOT NULL,
+        occurred_at TEXT NOT NULL,
+        PRIMARY KEY(order_id,revision)
+    )""")
+
+
+def owner_save_deposit_plan(ident, expected_revision, expected_order_revision, amount, actor):
+    """Save or clear a proposed deposit; never collect or allocate funds."""
+    _id(ident)
+    if any(type(v) is not int or not 0 <= v < 100000000
+           for v in (expected_revision, expected_order_revision)):
+        raise ValueError("Invalid deposit plan revision")
+    if not isinstance(amount, str) or (amount and not re.fullmatch(
+            r"[0-9]{1,7}(?:\.[0-9]{1,2})?", amount)):
+        raise ValueError("Enter a non-negative GBP amount or leave blank to clear")
+    proposed = None
+    if amount:
+        whole, _, fraction = amount.partition(".")
+        proposed = int(whole)*100 + int(fraction.ljust(2, "0"))
+    fingerprint = _actor_fingerprint(actor)
+    with canonical_db() as db:
+        _tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        proceed = db.execute("SELECT * FROM hq_product_proceed_requests WHERE id=?",
+                             (ident,)).fetchone()
+        order = db.execute("SELECT * FROM hq_product_orders WHERE request_id=?",
+                           (ident,)).fetchone()
+        if not proceed or not order:
+            raise LookupError("Product order not found")
+        if (proceed["status"] != "approved" or order["status"] != "open"
+                or order["revision"] != expected_order_revision
+                or order["customer_id"] != proceed["customer_id"]
+                or order["quote_id"] != proceed["quote_id"]
+                or order["quote_revision"] != proceed["quote_revision"]
+                or db.execute("SELECT 1 FROM hq_product_order_handover WHERE order_id=?",
+                              (order["id"],)).fetchone()):
+            raise ValueError("Only current approved open orders without handover can be planned")
+        quote = _approved_unchanged_quote(db, proceed)
+        if (order["approved_total_pence"] != quote["approved_total_pence"]
+                or (proposed is not None and proposed > order["approved_total_pence"])):
+            raise ValueError("Proposed deposit exceeds or conflicts with the approved order total")
+        prior = db.execute("""SELECT * FROM hq_product_order_deposit_events
+            WHERE order_id=? ORDER BY revision DESC LIMIT 1""", (order["id"],)).fetchone()
+        revision = prior["revision"] if prior else 0
+        if (prior and prior["order_revision"] == expected_order_revision
+                and prior["proposed_pence"] == proposed and expected_revision <= revision):
+            return revision
+        if revision != expected_revision:
+            raise ValueError("Deposit plan changed; reload before saving")
+        db.execute("""INSERT INTO hq_product_order_deposit_events
+            (order_id,revision,order_revision,proposed_pence,actor_fingerprint,occurred_at)
+            VALUES (?,?,?,?,?,?)""", (order["id"], revision+1, expected_order_revision,
+                                      proposed, fingerprint, _now()))
+        return revision+1
+
 
 def _approved_unchanged_quote(db, proceed):
     quote = _load(db, proceed["basket_id"])
@@ -385,13 +446,23 @@ def customer_proceed_state(basket_id, customer_id):
             COALESCE(f.stage,'not_started') AS preparation_stage,
             COALESCE(f.public_note,'') AS preparation_note,
             o.id AS order_id,o.status AS order_status,o.public_note AS order_note,
-            h.state AS handover_state, h.handover_date, h.public_note AS handover_note
+            h.state AS handover_state, h.handover_date, h.public_note AS handover_note,
+            CASE WHEN q.status='approved' AND q.revision=p.quote_revision
+                AND o.quote_revision=q.revision AND o.status='open'
+                AND o.approved_total_pence=q.approved_total_pence
+                AND h.state IS NULL AND d.order_revision=o.revision
+                AND d.proposed_pence BETWEEN 0 AND o.approved_total_pence
+                THEN d.proposed_pence ELSE NULL END AS proposed_deposit_pence,
+            o.approved_total_pence AS order_total_pence
             FROM hq_product_proceed_requests p
             JOIN hq_combined_product_quotes q ON q.id=p.quote_id
             LEFT JOIN hq_product_preparation f ON f.request_id=p.id
             LEFT JOIN hq_product_orders o ON o.request_id=p.id
                 AND o.customer_id=p.customer_id AND o.quote_id=p.quote_id
             LEFT JOIN hq_product_order_handover h ON h.order_id=o.id
+            LEFT JOIN hq_product_order_deposit_events d ON d.order_id=o.id
+                AND d.revision=(SELECT MAX(revision) FROM hq_product_order_deposit_events
+                                WHERE order_id=o.id)
             WHERE p.basket_id=? AND p.customer_id=?
             AND q.customer_id=p.customer_id""", (basket_id, customer_id)).fetchone()
         if not row:
@@ -404,6 +475,10 @@ def customer_proceed_state(basket_id, customer_id):
                 result["order_id"] = row["order_id"]
                 result["order_status"] = row["order_status"]
                 result["order_note"] = row["order_note"]
+                if row["proposed_deposit_pence"] is not None:
+                    result["proposed_deposit_pence"] = row["proposed_deposit_pence"]
+                    result["conditional_remainder_pence"] = (
+                        row["order_total_pence"] - row["proposed_deposit_pence"])
                 if row["handover_state"]:
                     result["handover_state"] = row["handover_state"]
                     result["handover_date"] = row["handover_date"]
@@ -429,7 +504,9 @@ def owner_proceed_requests():
                 h.state AS handover_state,h.evidence_type AS handover_evidence_type,
                 h.evidence_reference AS handover_evidence_reference,
                 h.handover_date,h.public_note AS handover_note,
-                COALESCE(h.revision,0) AS handover_revision
+                COALESCE(h.revision,0) AS handover_revision,
+                COALESCE(d.revision,0) AS deposit_revision,
+                d.order_revision AS deposit_order_revision,d.proposed_pence AS proposed_deposit_pence
             FROM hq_product_proceed_requests p
             JOIN hq_combined_product_quotes q ON q.id=p.quote_id
             JOIN hq_customers c ON c.id=p.customer_id
@@ -437,9 +514,17 @@ def owner_proceed_requests():
             LEFT JOIN hq_product_orders o ON o.request_id=p.id
                 AND o.customer_id=p.customer_id AND o.quote_id=p.quote_id
             LEFT JOIN hq_product_order_handover h ON h.order_id=o.id
+            LEFT JOIN hq_product_order_deposit_events d ON d.order_id=o.id
+                AND d.revision=(SELECT MAX(revision) FROM hq_product_order_deposit_events
+                                WHERE order_id=o.id)
             ORDER BY CASE p.status WHEN 'pending' THEN 0 ELSE 1 END,
                      p.created_at DESC LIMIT 100""")]
         for item in rows:
+            item["deposit_history"] = (
+                [dict(event) for event in db.execute("""SELECT revision,order_revision,
+                    proposed_pence,occurred_at FROM hq_product_order_deposit_events
+                    WHERE order_id=? ORDER BY revision DESC""", (item["order_id"],))]
+                if item["order_id"] else [])
             item["handover_history"] = (
                 [dict(event) for event in db.execute("""
                     SELECT revision,state,handover_date,public_note,occurred_at
@@ -612,6 +697,13 @@ def owner_inbox():
                     request.form.get("request_id"), int(raw),
                     request.form.get("order_status"),
                     request.form.get("order_note", ""),
+                    session.get("google_sub", ""))
+            elif request.form.get("action") == "deposit_plan":
+                order_revision = request.form.get("order_revision", "")
+                if not _REV.fullmatch(order_revision):
+                    abort(400)
+                owner_save_deposit_plan(request.form.get("request_id"), int(raw),
+                    int(order_revision), request.form.get("deposit_amount", ""),
                     session.get("google_sub", ""))
             elif request.form.get("action") in ("handover_record", "handover_dispute"):
                 owner_save_product_handover(
