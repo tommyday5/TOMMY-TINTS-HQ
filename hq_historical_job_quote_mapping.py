@@ -177,6 +177,15 @@ def register_mapping_route(bp):
                     abort(400)
                 from hq_private_recovery import create_snapshot
                 try:
+                    backup_root = Path(os.environ.get("HQ_DATA_DIR",""))
+                    backup_source = backup_root / "customer_requests.sqlite3"
+                    if not backup_root.is_absolute() or not backup_source.is_file():
+                        raise LookupError("Canonical database unavailable")
+                    with closing(sqlite3.connect(backup_source.as_uri()+"?mode=ro",uri=True,timeout=1)) as db:
+                        db.row_factory = sqlite3.Row
+                        db.execute("PRAGMA query_only=ON")
+                        db.execute("BEGIN")
+                        _context(db,batch_id,candidate_id)
                     backup_saved = create_snapshot(request.form.get("operation_id"))
                 except (ValueError,LookupError,sqlite3.Error,OSError):
                     error = "Private backup not completed. Check storage, capacity, integrity and concurrent operations."
