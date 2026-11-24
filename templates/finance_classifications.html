@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Transaction classifications · Tommy Tints HQ</title><link rel="stylesheet" href="/static/finance-command.css"></head>
+<body><main><header><a href="/hq/finance/command">Back to Finance Command Centre</a></header>
+<h1>Monthly transaction classifications</h1>
+<p>Owner-entered HQ records only. These are not verified bank receipts, turnover, profit, VAT or balances. Do not add these figures to the connected spreadsheet or provider totals. Transfers, loans, settlements and refunds remain separate classifications.</p>
+<form method="get"><label>Month<input type="month" name="month" value="{{ month }}" required></label><button>Show month</button></form>
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+{% if report is not none %}
+{% if report.entries %}
+<div class="grid">
+<article><h2>Recorded inflows</h2><p>£{{ "%.2f"|format(report.incoming/100) }}</p></article>
+<article><h2>Recorded outflows</h2><p>£{{ "%.2f"|format(report.outgoing/100) }}</p></article>
+<article><h2>Unclassified absolute amount</h2><p>£{{ "%.2f"|format(report.unclassified/100) }}</p></article>
+</div>
+<p>{{ report.entries|length }} original entries · {{ report.split_count }} active splits. Each original amount is counted exactly once. Unclassified amounts can include either direction.</p>
+<h2>Effective category totals</h2>
+{% for category, amounts in report.totals %}<article><h3>{{ category|replace("_"," ") }}</h3><p>In £{{ "%.2f"|format(amounts.incoming/100) }} · Out £{{ "%.2f"|format(amounts.outgoing/100) }}</p></article>{% endfor %}
+<h2>Review individual entries</h2>
+{% for entry in report.entries %}
+<article><h3>{{ entry.description }}</h3><p>{{ entry.day }} · £{{ "%.2f"|format(entry.amount/100) }}</p>
+<p>{% if entry.split %}Active split proposal (not bank verified){% elif entry.reviewed %}Owner-reviewed classification (not bank verified){% else %}Needs owner review{% endif %}</p>
+{% for line in entry.lines %}<p>{{ line.category|replace("_"," ") }} · £{{ "%.2f"|format(line.pence/100) }}</p>{% endfor %}
+<a href="{{ url_for('native_finance.transaction_split_page',ref=entry.id) }}">{{ 'Edit / withdraw split' if entry.split else 'Create split / view history' }}</a>
+</article>
+{% endfor %}
+{% else %}<p>No owner-entered transactions in this month. Actual bank activity is unknown.</p>{% endif %}
+{% endif %}
+</main></body></html>
