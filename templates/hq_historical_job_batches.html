@@ -66,6 +66,19 @@ main{max-width:920px;margin:auto;padding:20px}a{color:#ff7881}section{background
 {% endfor %}
 {% endif %}
 {% endif %}
+<h4>Inactive source staging</h4>
+<p>Explicitly copy this batch's original 94-column formula and effective cell values into private HQ staging. This retains historical evidence, not an active link, canonical record, payment verification or import approval. Archived stages remain in the audit history.</p>
+{% if batch.source_stage %}
+<p role="status">Source rows staged: {{ batch.source_stage.row_count }} · 94 columns each · {{ batch.source_stage.created_at }} · field plan {{ batch.source_stage.plan_revision }} · comparison {{ batch.source_stage.dry_revision }}.</p>
+{% if not batch.source_stage.row_count_consistent %}<p role="alert">Staging row count inconsistent; do not use this stage.</p>{% endif %}
+{% if not batch.dry_run or batch.source_stage.dry_revision != batch.dry_run.revision or batch.source_stage.plan_revision != batch.field_plan.revision %}<p role="alert">Review changed since staging; archive and restage to create a new source stage.</p>{% endif %}
+<p><small>Original values are retained privately, not freshly verified by this page. Canonical records and source ownership are unchanged.</small></p>
+{% elif not batch.archived_at and batch.dry_run and batch.field_plan and batch.dry_run.plan_revision == batch.field_plan.revision %}
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="stage_source">
+<input type="hidden" name="batch_id" value="{{ batch.id }}"><input type="hidden" name="plan_revision" value="{{ batch.field_plan.revision }}"><input type="hidden" name="dry_revision" value="{{ batch.dry_run.revision }}">
+<label><input type="checkbox" name="confirm_stage" value="yes" required> I authorise copying these selected historical rows into inactive private staging only.</label>
+<button type="submit">Save inactive source rows</button></form>
+{% else %}<p>No source rows staged. Save a current field plan and dry-run comparison on an active batch first.</p>{% endif %}
 {% if not batch.archived_at %}<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="archive"><input type="hidden" name="batch_id" value="{{ batch.id }}"><input type="hidden" name="revision" value="{{ batch.revision }}"><button type="submit">Archive batch</button></form>{% endif %}
 </section>
 {% else %}<p>No review batches saved.</p>{% endfor %}
