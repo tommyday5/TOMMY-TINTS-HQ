@@ -266,12 +266,7 @@ class HistoricalJobBatchTests(unittest.TestCase):
         evidence = dict(csrf="test-csrf",action="full_evidence",batch_id=batch,revision="0")
         fields = dict(csrf="test-csrf",action="field_review",batch_id=batch,plan_revision="0",
                       **{"f"+str(i):"u" for i in range(94)})
-        fields["f16"] = fields["f5"] = fields["f3"] = "n"
-        from hq_native_work import _tables
-        with connect() as db:
-            _tables(db)
-            db.execute("INSERT INTO hq_native_work_details VALUES (?,?,?)",
-                       (self.work_ids[0],"trade","2026-01-01"))
+        fields["f16"] = "n"
         dry = dict(csrf="test-csrf",action="dry_run",batch_id=batch,plan_revision="1",dry_revision="0")
         with patch.dict(app.extensions,{"hq_sheets_connection":lambda:("fixture",9999999999)}), patch("hq_historical_preview._read_live",return_value=(self.formula,self.computed)), patch("hq_historical_job_full_evidence.read_full_width",return_value=full):
             self.assertEqual(self.client.post(self.url,data=evidence).status_code,303)
@@ -356,7 +351,12 @@ class HistoricalJobBatchTests(unittest.TestCase):
         evidence = dict(csrf="test-csrf",action="full_evidence",batch_id=batch,revision="0")
         fields = dict(csrf="test-csrf",action="field_review",batch_id=batch,plan_revision="0",
                       **{"f"+str(i):"u" for i in range(94)})
-        fields["f16"] = "n"
+        fields["f16"] = fields["f5"] = fields["f3"] = "n"
+        from hq_native_work import _tables
+        with connect() as db:
+            _tables(db)
+            db.execute("INSERT INTO hq_native_work_details VALUES (?,?,?)",
+                       (self.work_ids[0],"trade","2026-01-01"))
         dry = dict(csrf="test-csrf",action="dry_run",batch_id=batch,plan_revision="1",dry_revision="0")
         stage = dict(csrf="test-csrf",action="stage_source",batch_id=batch,plan_revision="1",
                      dry_revision="1",confirm_stage="yes")
