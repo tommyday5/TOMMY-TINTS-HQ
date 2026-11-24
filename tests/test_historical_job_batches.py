@@ -341,3 +341,49 @@ class HistoricalJobBatchTests(unittest.TestCase):
         with connect() as db:
             self.assertEqual(db.execute("SELECT count(*) FROM hq_historical_job_dry_runs").fetchone()[0],2)
             self.assertEqual(db.execute("SELECT count(*) FROM hq_work_records WHERE revision=0 AND status='draft'").fetchone()[0],2)
+
+    def test_explicit_source_stage_preserves_formula_effective_cells_and_history(self):
+        import json
+        batch = self.create(self.ids, "a"*32)
+        full = self.full_snapshots()
+        full[0]["valueRanges"][0]["values"][1][53] = "=25+50"
+        self.login()
+        evidence = dict(csrf="test-csrf",action="full_evidence",batch_id=batch,revision="0")
+        fields = dict(csrf="test-csrf",action="field_review",batch_id=batch,plan_revision="0",
+                      **{"f"+str(i):"u" for i in range(94)})
+        dry = dict(csrf="test-csrf",action="dry_run",batch_id=batch,plan_revision="1",dry_revision="0")
+        stage = dict(csrf="test-csrf",action="stage_source",batch_id=batch,plan_revision="1",
+                     dry_revision="1",confirm_stage="yes")
+        with patch.dict(app.extensions,{"hq_sheets_connection":lambda:("fixture",9999999999)}), patch("hq_historical_preview._read_live",return_value=(self.formula,self.computed)), patch("hq_historical_job_full_evidence.read_full_width",return_value=full):
+            self.assertEqual(self.client.post(self.url,data=evidence).status_code,303)
+            self.assertEqual(self.client.post(self.url,data=fields).status_code,303)
+            self.assertIn(b"Batch could not be saved",self.client.post(self.url,data=stage).data)
+            self.assertEqual(self.client.post(self.url,data=dry).status_code,303)
+            self.assertIn(b"Save inactive source rows",self.client.get(self.url).data)
+            self.assertIn(b"Batch could not be saved",self.client.post(self.url,data=dict(stage,confirm_stage="")).data)
+            self.assertEqual(self.client.post(self.url,data=dict(stage,csrf="bad")).status_code,403)
+            self.assertEqual(app.test_client().post(self.url,data=stage).status_code,302)
+            self.assertIn(b"Batch could not be saved",self.client.post(self.url,data=dict(stage,dry_revision="2")).data)
+            full[1]["valueRanges"][0]["values"][1][53] = 76
+            self.assertIn(b"Batch could not be saved",self.client.post(self.url,data=stage).data)
+            full[1]["valueRanges"][0]["values"][1][53] = 75
+            self.assertEqual(self.client.post(self.url,data=stage).status_code,303)
+            self.assertEqual(self.client.post(self.url,data=stage).status_code,303)
+            self.assertIn(b"Source rows staged: 2",self.client.get(self.url).data)
+            self.assertTrue(list_batches()[0]["source_stage"]["row_count_consistent"])
+            self.assertEqual(self.client.post(self.url,data=dict(fields,plan_revision="1",f0="h")).status_code,303)
+            self.assertIn(b"Review changed since staging",self.client.get(self.url).data)
+            self.assertIn(b"Batch could not be saved",self.client.post(self.url,data=stage).data)
+            self.assertEqual(self.client.post(self.url,data=dict(csrf="test-csrf",action="archive",batch_id=batch,revision="0")).status_code,303)
+            self.assertIn(b"Source rows staged: 2",self.client.get(self.url).data)
+            self.assertIn(b"Batch could not be saved",self.client.post(self.url,data=stage).data)
+        with connect() as db:
+            rows = db.execute("SELECT * FROM hq_historical_job_source_rows ORDER BY sheet_row").fetchall()
+            self.assertEqual(len(rows),2)
+            self.assertEqual(rows[0]["job_ref"],"J0001")
+            self.assertEqual(len(json.loads(rows[0]["raw_cells"])),94)
+            self.assertEqual(json.loads(rows[0]["raw_cells"])[53],"=25+50")
+            self.assertEqual(json.loads(rows[0]["effective_cells"])[53],75)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_historical_job_source_stages").fetchone()[0],1)
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_work_records WHERE revision=0 AND status='draft'").fetchone()[0],2)
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_historical_j_candidates WHERE withdrawn_at IS NULL").fetchone()[0],2)
