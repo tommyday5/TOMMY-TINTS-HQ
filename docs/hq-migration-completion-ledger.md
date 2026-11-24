@@ -190,3 +190,23 @@ an earlier proposal without deleting history. Existing manual transactions
 and totals remain separate. Imported bank cash, split allocations, settlement,
 provider authentication, actual reconciliation, owner acceptance and domain
 cutover remain unverified. No real transaction was classified by development.
+
+
+## 24 November follow-up — preserve existing transaction review evidence
+
+PR #263 merged at ff1b49b9 after successful CI 45432981933 (127 root,
+629 integration Python tests and 6 JS tests). Deployment b9681530 was
+building at first inspection; owner acceptance remains unverified.
+
+Read-only bounded source inspection found 4,000 distinct feed IDs and
+1,152 distinct override IDs, all matched by ID in the observed feed.
+The new owner form displays original category, existing Sheets override
+and source, and independent HQ proposal. Overrides are joined by exact ID
+rather than row position, never automatically mapped. Each new proposal
+revision records the legacy evidence digest and category; old revisions
+without context remain intact. Changed legacy evidence rejects stale form
+submissions, and duplicate override IDs fail closed. No source writes or
+canonical financial allocations. This is implemented pending CI, deploy
+and owner acceptance; no domain becomes authoritative. Next: native
+transaction-to-job/invoice/creditor matching and verified allocation,
+bounded customer/vehicle migration and production customer UI acceptance.

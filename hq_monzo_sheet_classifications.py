@@ -28,6 +28,8 @@ HEADER = ["Transaction ID", "Date", "Time", "Type", "Name", "Emoji",
 ID = re.compile(r"[A-Za-z0-9_:-]{1,160}\Z")
 DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 PAGE = 40
+LEGACY_SOURCE = "'Monzo Live Feed'!S7:U10000"
+LEGACY_HEADER = ["Transaction ID", "HQ category override", "Category source"]
 
 
 class Conflict(ValueError):
@@ -83,6 +85,39 @@ def parse_feed(payload):
     return result
 
 
+def parse_legacy(payload):
+    """Read the independent override table by ID, never by row position."""
+    if not isinstance(payload, dict) or payload.get("range") != LEGACY_SOURCE:
+        raise ValueError("Unexpected legacy override range.")
+    rows = payload.get("values")
+    if not isinstance(rows, list) or not rows or rows[0] != LEGACY_HEADER or len(rows) > 9994:
+        raise ValueError("Legacy override headings or row bounds changed.")
+    result = {}
+    for row in rows[1:]:
+        if not isinstance(row, list) or len(row) > 3:
+            raise ValueError("Invalid legacy override row.")
+        if all(v is None or v == "" for v in row):
+            continue
+        ref, category, source = (row + [None]*3)[:3]
+        if (not isinstance(ref, str) or not ID.fullmatch(ref) or ref in result
+                or any(v is not None and (not isinstance(v,str) or len(v)>2000)
+                       for v in (category,source))):
+            raise ValueError("Invalid or duplicate legacy override ID.")
+        result[ref] = (category,source)
+    if len(rows)==9994 and any(v is not None and v!="" for v in rows[-1]):
+        raise ValueError("Legacy overrides exceed the bounded review scan.")
+    return result
+
+
+def attach_legacy(feed, legacy):
+    for ref, entry in feed.items():
+        category, source = legacy.get(ref,(None,None))
+        entry.update(legacy_present=ref in legacy, legacy_category=category,
+                     legacy_source=source, legacy_evidence=fingerprint(
+                         [SPREADSHEET_ID,LEGACY_SOURCE,ref,ref in legacy,category,source]))
+    return feed
+
+
 def read_feed(token):
     response = requests.get("https://sheets.googleapis.com/v4/spreadsheets/"
         + SPREADSHEET_ID + "/values/" + SOURCE,
@@ -90,7 +125,13 @@ def read_feed(token):
                 "dateTimeRenderOption":"SERIAL_NUMBER","majorDimension":"ROWS"},
         headers={"Authorization":"Bearer "+token},timeout=(3,15))
     response.raise_for_status()
-    return parse_feed(response.json())
+    feed = parse_feed(response.json())
+    legacy_response = requests.get("https://sheets.googleapis.com/v4/spreadsheets/"
+        + SPREADSHEET_ID + "/values/" + LEGACY_SOURCE,
+        params={"valueRenderOption":"UNFORMATTED_VALUE","majorDimension":"ROWS"},
+        headers={"Authorization":"Bearer "+token},timeout=(3,15))
+    legacy_response.raise_for_status()
+    return attach_legacy(feed,parse_legacy(legacy_response.json()))
 
 
 def tables(db):
@@ -99,11 +140,17 @@ def tables(db):
         evidence TEXT NOT NULL, category TEXT NOT NULL,
         operation TEXT NOT NULL UNIQUE, actor TEXT NOT NULL,
         created TEXT NOT NULL, PRIMARY KEY(source_id,revision))""")
+    db.execute("""CREATE TABLE IF NOT EXISTS monzo_sheet_classification_legacy_evidence (
+        source_id TEXT NOT NULL, revision INTEGER NOT NULL, evidence TEXT NOT NULL,
+        category TEXT, PRIMARY KEY(source_id,revision))""")
 
 
 def histories(db):
-    rows = db.execute("""SELECT * FROM monzo_sheet_classification_events
-        ORDER BY source_id,revision DESC""")
+    rows = db.execute("""SELECT e.*, l.evidence AS legacy_evidence, l.category AS legacy_category
+        FROM monzo_sheet_classification_events e
+        LEFT JOIN monzo_sheet_classification_legacy_evidence l
+          ON e.source_id=l.source_id AND e.revision=l.revision
+        ORDER BY e.source_id,e.revision DESC""")
     history = {}
     for row in rows:
         events = history.setdefault(row["source_id"], [])
@@ -112,12 +159,15 @@ def histories(db):
     return history
 
 
-def save(entry, evidence, revision, category, actor):
+def save(entry, evidence, revision, category, actor, legacy_evidence):
     if not storage_ready():
         raise ValueError("Persistent HQ storage required.")
     if (not isinstance(evidence, str) or not DIGEST.fullmatch(evidence)
             or not secrets.compare_digest(entry["evidence"], evidence)):
         raise Conflict("Source transaction changed. Reload and review.")
+    if (not isinstance(legacy_evidence,str) or not DIGEST.fullmatch(legacy_evidence)
+            or not secrets.compare_digest(entry["legacy_evidence"],legacy_evidence)):
+        raise Conflict("Existing Sheets classification changed. Reload and review.")
     if (type(revision) is not int or not 0 <= revision < 2**63-1
             or category not in categories()):
         raise ValueError("Invalid review revision or category.")
@@ -125,7 +175,7 @@ def save(entry, evidence, revision, category, actor):
         raise ValueError("Customer income candidates require a positive amount.")
     actor = _actor_fingerprint(actor)
     ref = entry["ref"]
-    operation = fingerprint([ref, evidence, revision, category, actor])
+    operation = fingerprint([ref, evidence, revision, category, actor, legacy_evidence])
     with closing(connect()) as db, db:
         tables(db)
         db.execute("BEGIN IMMEDIATE")
@@ -140,6 +190,8 @@ def save(entry, evidence, revision, category, actor):
             raise Conflict("Source differs from saved evidence; separate investigation required.")
         db.execute("INSERT INTO monzo_sheet_classification_events VALUES(?,?,?,?,?,?,?)",
             (ref,revision+1,evidence,category,operation,actor,datetime.now(timezone.utc).isoformat()))
+        db.execute("INSERT INTO monzo_sheet_classification_legacy_evidence VALUES(?,?,?,?)",
+            (ref,revision+1,legacy_evidence,entry["legacy_category"]))
         return revision+1
 
 
@@ -168,8 +220,9 @@ def register(bp):
                     revision = request.form.get("revision","")
                     evidence = request.form.get("evidence","")
                     category = request.form.get("category","")
+                    legacy_evidence = request.form.get("legacy_evidence","")
                     if (not ID.fullmatch(ref) or not re.fullmatch(r"[0-9]{1,19}",revision)
-                            or not DIGEST.fullmatch(evidence) or category not in categories()
+                            or not DIGEST.fullmatch(evidence) or not DIGEST.fullmatch(legacy_evidence) or category not in categories()
                             or request.form.get("confirm") != "yes"):
                         raise ValueError("Explicit classification confirmation required.")
                 provider = current_app.extensions["hq_sheets_connection"]()
@@ -180,7 +233,7 @@ def register(bp):
                     if action == "save":
                         if ref not in feed:
                             raise Conflict("Original transaction not found in current source.")
-                        save(feed[ref],evidence,int(revision),category,session.get("google_sub",""))
+                        save(feed[ref],evidence,int(revision),category,session.get("google_sub",""),legacy_evidence)
                         notice = "Classification proposal saved. Source and financial balances unchanged."
                     with closing(connect()) as db, db:
                         tables(db)
@@ -194,6 +247,8 @@ def register(bp):
                         entry["revision"] = events[0]["revision"] if events else 0
                         entry["stale"] = bool(events and events[0]["evidence"] != entry["evidence"])
                         entry["proposal"] = events[0]["category"] if events else "unclassified"
+                        entry["legacy_changed"] = bool(events and
+                            events[0]["legacy_evidence"] != entry["legacy_evidence"])
             except Conflict as exc:
                 error,status=str(exc),409
             except (ValueError,TypeError):
