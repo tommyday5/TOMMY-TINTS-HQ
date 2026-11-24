@@ -42,6 +42,29 @@ main{max-width:920px;margin:auto;padding:20px}a{color:#ff7881}section{background
 {% endif %}
 </details>
 {% endif %}
+{% if batch.field_plan and batch.field_plan.revision %}
+<h4>Saved dry-run comparison</h4>
+<p>Compare historical quoted prices and customer/vehicle text with the selected native jobs. Equal text does not establish identity. No payment, import or field mapping is approved.</p>
+{% if not batch.archived_at %}
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="dry_run">
+<input type="hidden" name="batch_id" value="{{ batch.id }}"><input type="hidden" name="plan_revision" value="{{ batch.field_plan.revision }}">
+<input type="hidden" name="dry_revision" value="{{ batch.dry_run.revision if batch.dry_run else 0 }}">
+<button type="submit">Save fresh dry-run comparison</button></form>
+{% endif %}
+{% if batch.dry_run %}
+<p>Snapshot revision {{ batch.dry_run.revision }} · field plan revision {{ batch.dry_run.plan_revision }} · {{ batch.dry_run.created_at }}. Historical snapshot, not a current verification.</p>
+{% if batch.dry_run.plan_revision != batch.field_plan.revision %}<p role="status">Field plan changed since this comparison; save a fresh dry run.</p>{% endif %}
+<p>{{ batch.dry_run.report.unresolved_fields }} unresolved fields at snapshot time.</p>
+{% for row in batch.dry_run.report.rows %}
+<div><strong>{{ row.job_ref }}</strong> · source row {{ row.sheet_row }}
+<ul><li>Historical quote: {{ '£%.2f'|format(row.source_quote_pence/100) if row.source_quote_pence is not none else 'Unknown / missing' }}</li>
+<li>HQ quote: {{ '£%.2f'|format(row.native_quote_pence/100) if row.native_quote_pence is not none else 'Unknown / missing' }}</li>
+<li>Quote comparison: {{ row.quote_comparison }}</li>
+<li>Customer name text: {{ row.customer_name_comparison }} · registration text: {{ row.registration_comparison }}</li>
+<li>Native vehicle/customer relationship: {{ 'Consistent' if row.vehicle_customer_consistent else 'Conflict' }}</li></ul></div>
+{% endfor %}
+{% endif %}
+{% endif %}
 {% if not batch.archived_at %}<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="archive"><input type="hidden" name="batch_id" value="{{ batch.id }}"><input type="hidden" name="revision" value="{{ batch.revision }}"><button type="submit">Archive batch</button></form>{% endif %}
 </section>
 {% else %}<p>No review batches saved.</p>{% endfor %}
