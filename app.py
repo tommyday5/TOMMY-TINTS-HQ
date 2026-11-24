@@ -159,7 +159,7 @@ loadAssistantHistory();
 const TIMER_STORAGE_KEY="tommy-tints-hq-timer-v2";
 let hqData=null;
 const titles={overview:"Command centre",calculator:"Trade price calculator",materials:"Materials costing",timer:"Job timer",jobs:"Jobs",maintenance:"Maintenance & Routes","customer-requests":"Customer Requests",assistant:"HQ Assistant",settings:"Settings",integrations:"Integrations"};
-function navigate(page){if(!titles[page])return;document.querySelectorAll(".page").forEach(el=>el.classList.toggle("hidden",el.id!==page));document.querySelectorAll("[data-page]").forEach(el=>el.classList.toggle("active",el.dataset.page===page));$("heading").textContent=titles[page];}
+function navigate(page){if(page==="timer"){window.location.assign("/hq/timer");return;}if(!titles[page])return;document.querySelectorAll(".page").forEach(el=>el.classList.toggle("hidden",el.id!==page));document.querySelectorAll("[data-page]").forEach(el=>el.classList.toggle("active",el.dataset.page===page));$("heading").textContent=titles[page];}
 document.querySelectorAll("[data-page]").forEach(b=>b.addEventListener("click",()=>navigate(b.dataset.page)));
 const jobCards=document.getElementById("hqJobCards");
 const jobCardStatus=document.getElementById("jobCardStatus");
