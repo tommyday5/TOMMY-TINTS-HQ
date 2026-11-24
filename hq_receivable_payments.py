@@ -124,6 +124,20 @@ def save(data):
                 raise ValueError("Reversed allocations cannot be edited")
         elif fields["status"] != "reported":
             raise ValueError("New allocations must start as owner-reported")
+        # Preserve the immutable source link and prevent manual reuse of its evidence.
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_monzo_reported_links'").fetchone():
+            link = db.execute("SELECT * FROM hq_monzo_reported_links WHERE allocation_id=?",
+                              (fields["id"],)).fetchone()
+            if link:
+                if fields["status"] != "reversed" or any(fields[k] != existing[k]
+                    for k in ("received_on","method","evidence_ref","memo")):
+                    raise ValueError("Source-linked allocations can only be reversed without changing their evidence")
+            elif fields["status"] == "reported" and fields["evidence_ref"] and db.execute("""
+                SELECT 1 FROM hq_monzo_reported_links l JOIN hq_receivable_allocations a
+                ON a.id=l.allocation_id WHERE a.status='reported'
+                AND (l.evidence_ref=? COLLATE NOCASE OR l.source_id=? COLLATE NOCASE)""",
+                (fields["evidence_ref"],fields["evidence_ref"])).fetchone():
+                raise ValueError("Evidence already linked to a Monzo source; use its reconciliation workflow")
         counted = db.execute("""SELECT COALESCE(SUM(amount_pence),0) FROM hq_receivable_allocations
             WHERE invoice_id=? AND status='reported' AND id<>?""",
             (fields["invoice_id"], fields["id"])).fetchone()[0]
