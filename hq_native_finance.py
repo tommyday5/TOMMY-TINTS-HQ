@@ -119,3 +119,7 @@ register_splits(finance)
 # Owner-approved classifications of existing read-only Monzo worksheet evidence.
 from hq_monzo_sheet_classifications import register as register_monzo_classifications
 register_monzo_classifications(finance)
+
+# Inactive owner-reviewed worksheet-to-invoice match candidates.
+from hq_monzo_invoice_matches import register as register_monzo_invoice_matches
+register_monzo_invoice_matches(finance)
