@@ -18,9 +18,18 @@ button.secondary{background:#262b33;border-color:#666}
 button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,a:focus-visible{outline:2px solid #f2cb24;outline-offset:3px}
 li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 @media(max-width:600px){.grid{grid-template-columns:1fr}}
-</style></head><body><main>
+</style><link rel="stylesheet" href="/static/job-timer.css"><script defer src="/static/job-timer.js"></script></head><body><main>
 <p><a href="/hq/work/{{ work.id }}/progress">← Workshop progress</a> · <a href="/?page=jobs">HQ job cards</a> · <a href="/hq/work/{{ work.id }}/materials">Record material usage</a> · <a href="/hq/work/{{ work.id }}/expenses">Expenses / overhead</a> · <a href="/hq/work/{{ work.id }}/costs">Combined job costs</a></p>
-<h1>Actual workshop time · {{ work.id[:10] }}</h1>
+<header class="timer-brand"><img src="/static/company-logo-header.webp" alt="Tommy Tints"><strong>TOMMY TINTS <em>HQ</em></strong></header><h1 class="timer-title">Job Timer</h1>
+<section class="timer-cockpit" id="jobCockpit" data-work="{{ work.id }}" data-recorded="{{ work.minutes_total }}" data-editable="{{ 'yes' if work.can_edit_time else 'no' }}" data-saved="{{ 'yes' if request.args.get('saved') == '1' else 'no' }}">
+<article class="timer-job"><div><strong>{{ work.service }}</strong><p>{{ work.customer_name }} · {{ work.make }} {{ work.model }} · {{ work.registration }}</p></div><a href="/hq/timer">Change job ›</a></article>
+<div class="timer-state" id="clockState">STANDBY</div><div class="allowance-ring" id="allowanceRing" role="progressbar" aria-label="Estimated labour allowance used" aria-valuemin="0" aria-valuemax="100"><div class="ring-inner"><strong id="clockPercent">—</strong><small>of time allowance used</small><output id="activeClock">00:00:00</output><span>Working time · saved + current</span></div></div>
+<div class="timer-budget"><label for="allowance">Estimated active hours<input id="allowance" type="number" min="0.01" max="500" step="0.25" placeholder="Enter allowance"></label><strong id="clockRemaining">Estimate not recorded</strong></div><p id="pauseClock">Current session paused time 00:00:00 · excluded</p>
+<p class="timer-storage">Running session is stored on this device until you review and save it to HQ. Keep this page available; no background notification is guaranteed.</p>
+{% if work.can_edit_time %}<div class="timer-actions"><button id="clockStart" type="button">▶ Start / resume</button><button id="clockPause" type="button" class="secondary">Ⅱ Pause job</button><button id="clockFinish" type="button" class="secondary">✓ Finish &amp; review</button></div>{% endif %}
+<p id="clockWarning" role="status">Enter the job's time allowance to track progress.</p><p id="clockNotice" role="status"></p>
+<section class="timer-stages"><h2>Work stages</h2>{% for key,label in stages.items() %}{% set total = work.entries|rejectattr('voided_at')|selectattr('stage','equalto',key)|sum(attribute='minutes') %}<div><span>{{ label }}</span><strong>{{ total }} min recorded{% if work.history_truncated %} · visible history only{% endif %}</strong></div>{% endfor %}</section><a class="timer-log" href="#timeHistory">◷ Work log · View saved sessions ›</a>
+</section>
 <section class="panel">
 <p><strong>{{ work.customer_name }}</strong> · {{ work.make }} {{ work.model }} · {{ work.registration }}</p>
 <p>{{ work.service }} · {{ work.status.replace('_',' ') }} · revision {{ work.revision }}</p>
@@ -42,7 +51,7 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 {% if request.args.get("voided") == "1" %}<p class="success" role="status">Time entry reversed and retained in the audit history.</p>{% endif %}
 {% if request.args.get("conflict") == "1" %}<p class="error" role="alert">This job changed. Review the latest revision before reversing an entry.</p>{% endif %}
 {% if work.can_edit_time %}
-<form class="panel" method="post" action="/hq/work/{{ work.id }}/time">
+<form id="timeEntryForm" class="panel" method="post" action="/hq/work/{{ work.id }}/time">
 <h2>Record actual time</h2>
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <input type="hidden" name="revision" value="{{ work.revision }}">
@@ -66,7 +75,7 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 {% else %}
 <div class="panel"><p>New time entries and corrections are available only for approved or in-progress jobs. Existing records remain visible and cannot be silently erased.</p></div>
 {% endif %}
-<section class="panel"><h2>Time entry history</h2>
+<section class="panel" id="timeHistory"><h2>Time entry history</h2>
 {% if work.entries %}
 <ol>
 {% for entry in work.entries %}

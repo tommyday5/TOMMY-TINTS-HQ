@@ -805,3 +805,15 @@ def void_work_expense_entry(work_id, entry_id):
         current_app.logger.exception("Expense reversal unavailable")
         abort(503)
     return redirect(url_for(".edit_work_expenses", work_id=work_id, voided="1"), 303)
+
+
+@native_work.get('/hq/timer')
+@required
+def timer_jobs():
+    from hq_core_records import search_work_records
+    query=request.args.get('q','')
+    try:
+        page=search_work_records(query=query,kind='job',limit=50)
+    except ValueError:
+        abort(400)
+    return render_template('timer_jobs.html',page=page,query=query)
