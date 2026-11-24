@@ -115,3 +115,7 @@ register_allocation_routes(finance)
 # Additive owner-only native transaction split classifications.
 from hq_finance_splits import register as register_splits, tables as split_tables, active as split_active
 register_splits(finance)
+
+# Owner-approved classifications of existing read-only Monzo worksheet evidence.
+from hq_monzo_sheet_classifications import register as register_monzo_classifications
+register_monzo_classifications(finance)
