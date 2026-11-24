@@ -131,3 +131,58 @@ class MonzoSheetReviewTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_transactions").fetchone()[0],0)
             row=db.execute("SELECT category FROM monzo_sheet_classification_legacy_evidence").fetchone()
             self.assertEqual(row[0],"Legacy fuel")
+
+
+    def test_invoice_candidate_save_reload_withdraw_and_no_receipt(self):
+        import re
+        from hq_receivables import save as save_invoice
+        from hq_core_records import _schema
+        url="/hq/finance/monzo-invoice-match"
+        self.assertEqual(self.client.get(url).status_code,302)
+        with connect() as db:
+            _schema(db)
+            db.execute("INSERT INTO hq_customers VALUES(?,?,?,?,?,?)",
+                       ("a"*32,None,"Synthetic invoice customer","","","2026-11-22"))
+        invoice=dict(id="b"*32,operation_id="c"*32,revision=0,
+                     customer_id="a"*32,work_id=None,invoice_ref="TEST-MONZO-1",
+                     issue_date="2026-11-22",due_date="2026-12-10",amount_pence=35000,
+                     status="issued",archived=False,memo="")
+        save_invoice(invoice)
+        self.rows=[example(amount=100.25),example("tx_synthetic_2",amount=300),
+                   example("tx_negative",amount=-5)]
+        self.login()
+        form=dict(action="review",csrf="test-csrf",ref="tx_synthetic_1",
+                  invoice_ref="TEST-MONZO-1")
+        self.assertEqual(self.client.post(url,data=dict(form,csrf="bad")).status_code,403)
+        self.assertEqual(self.client.post(url,data=dict(form,ref="tx_negative")).status_code,400)
+        page=self.client.post(url,data=form)
+        self.assertEqual(page.status_code,200)
+        self.assertIn(b"Synthetic invoice customer",page.data)
+        self.assertIn(b"Candidate amount",page.data)
+        def manifest(page):
+            return re.search(rb'name="manifest" value="([a-f0-9]{64})"',page.data)[1].decode()
+        proposal=dict(form,action="save",revision="0",manifest=manifest(page),confirm="yes")
+        self.assertEqual(self.client.post(url,data=dict(proposal,confirm="")).status_code,400)
+        # Invoice revision changes after review; require a new preview.
+        save_invoice(dict(invoice,revision=1,operation_id="d"*32,memo="changed"))
+        self.assertEqual(self.client.post(url,data=proposal).status_code,409)
+        proposal["manifest"]=manifest(self.client.post(url,data=form))
+        self.assertEqual(self.client.post(url,data=proposal).status_code,200)
+        self.assertEqual(self.client.post(url,data=proposal).status_code,200)
+        loaded=self.client.get(url+"?ref=tx_synthetic_1")
+        self.assertIn(b"Revision 1",loaded.data)
+        self.assertIn(b"Withdraw saved candidate",loaded.data)
+        self.assertEqual(self.client.post(url,data=dict(form,ref="tx_synthetic_2")).status_code,400)
+        self.assertEqual(self.client.post(url,data=form).status_code,409)
+        # Withdrawal remains available even if Sheets is temporarily inaccessible.
+        self.reader.side_effect=AssertionError("No source read expected on withdrawal")
+        withdraw=dict(proposal,action="withdraw",revision="1")
+        self.assertEqual(self.client.post(url,data=withdraw).status_code,200)
+        self.assertEqual(self.client.post(url,data=withdraw).status_code,200)
+        self.reader.side_effect=lambda _:self.feed()
+        self.assertEqual(self.client.post(url,data=dict(form,ref="tx_synthetic_2")).status_code,200)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_monzo_invoice_match_events").fetchone()[0],2)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_receivable_allocations").fetchone()[0],0)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_transactions").fetchone()[0],0)
+            self.assertEqual(db.execute("SELECT amount_pence FROM hq_receivables").fetchone()[0],35000)
