@@ -1,0 +1,21 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Staged job mapping | Tommy Tints HQ</title>
+<style>:root{color-scheme:dark;background:#090b0f;color:#f4f5f9;font-family:system-ui,sans-serif}main{max-width:900px;margin:auto;padding:16px}a{color:#ff7881}section{border:1px solid #3b4659;background:#181d26;padding:14px;margin:14px 0;border-radius:12px}button,select{padding:12px;max-width:100%}td,th{padding:8px;text-align:left;vertical-align:top;overflow-wrap:anywhere;border-bottom:1px solid #3b4659}table{width:100%;table-layout:fixed}small{color:#c1c9d3}</style></head>
+<body><main><p><a href="/hq/migration/job-batches">Back to review batches</a></p>
+<h1>{{ ctx.row.job_ref }} — staged quote mapping</h1>
+<p>Private historical snapshot, source row {{ ctx.row.sheet_row }}. Not a fresh Sheets check, verified identity, import approval, invoice or receipt. This editor never changes the native job.</p>
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}{% if saved %}<p role="status">Mapping draft saved. No canonical record changed.</p>{% endif %}
+<section><h2>Quoted Price → native quoted price (pence)</h2>
+<p>Historical amount: {{ '£%.2f'|format(ctx.source_pence/100) if ctx.source_pence is not none else 'Unknown / missing' }}</p>
+<p>Current native amount: {{ '£%.2f'|format(ctx.row.price_pence/100) if ctx.row.price_pence is not none else 'Unknown / missing' }}</p>
+{% if not ctx.current %}<p role="alert">Archived or stale local review: editing disabled.</p>{% else %}
+{% if not ctx.eligible %}<p>Proposing a native mapping requires a literal numeric source price, a current draft job and a field plan marked Native mapping required. Preserve evidence instead.</p>{% endif %}
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="revision" value="{{ ctx.history[0].revision if ctx.history else 0 }}">
+<label for="decision">Mapping decision</label><select id="decision" name="decision">
+<option value="preserve" {% if not ctx.history or ctx.history[0].decision=='preserve' %}selected{% endif %}>Preserve as historical evidence</option>
+{% if ctx.eligible %}<option value="propose" {% if ctx.history and ctx.history[0].decision=='propose' %}selected{% endif %}>Propose mapping to native quoted price</option>{% endif %}
+</select><button type="submit">Save mapping draft</button></form>{% endif %}
+<h3>Saved revision history</h3>{% for event in ctx.history %}<p>Revision {{ event.revision }} · {{ event.decision }} · {{ event.created_at }} · source {{ event.source_pence if event.source_pence is not none else 'unknown' }} pence · native {{ event.native_pence if event.native_pence is not none else 'unknown' }} pence</p>{% else %}<p>No mapping saved.</p>{% endfor %}</section>
+<section><h2>Original staged source cells (94 columns)</h2><p>Formula strings are displayed as text and are never executed. Blank is not zero.</p>
+<table><thead><tr><th>Field</th><th>Original / formula</th><th>Effective value</th></tr></thead><tbody>
+{% for field,raw,effective in ctx.cells %}<tr><th scope="row">{{ field }}</th><td>{{ raw if raw is not none and raw != '' else '—' }}</td><td>{{ effective if effective is not none and effective != '' else '—' }}</td></tr>{% endfor %}
+</tbody></table></section></main></body></html>
