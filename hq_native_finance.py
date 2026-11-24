@@ -62,7 +62,7 @@ def api():
   kind=d.get('kind');rev=d.get('revision')
   if type(rev) is not int or rev<0:raise ValueError('Revision required')
   with connect() as db:
-   schema(db);db.execute('BEGIN IMMEDIATE')
+   schema(db);split_tables(db);db.execute('BEGIN IMMEDIATE')
    if kind=='plan':
     balance=money(d.get('balance'),True,True);target=money(d.get('target'),True)
     stamp=day(d.get('balance_date')) if balance is not None else None
@@ -91,6 +91,7 @@ def api():
      db.execute('INSERT INTO finance_bill_history (id,bill_id,revision,snapshot,created) VALUES(?,?,?,?,?)',
       (uuid.uuid4().hex,ref,rev+1,json.dumps(bill_state,sort_keys=True),datetime.now(timezone.utc).isoformat()))
     else:
+     if row and split_active(db,ref):return jsonify(error='Withdraw the active split before changing this transaction.'),409
      category=d.get('category');reviewed=d.get('reviewed',False)
      if category not in CATEGORIES or type(reviewed) is not bool:raise ValueError('Choose a valid classification')
      if reviewed and category=='unclassified':raise ValueError('Classify before marking reviewed')
@@ -110,3 +111,7 @@ register_receivable_routes(finance)
 # Additive owner-only reported-payment allocation interface; no bank verification.
 from hq_receivable_payments import register as register_allocation_routes
 register_allocation_routes(finance)
+
+# Additive owner-only native transaction split classifications.
+from hq_finance_splits import register as register_splits, tables as split_tables, active as split_active
+register_splits(finance)
