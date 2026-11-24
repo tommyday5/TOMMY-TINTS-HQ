@@ -146,3 +146,23 @@ is a private overlay, not an extra cash event; no provider/Sheets records,
 balance or receipt totals change. Owner acceptance and deployment of this
 change, provider-backed import, matching, financial reporting parity and
 historical reconciliation remain separate and unverified. No domain cutover.
+
+## 24 November follow-up — classification reporting and review
+
+PR #261 merged as 1dd11130 after successful CI run 45410089864 (625 Python,
+6 JavaScript tests); Railway deployment 68bfeccf-f531-475e-ae72-8a79e65afc54
+reported SUCCESS at 15:03 UTC. The split editor is deployed; owner-browser
+acceptance and real reconciliation are not established.
+
+This change adds an owner-only monthly classification view under Finance
+Command Centre > Transactions & reconciliation > Monthly classification
+totals and split review. It replaces the original category with the current
+active split in category subtotals, counts each original amount once, separates
+inflows from outflows and preserves unclassified amounts. The same view links
+to the existing persistent split editor and withdrawal history. Invalid or
+inconsistent split evidence and oversized reports are withheld rather than
+presented as partial totals. Native manual entries only; no imported bank
+evidence, no verified receipt, no income/profit or balance inference, no
+combination with Sheets. No real records changed; provider matching, actual
+bank settlement, customer/vehicle imports and historical parity remain open.
+This proposal's deployment and owner acceptance remain unverified.

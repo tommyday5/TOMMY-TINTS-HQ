@@ -132,7 +132,80 @@ def parse_form(form):
     return lines
 
 
+
+def classification_report(month):
+    """One bounded month of manual entries; effective split replaces parent, never adds cash."""
+    from hq_native_finance import schema
+    if not isinstance(month, str) or not re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", month) or month[:4] == "0000":
+        raise ValueError("Select a valid month.")
+    with closing(connect()) as db, db:
+        schema(db)
+        tables(db)
+        db.commit()
+        db.execute("BEGIN")
+        rows = db.execute("""SELECT t.*, e.revision AS split_revision, e.payload AS split_payload
+            FROM finance_transactions t LEFT JOIN finance_split_events e
+            ON e.transaction_id=t.id AND e.revision=(
+                SELECT MAX(s.revision) FROM finance_split_events s WHERE s.transaction_id=t.id)
+            WHERE t.day BETWEEN ? AND ? ORDER BY t.day DESC,t.id LIMIT 5001""",
+            (month+"-01",month+"-31")).fetchall()
+        if len(rows)>5000:
+            raise ValueError("This month exceeds the report limit; no partial totals are shown.")
+        totals = {}
+        entries = []
+        incoming = outgoing = unclassified = split_count = 0
+        for row in rows:
+            amount = row["amount"]
+            if type(amount) is not int:
+                raise ValueError("Invalid stored amount; report withheld.")
+            incoming += max(amount,0)
+            outgoing += max(-amount,0)
+            payload = json.loads(row["split_payload"]) if row["split_payload"] else None
+            if payload is not None and payload.get("action") not in ("save","withdraw"):
+                raise ValueError("Invalid split history; report withheld.")
+            split = bool(payload and payload["action"]=="save")
+            if split:
+                if row["split_revision"] != row["revision"]:
+                    raise ValueError("A split revision is inconsistent; report withheld.")
+                lines = validate_lines(payload["lines"],amount)
+                split_count += 1
+            else:
+                if row["category"] not in categories():
+                    raise ValueError("Unknown stored category; report withheld.")
+                lines = [dict(category=row["category"],pence=amount)]
+            for line in lines:
+                cat, pence = line["category"],line["pence"]
+                bucket = totals.setdefault(cat,dict(incoming=0,outgoing=0))
+                bucket["incoming"] += max(pence,0)
+                bucket["outgoing"] += max(-pence,0)
+                if cat=="unclassified":
+                    unclassified += abs(pence)
+            entries.append(dict(id=row["id"], day=row["day"], description=row["description"],
+                                amount=amount, split=split, lines=lines, reviewed=bool(row["reviewed"])))
+        if sum(x["incoming"] for x in totals.values()) != incoming or sum(x["outgoing"] for x in totals.values()) != outgoing:
+            raise ValueError("Classification totals do not conserve parent amounts.")
+        return dict(entries=entries, totals=sorted(totals.items()), incoming=incoming,
+                    outgoing=outgoing, unclassified=unclassified, split_count=split_count)
+
+
 def register(bp):
+    @bp.get("/hq/finance/classifications")
+    @required
+    def classification_report_page():
+        if not storage_ready():
+            abort(503)
+        month = request.args.get("month", datetime.now(timezone.utc).strftime("%Y-%m"))
+        report, error, status = None, None, 200
+        try:
+            report = classification_report(month)
+        except (ValueError, TypeError, KeyError, AttributeError) as exc:
+            error, status = "Classification report unavailable: "+str(exc), 400
+        except (sqlite3.Error, OSError):
+            abort(503)
+        return render_template("finance_classifications.html", month=month, report=report,
+                               error=error),status,{"Cache-Control":"no-store"}
+
+
     @bp.route("/hq/finance/transactions/<ref>/split", methods=["GET","POST"])
     @required
     def transaction_split_page(ref):
