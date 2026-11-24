@@ -33,6 +33,37 @@ def _name(value):
     return " ".join(value.casefold().split()) if isinstance(value, str) and value.strip() else None
 
 
+def _customer_crosscheck(db, item, raw_job_name, effective_job_name, formula, computed):
+    """Cross-check an inactive Customers proposal, never establish identity."""
+    from hq_historical_customer_links import _norm
+    from hq_historical_customer_field_review import _candidate_context
+
+    result = {"status": "No active customer proposal"}
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_historical_customer_candidates'").fetchone():
+        return result
+    proposal = db.execute("""SELECT id,basis FROM hq_historical_customer_candidates
+        WHERE customer_id=? AND withdrawn_at IS NULL""", (item["customer_id"],)).fetchone()
+    if not proposal:
+        return result
+    result = {"status": "Customer proposal stale or ambiguous", "proposal_id": proposal["id"],
+              "basis": proposal["basis"]}
+    try:
+        candidate, raw, _, _ = _candidate_context(db, proposal["id"], formula, computed)
+    except (ValueError, LookupError):
+        return result
+    result["customer_sheet_row"] = candidate["sheet_row"]
+    if (not isinstance(raw_job_name, str) or raw_job_name.startswith("=")
+            or not _norm(raw_job_name)
+            or _name(raw_job_name) != _name(effective_job_name)
+            or _name(raw_job_name) != _name(raw[0])):
+        result["status"] = "Job and Customers source names differ or are not literal"
+    elif item["customer_id"] != item["vehicle_customer"]:
+        result["status"] = "Native vehicle/customer conflict"
+    else:
+        result["status"] = "Current inactive proposal cross-check agrees"
+    return result
+
+
 def read_comparison(db, batch_id):
     if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_historical_job_dry_runs'").fetchone():
         return None
@@ -71,6 +102,7 @@ def save_comparison(batch_id, expected_revision, expected_plan_revision, *,
         if not plan or plan["revision"] != expected_plan_revision:
             raise ValueError("Save or reload the current field plan first")
         values = _full_rows(full_computed)
+        raw_values = _full_rows(full_formula)
         items = db.execute("""SELECT i.job_ref,i.sheet_row,i.work_revision,
             w.price_pence,w.customer_id,c.name,v.registration,v.customer_id AS vehicle_customer
             FROM hq_historical_job_batch_items i
@@ -91,6 +123,9 @@ def save_comparison(batch_id, expected_revision, expected_plan_revision, *,
                 "customer_name_comparison": _compare(_name(source[2]), _name(item["name"])),
                 "registration_comparison": _compare(_name(source[4]), _name(item["registration"])),
                 "vehicle_customer_consistent": item["customer_id"] == item["vehicle_customer"],
+                "customer_proposal": _customer_crosscheck(db, item,
+                    _pad(raw_values[item["sheet_row"]-4], WIDTH)[2], source[2],
+                    legacy_formula, legacy_computed),
             })
         report = {"rows": rows, "unresolved_fields": WIDTH-plan["reviewed"]}
         previous = read_comparison(db, batch_id)
