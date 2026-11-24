@@ -15,6 +15,23 @@
 {% if ctx.eligible %}<option value="propose" {% if ctx.history and ctx.history[0].decision=='propose' %}selected{% endif %}>Propose mapping to native quoted price</option>{% endif %}
 </select><button type="submit">Save mapping draft</button></form>{% endif %}
 <h3>Saved revision history</h3>{% for event in ctx.history %}<p>Revision {{ event.revision }} · {{ event.decision }} · {{ event.created_at }} · source {{ event.source_pence if event.source_pence is not none else 'unknown' }} pence · native {{ event.native_pence if event.native_pence is not none else 'unknown' }} pence</p>{% else %}<p>No mapping saved.</p>{% endfor %}</section>
+<section><h2>Service and job pricing tier mapping drafts</h2>
+<p>Choose a supported native service explicitly. Multiple historical services must be mapped separately later; no service is discarded. A job tier proposal does not change the customer's account type.</p>
+{% for item in ctx.classification %}
+<h3>{{ item.label }} → {{ 'Native service' if item.field == 'service' else 'Native job pricing tier' }}</h3>
+<p>Historical: {{ item.source if item.source is not none and item.source != '' else 'Unknown / missing' }} · Native: {{ item.native if item.native is not none else 'Unknown / missing' }}</p>
+{% if ctx.current %}
+{% if not item.eligible %}<p>Native proposal unavailable: requires literal compatible source, current native draft, field-plan mapping decision and, for services, no additional service cells.</p>{% endif %}
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="field" value="{{ item.field }}"><input type="hidden" name="revision" value="{{ item.history[0].revision if item.history else 0 }}">
+<label for="{{ item.field }}-decision">Decision</label><select id="{{ item.field }}-decision" name="decision">
+<option value="preserve">Preserve historical evidence</option>
+{% if item.eligible %}<option value="propose" {% if item.history and item.history[0].decision == 'propose' %}selected{% endif %}>Propose native mapping</option>{% endif %}
+</select>
+{% if item.eligible %}<label for="{{ item.field }}-target">Native target (for proposal only)</label><select name="target" id="{{ item.field }}-target"><option value="">Choose target</option>{% for target in item.choices %}<option value="{{ target }}" {% if item.history and item.history[0].target == target %}selected{% endif %}>{{ target }}</option>{% endfor %}</select>{% endif %}
+<button type="submit">Save {{ item.field }} mapping draft</button></form>
+{% endif %}
+{% for event in item.history %}<p>Revision {{ event.revision }} · {{ event.decision }} · {{ event.target or 'historical evidence only' }} · previous native {{ event.native_value or 'unknown' }} · {{ event.created_at }}</p>{% else %}<p>No mapping saved.</p>{% endfor %}
+{% endfor %}</section>
 <section><h2>Original staged source cells (94 columns)</h2><p>Formula strings are displayed as text and are never executed. Blank is not zero.</p>
 <table><thead><tr><th>Field</th><th>Original / formula</th><th>Effective value</th></tr></thead><tbody>
 {% for field,raw,effective in ctx.cells %}<tr><th scope="row">{{ field }}</th><td>{{ raw if raw is not none and raw != '' else '—' }}</td><td>{{ effective if effective is not none and effective != '' else '—' }}</td></tr>{% endfor %}
