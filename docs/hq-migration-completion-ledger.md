@@ -210,3 +210,39 @@ canonical financial allocations. This is implemented pending CI, deploy
 and owner acceptance; no domain becomes authoritative. Next: native
 transaction-to-job/invoice/creditor matching and verified allocation,
 bounded customer/vehicle migration and production customer UI acceptance.
+
+
+## 24 November follow-up — invoice match candidates
+
+PR #264 passed CI 45444339437 (127 root + 630 integration Python tests,
+6 JavaScript tests), merged as 8507cc68 and Railway deployment
+3f2a5c97-43f6-41df-8d29-5c8d6eeb302a reported SUCCESS at 18:03 UTC.
+The concurrent PR #265 timer cockpit was preserved. The original /data
+1024 MB volume was observed attached before merge. Owner acceptance and
+real migration remain unverified.
+
+Read-only workbook metadata still enumerates the same 48 tabs and the
+Monzo Live Feed A7:U7 headings match the original ID and override columns.
+No live record was changed. This change adds a private exact-ID worksheet
+transaction to issued native invoice candidate editor. The whole positive
+source amount can cover part or all of an invoice, subject to remaining
+candidate capacity after owner-reported allocations and other active
+candidates. No inference of receipt, bank verification or settlement.
+Source and legacy evidence, invoice identity and revision, candidate
+capacity and source review revision are checked again on save. History
+is append-only; withdrawal remains available without Sheets access.
+One active candidate per source ID, no duplicate cash events, no change
+to receivable balances or actual payments. Existing invoice edit paths
+remain unchanged; a candidate is not a financial reservation or an
+authoritative balance, and must be revalidated before any future allocation.
+
+Owner workflow: Finance Command Centre > Transactions & reconciliation >
+Monzo transaction classification review > positive transaction >
+Review invoice match / saved history > enter exact issued HQ invoice
+reference > Review exact match candidate > explicit confirmation >
+Save private invoice match candidate. Withdraw saved candidate retains
+history. No production candidate was created by development.
+This change is pending CI, deployment and owner acceptance. Verified bank
+allocation, split-source settlement, creditor matching, historical customer
+and vehicle imports, full formula parity and authenticated production
+customer acceptance remain open. No domain cutover.
