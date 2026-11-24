@@ -386,6 +386,8 @@ class MonzoSheetReviewTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             save_payment(manual)
         with self.assertRaises(ValueError):
+            save_payment(dict(manual,evidence_ref="tx_synthetic_1"))
+        with self.assertRaises(ValueError):
             save_payment(dict(allocation,operation_id="2"*32,evidence_ref="Changed evidence"))
         save_payment(dict(allocation,operation_id="3"*32,status="reversed"))
         with connect() as db:
