@@ -151,6 +151,11 @@ def report_preview(db, entry, invoice_ref, rev, evidence_ref):
         WHERE a.status='reported' AND (a.evidence_ref=? COLLATE NOCASE OR a.evidence_ref=? COLLATE NOCASE)
         AND (l.source_id IS NULL OR l.source_id<>?)""",(evidence_ref,entry["ref"],entry["ref"])).fetchone():
         raise Conflict("Evidence reference is already used by another active allocation; reconcile it first.")
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_square_invoice_observations'").fetchone():
+        if db.execute("""SELECT 1 FROM hq_square_invoice_observations
+            WHERE payment_id=? COLLATE NOCASE OR payment_id=? COLLATE NOCASE""",
+            (evidence_ref, entry["ref"])).fetchone():
+            raise Conflict("Evidence is already retained for a Square card payment; do not record it again as a bank receipt.")
     allocated = db.execute("""SELECT COALESCE(SUM(amount_pence),0)
         FROM hq_receivable_allocations WHERE invoice_id=? AND status='reported'""",(invoice["id"],)).fetchone()[0]
     reserved = db.execute("""SELECT COALESCE(SUM(e.amount_pence),0) FROM hq_monzo_invoice_match_events e
