@@ -326,3 +326,71 @@ class MonzoSheetReviewTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_monzo_invoice_match_events").fetchone()[0],4)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_receivable_allocations").fetchone()[0],0)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_transactions").fetchone()[0],0)
+
+
+    def test_candidate_to_owner_reported_allocation_requires_separate_evidence(self):
+        import re
+        from hq_receivables import save as save_invoice
+        from hq_receivable_payments import save as save_payment
+        from hq_core_records import _schema
+        from hq_monzo_invoice_matches import active_candidates, reported_links
+        with connect() as db:
+            _schema(db)
+            db.execute("INSERT INTO hq_customers VALUES(?,?,?,?,?,?)",
+                       ("a"*32,None,"Synthetic receipt customer","","","2026-11-22"))
+        for key, op, ref in (("b","c","TEST-REPORT-1"),("d","e","TEST-REPORT-2")):
+            save_invoice(dict(id=key*32,operation_id=op*32,revision=0,
+                customer_id="a"*32,work_id=None,invoice_ref=ref,issue_date="2026-11-22",
+                due_date="2026-12-10",amount_pence=20000,status="issued",archived=False,memo=""))
+        self.rows=[example(amount=100.25),example("tx_other",amount=100.25)]
+        self.login()
+        url="/hq/finance/monzo-invoice-match"
+        form=dict(action="review",csrf="test-csrf",ref="tx_synthetic_1",
+                  invoice_ref="TEST-REPORT-1",candidate_amount="60.00")
+        page=self.client.post(url,data=form)
+        self.assertEqual(page.status_code,200)
+        manifest=re.search(rb'name="manifest" value="([a-f0-9]{64})"',page.data)[1].decode()
+        self.assertEqual(self.client.post(url,data=dict(form,action="save",revision="0",
+            manifest=manifest,confirm="yes")).status_code,200)
+        review=dict(form,action="report_review",revision="1",evidence_ref="Statement synthetic 123")
+        self.assertEqual(self.client.post(url,data=dict(review,evidence_ref="tx_synthetic_1")).status_code,400)
+        self.assertEqual(self.client.post(url,data=dict(review,csrf="bad")).status_code,403)
+        page=self.client.post(url,data=review)
+        self.assertEqual(page.status_code,200)
+        self.assertIn(b"Review owner-reported allocation",page.data)
+        manifest=re.search(rb'name="manifest" value="([a-f0-9]{64})"',page.data)[1].decode()
+        report=dict(review,action="report",manifest=manifest,confirm="yes")
+        self.assertEqual(self.client.post(url,data=dict(report,confirm="")).status_code,400)
+        self.assertEqual(self.client.post(url,data=dict(report,evidence_ref="Changed evidence")).status_code,409)
+        self.rows[0]=example(amount=101.25)
+        self.assertEqual(self.client.post(url,data=report).status_code,409)
+        self.rows[0]=example(amount=100.25)
+        self.assertEqual(self.client.post(url,data=report).status_code,200)
+        self.assertEqual(self.client.post(url,data=report).status_code,200)
+        page=self.client.get(url+"?ref=tx_synthetic_1")
+        self.assertIn(b"Active owner-reported allocations",page.data)
+        self.assertIn(b"not provider verified",page.data)
+        self.assertEqual(self.client.post(url,data=dict(form,invoice_ref="TEST-REPORT-2",
+            candidate_amount="40.26")).status_code,400)
+        with connect() as db:
+            self.assertEqual(active_candidates(db,"tx_synthetic_1"),[])
+            links=reported_links(db,"tx_synthetic_1")
+            self.assertEqual(len(links),1)
+            self.assertEqual(links[0]["amount_pence"],6000)
+            allocation=dict(db.execute("SELECT * FROM hq_receivable_allocations").fetchone())
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_receivable_allocations").fetchone()[0],1)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_transactions").fetchone()[0],0)
+        manual=dict(id="f"*32,invoice_id="d"*32,operation_id="1"*32,revision=0,
+            amount_pence=100,received_on=allocation["received_on"],method="bank_reported",
+            evidence_ref="statement synthetic 123",memo="",status="reported")
+        with self.assertRaises(ValueError):
+            save_payment(manual)
+        with self.assertRaises(ValueError):
+            save_payment(dict(allocation,operation_id="2"*32,evidence_ref="Changed evidence"))
+        save_payment(dict(allocation,operation_id="3"*32,status="reversed"))
+        with connect() as db:
+            self.assertEqual(reported_links(db,"tx_synthetic_1"),[])
+            self.assertEqual(db.execute("SELECT status FROM hq_receivable_allocations").fetchone()[0],"reversed")
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_monzo_reported_links").fetchone()[0],1)
+        self.assertEqual(self.client.post(url,data=dict(form,invoice_ref="TEST-REPORT-2",
+            candidate_amount="100.25")).status_code,200)
