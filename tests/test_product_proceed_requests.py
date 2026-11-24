@@ -466,5 +466,51 @@ class ProductProceedTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT stock FROM products WHERE id=?",(self.product,)).fetchone()[0],5)
 
 
+    def test_customer_acknowledges_only_current_own_deposit_view(self):
+        ident = request_to_proceed(self.basket,self.cid,uuid.uuid4().hex)
+        self.owner_login()
+        self.login_customer(self.mine,self.cid)
+        self.login_customer(self.other,self.stranger)
+        with app.app_context():
+            owner_review_proceed(ident,0,"approved","","owner")
+            order_id = owner_create_product_order(ident,1,"owner")
+        owner_url = "/hq/product-proceed-requests"
+        plan = dict(csrf="owner-csrf",action="deposit_plan",request_id=ident,
+                    revision="0",order_revision="0",deposit_amount="12.50")
+        self.assertEqual(self.owner.post(owner_url,data=plan).status_code,303)
+        path = "/customer/basket-requests/"+self.basket+"/acknowledge-deposit"
+        with self.mine.session_transaction() as sess:
+            csrf = sess["customer_portal_csrf"]
+        with self.other.session_transaction() as sess:
+            other_csrf = sess["customer_portal_csrf"]
+        form = dict(csrf=csrf,order_id=order_id,deposit_revision="1")
+        self.assertIn(b"Acknowledge viewing deposit proposal",self.mine.get("/customer/basket-requests").data)
+        self.assertNotIn(b"Acknowledge viewing deposit proposal",self.other.get("/customer/basket-requests").data)
+        self.assertEqual(self.other.post(path,data=dict(form,csrf=other_csrf)).status_code,404)
+        self.assertEqual(self.mine.post(path,data=dict(form,csrf="bad")).status_code,403)
+        self.assertEqual(self.mine.post(path,data=dict(form,order_id=uuid.uuid4().hex)).status_code,404)
+        self.assertEqual(self.mine.post(path,data=dict(form,deposit_revision="2")).status_code,409)
+        self.assertEqual(self.mine.post(path,data=form).status_code,303)
+        self.assertEqual(self.mine.post(path,data=form).status_code,303)
+        self.assertTrue(customer_proceed_state(self.basket,self.cid)["deposit_acknowledged"])
+        self.assertIn(b"acknowledged viewing this deposit proposal",self.mine.get("/customer/basket-requests").data)
+        self.assertIn(b"Customer viewed",self.owner.get(owner_url).data)
+        self.assertEqual(self.owner.post(owner_url,data=dict(plan,revision="1",deposit_amount="15")).status_code,303)
+        self.assertFalse(customer_proceed_state(self.basket,self.cid)["deposit_acknowledged"])
+        self.assertEqual(self.mine.post(path,data=form).status_code,409)
+        self.assertEqual(self.mine.post(path,data=dict(form,deposit_revision="2")).status_code,303)
+        self.assertEqual(self.owner.post(owner_url,data=dict(plan,revision="2",deposit_amount="")).status_code,303)
+        self.assertNotIn("deposit_acknowledged",customer_proceed_state(self.basket,self.cid))
+        self.assertEqual(self.mine.post(path,data=dict(form,deposit_revision="2")).status_code,409)
+        with connect() as db:
+            self.assertEqual([tuple(row) for row in db.execute(
+                "SELECT order_id,deposit_revision,customer_id FROM hq_product_deposit_acknowledgements ORDER BY deposit_revision")],
+                [(order_id,1,self.cid),(order_id,2,self.cid)])
+            self.assertEqual(db.execute("SELECT revision FROM hq_product_orders WHERE id=?",(order_id,)).fetchone()[0],0)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_work_records").fetchone()[0],0)
+        with commerce_db() as db:
+            self.assertEqual(db.execute("SELECT stock FROM products WHERE id=?",(self.product,)).fetchone()[0],5)
+
+
 if __name__ == "__main__":
     unittest.main()

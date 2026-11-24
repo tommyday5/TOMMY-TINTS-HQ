@@ -147,6 +147,54 @@ def _tables(db):
         PRIMARY KEY(order_id,revision)
     )""")
 
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_product_deposit_acknowledgements (
+        order_id TEXT NOT NULL,
+        deposit_revision INTEGER NOT NULL,
+        customer_id TEXT NOT NULL REFERENCES hq_customers(id),
+        acknowledged_at TEXT NOT NULL,
+        PRIMARY KEY(order_id,deposit_revision),
+        FOREIGN KEY(order_id,deposit_revision)
+            REFERENCES hq_product_order_deposit_events(order_id,revision)
+    )""")
+
+
+def acknowledge_deposit_plan(basket_id, customer_id, order_id, deposit_revision):
+    """Record viewing a specific current proposal, not agreement or payment."""
+    for ident in (basket_id, customer_id, order_id):
+        _id(ident)
+    if type(deposit_revision) is not int or not 1 <= deposit_revision < 100000000:
+        raise ValueError("Invalid deposit revision")
+    with canonical_db() as db:
+        _tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        proceed = db.execute("""SELECT * FROM hq_product_proceed_requests
+            WHERE basket_id=? AND customer_id=?""", (basket_id,customer_id)).fetchone()
+        if not proceed:
+            raise LookupError("Product request not found")
+        order = db.execute("""SELECT * FROM hq_product_orders
+            WHERE id=? AND request_id=? AND customer_id=? AND quote_id=?""",
+            (order_id,proceed["id"],customer_id,proceed["quote_id"])).fetchone()
+        if not order:
+            raise LookupError("Product order not found")
+        deposit = db.execute("""SELECT * FROM hq_product_order_deposit_events
+            WHERE order_id=? ORDER BY revision DESC LIMIT 1""", (order_id,)).fetchone()
+        if (proceed["status"] != "approved" or order["status"] != "open"
+                or order["quote_revision"] != proceed["quote_revision"]
+                or not deposit or deposit["revision"] != deposit_revision
+                or deposit["order_revision"] != order["revision"]
+                or deposit["proposed_pence"] is None
+                or not 0 <= deposit["proposed_pence"] <= order["approved_total_pence"]
+                or db.execute("SELECT 1 FROM hq_product_order_handover WHERE order_id=?",
+                              (order_id,)).fetchone()):
+            raise ValueError("Deposit proposal changed or is unavailable; reload")
+        quote = _approved_unchanged_quote(db, proceed)
+        if quote["approved_total_pence"] != order["approved_total_pence"]:
+            raise ValueError("Deposit proposal changed or is unavailable; reload")
+        db.execute("""INSERT INTO hq_product_deposit_acknowledgements
+            (order_id,deposit_revision,customer_id,acknowledged_at)
+            VALUES(?,?,?,?) ON CONFLICT(order_id,deposit_revision) DO NOTHING""",
+            (order_id,deposit_revision,customer_id,_now()))
+
 
 def owner_save_deposit_plan(ident, expected_revision, expected_order_revision, amount, actor):
     """Save or clear a proposed deposit; never collect or allocate funds."""
@@ -453,7 +501,8 @@ def customer_proceed_state(basket_id, customer_id):
                 AND h.state IS NULL AND d.order_revision=o.revision
                 AND d.proposed_pence BETWEEN 0 AND o.approved_total_pence
                 THEN d.proposed_pence ELSE NULL END AS proposed_deposit_pence,
-            o.approved_total_pence AS order_total_pence
+            o.approved_total_pence AS order_total_pence,d.revision AS deposit_revision,
+            a.acknowledged_at AS deposit_acknowledged_at
             FROM hq_product_proceed_requests p
             JOIN hq_combined_product_quotes q ON q.id=p.quote_id
             LEFT JOIN hq_product_preparation f ON f.request_id=p.id
@@ -463,6 +512,8 @@ def customer_proceed_state(basket_id, customer_id):
             LEFT JOIN hq_product_order_deposit_events d ON d.order_id=o.id
                 AND d.revision=(SELECT MAX(revision) FROM hq_product_order_deposit_events
                                 WHERE order_id=o.id)
+            LEFT JOIN hq_product_deposit_acknowledgements a ON a.order_id=o.id
+                AND a.deposit_revision=d.revision AND a.customer_id=p.customer_id
             WHERE p.basket_id=? AND p.customer_id=?
             AND q.customer_id=p.customer_id""", (basket_id, customer_id)).fetchone()
         if not row:
@@ -476,6 +527,8 @@ def customer_proceed_state(basket_id, customer_id):
                 result["order_status"] = row["order_status"]
                 result["order_note"] = row["order_note"]
                 if row["proposed_deposit_pence"] is not None:
+                    result["deposit_revision"] = row["deposit_revision"]
+                    result["deposit_acknowledged"] = bool(row["deposit_acknowledged_at"])
                     result["proposed_deposit_pence"] = row["proposed_deposit_pence"]
                     result["conditional_remainder_pence"] = (
                         row["order_total_pence"] - row["proposed_deposit_pence"])
@@ -521,9 +574,12 @@ def owner_proceed_requests():
                      p.created_at DESC LIMIT 100""")]
         for item in rows:
             item["deposit_history"] = (
-                [dict(event) for event in db.execute("""SELECT revision,order_revision,
-                    proposed_pence,occurred_at FROM hq_product_order_deposit_events
-                    WHERE order_id=? ORDER BY revision DESC""", (item["order_id"],))]
+                [dict(event) for event in db.execute("""SELECT d.revision,d.order_revision,
+                    d.proposed_pence,d.occurred_at,a.acknowledged_at
+                    FROM hq_product_order_deposit_events d
+                    LEFT JOIN hq_product_deposit_acknowledgements a ON a.order_id=d.order_id
+                        AND a.deposit_revision=d.revision AND a.customer_id=?
+                    WHERE d.order_id=? ORDER BY d.revision DESC""", (item["customer_id"],item["order_id"],))]
                 if item["order_id"] else [])
             item["handover_history"] = (
                 [dict(event) for event in db.execute("""
@@ -672,6 +728,31 @@ def customer_request_proceed(basket_id):
         current_app.logger.exception("Customer proceed request unavailable")
         abort(503)
     return redirect("/customer/basket-requests?proceed=requested", code=303)
+
+
+@product_proceed.post("/customer/basket-requests/<basket_id>/acknowledge-deposit")
+def customer_acknowledge_deposit(basket_id):
+    customer_id = active_customer()
+    if not customer_id:
+        return redirect("/customer/login")
+    if request.content_length is None or request.content_length > 1600:
+        abort(413)
+    if not secrets.compare_digest(request.form.get("csrf", ""),
+                                  session.get("customer_portal_csrf", "missing")):
+        abort(403)
+    raw = request.form.get("deposit_revision", "")
+    if not _REV.fullmatch(raw):
+        abort(400)
+    try:
+        acknowledge_deposit_plan(basket_id, customer_id, request.form.get("order_id"), int(raw))
+    except LookupError:
+        abort(404)
+    except ValueError as exc:
+        return str(exc), 409
+    except (sqlite3.Error, OSError, RuntimeError):
+        current_app.logger.warning("Customer deposit acknowledgement unavailable")
+        abort(503)
+    return redirect("/customer/basket-requests", code=303)
 
 
 @product_proceed.route("/hq/product-proceed-requests", methods=["GET", "POST"])

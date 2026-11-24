@@ -41,6 +41,12 @@
 {% if e.proceed_state.order_note %}<p>Order update: {{ e.proceed_state.order_note }}</p>{% endif %}
 {% if e.proceed_state.proposed_deposit_pence is defined %}
 <p><strong>Proposed deposit: £{{ '%.2f'|format(e.proceed_state.proposed_deposit_pence/100) }}</strong>. If that amount were paid and allocated, the remaining quoted amount would be £{{ '%.2f'|format(e.proceed_state.conditional_remainder_pence/100) }}. No payment is confirmed; this is not an invoice or actual outstanding balance.</p>
+{% if e.proceed_state.deposit_acknowledged %}<p role="status">You have acknowledged viewing this deposit proposal. No acceptance, payment or booking is recorded.</p>
+{% else %}<form method="post" action="/customer/basket-requests/{{ e.id }}/acknowledge-deposit">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="order_id" value="{{ e.proceed_state.order_id }}">
+<input type="hidden" name="deposit_revision" value="{{ e.proceed_state.deposit_revision }}">
+<button type="submit">Acknowledge viewing deposit proposal</button></form>
+<p>This only records that you have seen this proposal. It does not accept terms, commit to paying or place a booking.</p>{% endif %}
 {% endif %}
 {% if e.proceed_state.handover_state == 'recorded' %}
 <p role="status"><strong>Handover recorded by Tommy Tints on {{ e.proceed_state.handover_date }}</strong>. This is owner-entered handover evidence, not independently confirmed delivery or proof of payment.</p>
