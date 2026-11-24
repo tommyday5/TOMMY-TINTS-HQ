@@ -313,3 +313,30 @@ payment status, actual cash entry, verified outstanding balance, production
 import or historical authority changes. Synthetic route tests are pending CI.
 Owner browser acceptance and independently verified provider allocation remain
 outstanding; no live receipt has been recorded in this development run.
+
+
+## 24 November follow-up — exact Square card allocation evidence
+
+PR #270 merged as 28243d77 after successful Actions run 45497499580
+(127 root + 636 integration Python tests; 9 JS tests). Railway deployment
+7c6bf92e-93d6-4570-a56f-e7236d8e2f84 reported SUCCESS on inspection.
+No real allocation or historical import was authorised by development.
+The original 48 workbook tab names were rechecked read-only.
+
+The next proposed vertical slice links an existing owner-reported card
+allocation to an authenticated, exact-ID Square payment check. Owner must
+separately confirm invoice/customer identity; only a completed GBP payment
+with explicitly zero refunds and exactly the allocation amount qualifies.
+A second fresh provider lookup and invoice/allocation revision recheck
+precede the explicit save. No new cash or allocation is created. Provider
+ID uniqueness and immutable observation protect against duplicate recording;
+reverse the original allocation to correct without destroying evidence.
+A retained observation is historical and does not establish current
+refund/chargeback status or bank settlement. The provider ID remains
+reserved even after reversal pending a reviewed correction workflow.
+Finance > invoice payment allocations > card entry > Check / view exact
+Square payment evidence. No provider calls on page load. No customer-facing
+paid status, verified balance or cash totals are published. Actual provider
+consent, current evidence, production UI acceptance, settlement/refund
+reconciliation and canonical historical migration remain open. Synthetic
+regression, deployment and owner acceptance of this proposal are pending.
