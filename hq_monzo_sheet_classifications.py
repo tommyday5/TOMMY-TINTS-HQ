@@ -62,7 +62,8 @@ def parse_feed(payload):
                 or type(clock) not in (int, float) or not 0 <= clock < 1
                 or type(amount) not in (int, float) or currency != "GBP"
                 or any(not isinstance(v, str) or len(v) > 500
-                       for v in (kind, name, category))):
+                       for v in (kind, name))
+                or (category is not None and (not isinstance(category, str) or len(category)>500))):
             raise ValueError("Unsupported date, currency, amount or text in source.")
         try:
             value = Decimal(str(amount)) * 100
