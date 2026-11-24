@@ -5,6 +5,7 @@ import sqlite3
 import time
 from contextlib import closing
 from datetime import datetime, timezone
+from decimal import Decimal
 
 import requests
 from flask import abort, current_app, render_template, request, session
@@ -31,7 +32,19 @@ def history(db, ref):
         WHERE source_id=? ORDER BY revision DESC LIMIT 50""", (ref,))]
 
 
-def review(db, entry, invoice_ref):
+def parse_candidate_amount(raw):
+    """Blank retains the existing full-source candidate behaviour."""
+    if raw == "":
+        return None
+    if not isinstance(raw,str) or not re.fullmatch(r"[0-9]{1,8}(?:\.[0-9]{1,2})?",raw):
+        raise ValueError("Enter positive pounds with at most two decimal places.")
+    amount = int(Decimal(raw)*100)
+    if not 1 <= amount <= 1000000000:
+        raise ValueError("Candidate amount must be positive and within the supported limit.")
+    return amount
+
+
+def review(db, entry, invoice_ref, amount=None):
     invoice = db.execute("""SELECT r.*,c.name AS customer_name,w.service AS work_service
         FROM hq_receivables r JOIN hq_customers c ON r.customer_id=c.id
         LEFT JOIN hq_work_records w ON r.work_id=w.id
@@ -40,6 +53,9 @@ def review(db, entry, invoice_ref):
         raise ValueError("Choose an existing, issued, non-archived invoice.")
     if entry["pence"] <= 0:
         raise ValueError("Only positive worksheet transactions can be proposed against invoices.")
+    amount = entry["pence"] if amount is None else amount
+    if type(amount) is not int or not 1 <= amount <= entry["pence"]:
+        raise ValueError("Candidate cannot exceed the positive source transaction.")
     events = history(db, entry["ref"])
     if events and events[0]["status"] == "proposed":
         raise Conflict("Withdraw the existing candidate before proposing another.")
@@ -52,15 +68,16 @@ def review(db, entry, invoice_ref):
           WHERE n.source_id=e.source_id AND n.revision>e.revision)""",
         (invoice["id"],)).fetchone()[0]
     remaining = invoice["amount_pence"] - reported - proposed
-    if entry["pence"] > remaining:
-        raise ValueError("Source exceeds the remaining unallocated candidate capacity. No split or overpayment is inferred.")
+    if amount > remaining:
+        raise ValueError("Candidate exceeds remaining invoice capacity. Enter a smaller explicit amount.")
     rev = events[0]["revision"] if events else 0
     manifest = fingerprint([entry["ref"],entry["evidence"],entry["legacy_evidence"],
         invoice["id"],invoice["revision"],invoice["invoice_ref"],invoice["customer_id"],
         invoice["work_id"],invoice["customer_name"],invoice["work_service"],
-        invoice["amount_pence"],reported,proposed,entry["pence"],rev])
+        invoice["amount_pence"],reported,proposed,entry["pence"],rev,amount])
     return dict(invoice=dict(invoice), entry=entry, revision=rev, manifest=manifest,
-                reported=reported, proposed=proposed, remaining=remaining)
+                reported=reported, proposed=proposed, remaining=remaining, amount=amount,
+                unallocated_source=entry["pence"]-amount)
 
 
 def current_entry(ref):
@@ -82,6 +99,7 @@ def register(bp):
             abort(503)
         ref = request.args.get("ref","") if request.method == "GET" else ""
         invoice_ref, preview, events, notice, error, status = "", None, [], None, None, 200
+        raw_amount = ""
         try:
             if request.method == "POST":
                 request.max_content_length = 4096
@@ -101,26 +119,30 @@ def register(bp):
                 if action != "review" and (not re.fullmatch(r"[0-9]{1,18}",revision)
                         or not DIGEST.fullmatch(manifest) or request.form.get("confirm")!="yes"):
                     raise ValueError("Explicit confirmation of the reviewed candidate is required.")
+                raw_amount = request.form.get("candidate_amount","")
+                amount = parse_candidate_amount(raw_amount) if action != "withdraw" else None
                 entry = current_entry(ref) if action != "withdraw" else None
                 with closing(connect()) as db, db:
                     tables(db)
                     db.execute("BEGIN IMMEDIATE" if action != "review" else "BEGIN")
                     if action == "review":
-                        preview = review(db,entry,invoice_ref)
+                        preview = review(db,entry,invoice_ref,amount)
                     else:
                         rev = int(revision)
                         operation = fingerprint([ref,invoice_ref,action,rev,manifest,actor])
+                        if action == "save" and amount is not None:
+                            operation = fingerprint([operation,amount])
                         prior = db.execute("SELECT revision FROM hq_monzo_invoice_match_events WHERE operation=?",
                                            (operation,)).fetchone()
                         if prior:
                             notice = "This candidate action was already recorded."
                         elif action == "save":
-                            candidate = review(db,entry,invoice_ref)
+                            candidate = review(db,entry,invoice_ref,amount)
                             if candidate["revision"] != rev or not secrets.compare_digest(candidate["manifest"],manifest):
                                 raise Conflict("Source, invoice or candidate capacity changed. Review again.")
                             inv = candidate["invoice"]
                             db.execute("INSERT INTO hq_monzo_invoice_match_events VALUES(?,?,?,?,?,?,?,?,?,?)",
-                                (ref,rev+1,inv["id"],inv["invoice_ref"],entry["pence"],manifest,
+                                (ref,rev+1,inv["id"],inv["invoice_ref"],candidate["amount"],manifest,
                                  "proposed",operation,actor,datetime.now(timezone.utc).isoformat()))
                             notice = "Private invoice match candidate saved. No payment or balance changed."
                         else:
@@ -146,4 +168,4 @@ def register(bp):
         except (requests.RequestException,sqlite3.Error,OSError,KeyError):
             error,status = "Read-only source or HQ storage unavailable; no new save confirmed.",503
         return render_template("finance_monzo_invoice_match.html",ref=ref,invoice_ref=invoice_ref,
-            preview=preview,events=events,notice=notice,error=error,csrf=session.get("csrf","")),status,{"Cache-Control":"no-store"}
+            preview=preview,events=events,notice=notice,error=error,raw_amount=raw_amount,csrf=session.get("csrf","")),status,{"Cache-Control":"no-store"}
