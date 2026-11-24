@@ -128,13 +128,17 @@ def list_batches():
             FROM hq_historical_job_batches ORDER BY (archived_at IS NOT NULL),created_at DESC,id DESC LIMIT 100""")]
         has_full_evidence = db.execute("""SELECT 1 FROM sqlite_master WHERE type=\'table\'
             AND name=\'hq_historical_job_batch_full_evidence\'""").fetchone()
+        from hq_historical_job_field_review import read_plan, field_rows
         for b in batches:
+            b["field_plan"] = None
             b["full_evidence_at"] = None
             if has_full_evidence:
                 proof = db.execute("""SELECT created_at FROM hq_historical_job_batch_full_evidence
                     WHERE batch_id=? AND version=2""", (b["id"],)).fetchone()
                 if proof:
                     b["full_evidence_at"] = proof["created_at"]
+                    b["field_plan"] = read_plan(db, b["id"]) or {
+                        "revision": 0, "fields": field_rows(), "reviewed": 0, "created_at": None}
             b["items"] = [dict(r) for r in db.execute("""SELECT i.job_ref,i.sheet_row,i.work_id,
                 i.work_revision,i.candidate_id,CASE WHEN c.withdrawn_at IS NOT NULL
                   OR c.id IS NULL OR w.id IS NULL OR w.revision != i.work_revision
@@ -159,7 +163,7 @@ def register_routes(bp):
             if not secrets.compare_digest(request.form.get("csrf", ""), session.get("csrf", "not-set")):
                 abort(403)
             action = request.form.get("action")
-            if action not in ("create", "archive", "full_evidence") or (action in ("archive", "full_evidence") and request.form.get("revision") != "0"):
+            if action not in ("create", "archive", "full_evidence", "field_review") or (action in ("archive", "full_evidence") and request.form.get("revision") != "0"):
                 abort(400)
             try:
                 if action == "archive":
@@ -169,13 +173,28 @@ def register_routes(bp):
                     if not provider or provider[1] <= time.time():
                         raise ValueError("Connect Sheets read-only first")
                     formula, computed = _read_live(provider[0])
-                    if action == "full_evidence":
+                    if action in ("full_evidence", "field_review"):
                         from hq_historical_job_full_evidence import read_full_width, save_full_width_evidence
                         full_formula, full_computed = read_full_width(provider[0])
-                        save_full_width_evidence(request.form.get("batch_id", ""),
-                            legacy_formula=formula, legacy_computed=computed,
-                            full_formula=full_formula, full_computed=full_computed,
-                            owner_identity=session.get("google_sub"))
+                        if action == "full_evidence":
+                            save_full_width_evidence(request.form.get("batch_id", ""),
+                                legacy_formula=formula, legacy_computed=computed,
+                                full_formula=full_formula, full_computed=full_computed,
+                                owner_identity=session.get("google_sub"))
+                        else:
+                            from hq_historical_job_field_review import save_plan
+                            from hq_historical_job_full_evidence import WIDTH
+                            revision = request.form.get("plan_revision", "")
+                            if not revision.isascii() or not revision.isdecimal() or len(revision) > 18:
+                                raise ValueError("Invalid plan revision")
+                            fields = [request.form.getlist("f" + str(i)) for i in range(WIDTH)]
+                            if any(len(values) != 1 for values in fields):
+                                raise ValueError("Missing or duplicate field")
+                            save_plan(request.form.get("batch_id", ""), int(revision),
+                                [values[0] for values in fields],
+                                legacy_formula=formula, legacy_computed=computed,
+                                full_formula=full_formula, full_computed=full_computed,
+                                owner_identity=session.get("google_sub"))
                     else:
                         create_batch(request.form.getlist("candidate_id"), request.form.get("operation_id", ""),
                                      formula=formula, computed=computed, owner_identity=session.get("google_sub"))
