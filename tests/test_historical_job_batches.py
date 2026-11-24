@@ -444,6 +444,36 @@ class HistoricalJobBatchTests(unittest.TestCase):
             self.assertEqual(page.status_code,200)
             self.assertIn(b"isolated rollback verified",page.data)
             self.assertIn(b"Saved aggregate proposals excluded",page.data)
+            from hq_private_recovery import list_snapshots
+            import os
+            import sqlite3
+            from pathlib import Path
+            backup = dict(csrf="test-csrf",action="private_backup",
+                          operation_id="b"*32,confirm_backup="yes")
+            self.assertEqual(app.test_client().post(mapping,data=backup).status_code,302)
+            self.assertEqual(self.client.post(mapping,data=dict(backup,csrf="bad")).status_code,403)
+            self.assertEqual(self.client.post(mapping,data=dict(backup,confirm_backup="")).status_code,400)
+            self.assertEqual(list_snapshots(),[])
+            with patch("hq_private_recovery.MAX_BYTES",1):
+                self.assertIn(b"Private backup not completed",self.client.post(mapping,data=backup).data)
+            self.assertEqual(list_snapshots(),[])
+            page = self.client.post(mapping,data=backup)
+            self.assertIn(b"Private recovery snapshot saved and isolated restore checked",page.data)
+            self.assertEqual(len(list_snapshots()),1)
+            self.assertIn(b"b"*32,self.client.get(mapping).data)
+            self.assertIn(b"Private recovery snapshot saved",self.client.post(mapping,data=backup).data)
+            self.assertEqual(len(list_snapshots()),1)
+            with patch("hq_private_recovery.MAX_BACKUPS",1):
+                self.assertIn(b"Private backup not completed",self.client.post(mapping,data=dict(backup,operation_id="c"*32)).data)
+            path = Path(os.environ["HQ_DATA_DIR"])/"private_recovery_snapshots"/("b"*32+".sqlite3")
+            self.assertEqual(path.stat().st_mode & 0o777,0o600)
+            from contextlib import closing
+            with closing(sqlite3.connect(path.as_uri()+"?mode=ro",uri=True)) as saved:
+                self.assertEqual(saved.execute("PRAGMA quick_check").fetchone()[0],"ok")
+                self.assertEqual(saved.execute("SELECT * FROM hq_work_records ORDER BY id").fetchall(),before)
+                self.assertEqual(saved.execute("SELECT * FROM hq_work_audit").fetchall(),audit_before)
+            self.assertEqual(app.test_client().get(mapping).status_code,302)
+
             with patch("hq_historical_job_rehearsal.MAX_BYTES",1):
                 self.assertIn(b"Rehearsal not completed",self.client.post(mapping,data=rehearsal).data)
             with connect() as db:
