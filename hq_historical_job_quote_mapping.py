@@ -166,12 +166,30 @@ def register_mapping_route(bp):
             abort(404)
         error = None
         rehearsal = None
+        backup_saved = None
         if request.method == "POST":
             if request.content_length is None or request.content_length > 4096:
                 abort(413)
             if not secrets.compare_digest(request.form.get("csrf",""),session.get("csrf","not-set")):
                 abort(403)
-            if request.form.get("action") == "rehearse":
+            if request.form.get("action") == "private_backup":
+                if set(request.form) != {"csrf","action","operation_id","confirm_backup"} or any(len(request.form.getlist(k)) != 1 for k in request.form) or request.form.get("confirm_backup") != "yes":
+                    abort(400)
+                from hq_private_recovery import create_snapshot
+                try:
+                    backup_root = Path(os.environ.get("HQ_DATA_DIR",""))
+                    backup_source = backup_root / "customer_requests.sqlite3"
+                    if not backup_root.is_absolute() or not backup_source.is_file():
+                        raise LookupError("Canonical database unavailable")
+                    with closing(sqlite3.connect(backup_source.as_uri()+"?mode=ro",uri=True,timeout=1)) as db:
+                        db.row_factory = sqlite3.Row
+                        db.execute("PRAGMA query_only=ON")
+                        db.execute("BEGIN")
+                        _context(db,batch_id,candidate_id)
+                    backup_saved = create_snapshot(request.form.get("operation_id"))
+                except (ValueError,LookupError,sqlite3.Error,OSError):
+                    error = "Private backup not completed. Check storage, capacity, integrity and concurrent operations."
+            elif request.form.get("action") == "rehearse":
                 if set(request.form) != {"csrf","action"} or any(len(request.form.getlist(k)) != 1 for k in request.form):
                     abort(400)
                 from hq_historical_job_rehearsal import rehearse_mapping
@@ -212,5 +230,11 @@ def register_mapping_route(bp):
             abort(404)
         except (ValueError,sqlite3.Error,OSError):
             abort(409)
+        from hq_private_recovery import list_snapshots
+        try:
+            backups = list_snapshots()
+        except (ValueError,LookupError,OSError):
+            backups = None
         return render_template("hq_historical_job_quote_mapping.html",ctx=ctx,error=error,
+            backups=backups,backup_saved=backup_saved,backup_operation=secrets.token_hex(16),
             csrf=session.get("csrf",""),saved=request.args.get("saved")=="1",rehearsal=rehearsal)
