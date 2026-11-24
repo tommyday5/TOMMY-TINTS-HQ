@@ -186,3 +186,46 @@ class MonzoSheetReviewTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_receivable_allocations").fetchone()[0],0)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_transactions").fetchone()[0],0)
             self.assertEqual(db.execute("SELECT amount_pence FROM hq_receivables").fetchone()[0],35000)
+
+
+    def test_native_monzo_split_shared_history_and_exact_amount(self):
+        self.login()
+        entry=self.feed()["tx_synthetic_1"]
+        form=dict(action="split",csrf="test-csrf",ref=entry["ref"],revision="0",
+                  evidence=entry["evidence"],legacy_evidence=entry["legacy_evidence"],
+                  confirm="yes",category_0="materials",amount_0="-70.00",
+                  category_1="fuel",amount_1="-30.25")
+        self.assertEqual(self.client.post(self.url,data=dict(form,csrf="bad")).status_code,403)
+        self.assertEqual(self.client.post(self.url,data=dict(form,confirm="")).status_code,400)
+        self.assertEqual(self.client.post(self.url,data=dict(form,amount_1="-30.24")).status_code,400)
+        self.assertEqual(self.client.post(self.url,data=dict(form,amount_1="30.25")).status_code,400)
+        self.assertEqual(self.client.post(self.url,data=dict(form,category_1="customer_income")).status_code,400)
+        page=self.client.post(self.url,data=form)
+        self.assertEqual(page.status_code,200)
+        self.assertIn(b"Current proposal is split",page.data)
+        self.assertIn(b'value="-70.00"',page.data)
+        self.assertEqual(self.client.post(self.url,data=form).status_code,200)
+        self.assertEqual(self.client.post(self.url,data=dict(form,category_1="materials")).status_code,409)
+        single={k:v for k,v in form.items() if not k.startswith(("category_","amount_"))}
+        single.update(action="save",category="fuel")
+        self.assertEqual(self.client.post(self.url,data=single).status_code,409)
+        # New request loads the stored lines. Legacy override edits invalidate a stale save.
+        loaded=self.client.post(self.url,data=dict(action="load",csrf="test-csrf"))
+        self.assertIn(b'value="-30.25"',loaded.data)
+        self.legacy[entry["ref"]]=("Changed category","New evidence")
+        self.assertEqual(self.client.post(self.url,data=dict(form,revision="1")).status_code,409)
+        current=self.feed()[entry["ref"]]
+        revised=dict(form,revision="1",legacy_evidence=current["legacy_evidence"],
+                     amount_0="-60",amount_1="-40.25")
+        self.assertEqual(self.client.post(self.url,data=revised).status_code,200)
+        self.assertEqual(self.client.post(self.url,data=dict(single,revision="2",
+            legacy_evidence=current["legacy_evidence"],category="unclassified")).status_code,200)
+        loaded=self.client.post(self.url,data=dict(action="load",csrf="test-csrf"))
+        self.assertIn(b"Saved revision 3",loaded.data)
+        self.assertIn(b"Revision 1",loaded.data)
+        self.assertNotIn(b"Current proposal is split",loaded.data)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM monzo_sheet_classification_events").fetchone()[0],3)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM monzo_sheet_classification_split_lines").fetchone()[0],4)
+            self.assertEqual(db.execute("SELECT SUM(pence) FROM monzo_sheet_classification_split_lines WHERE revision=2").fetchone()[0],-10025)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_transactions").fetchone()[0],0)
