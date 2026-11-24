@@ -19,7 +19,7 @@ from flask import abort, current_app, render_template, request, session
 from customer_request_store import connect, storage_ready
 from hq_auth import required
 from hq_sheets_live import SPREADSHEET_ID
-from hq_finance_splits import categories
+from hq_finance_splits import categories, parse_form, validate_lines
 from hq_work_progress import _actor_fingerprint
 
 SOURCE = "'Monzo Live Feed'!A7:I10000"
@@ -144,6 +144,12 @@ def tables(db):
         source_id TEXT NOT NULL, revision INTEGER NOT NULL, evidence TEXT NOT NULL,
         category TEXT, PRIMARY KEY(source_id,revision))""")
 
+    db.execute("""CREATE TABLE IF NOT EXISTS monzo_sheet_classification_split_lines (
+        source_id TEXT NOT NULL, revision INTEGER NOT NULL, position INTEGER NOT NULL,
+        category TEXT NOT NULL, pence INTEGER NOT NULL CHECK(pence != 0),
+        PRIMARY KEY(source_id,revision,position),
+        FOREIGN KEY(source_id,revision) REFERENCES monzo_sheet_classification_events(source_id,revision))""")
+
 
 def histories(db):
     rows = db.execute("""SELECT e.*, l.evidence AS legacy_evidence, l.category AS legacy_category
@@ -155,11 +161,17 @@ def histories(db):
     for row in rows:
         events = history.setdefault(row["source_id"], [])
         if len(events) < 10:
-            events.append(dict(row))
+            event = dict(row)
+            if event["category"] == "split":
+                event["lines"] = [dict(line) for line in db.execute(
+                    """SELECT category,pence FROM monzo_sheet_classification_split_lines
+                    WHERE source_id=? AND revision=? ORDER BY position""",
+                    (event["source_id"],event["revision"]))]
+            events.append(event)
     return history
 
 
-def save(entry, evidence, revision, category, actor, legacy_evidence):
+def save(entry, evidence, revision, category, actor, legacy_evidence, lines=None):
     if not storage_ready():
         raise ValueError("Persistent HQ storage required.")
     if (not isinstance(evidence, str) or not DIGEST.fullmatch(evidence)
@@ -169,14 +181,23 @@ def save(entry, evidence, revision, category, actor, legacy_evidence):
             or not secrets.compare_digest(entry["legacy_evidence"],legacy_evidence)):
         raise Conflict("Existing Sheets classification changed. Reload and review.")
     if (type(revision) is not int or not 0 <= revision < 2**63-1
-            or category not in categories()):
+            or category not in (*categories(), "split")):
         raise ValueError("Invalid review revision or category.")
+    if category == "split":
+        lines = validate_lines(lines, entry["pence"])
+        if entry["pence"] < 0 and any(line["category"] == "customer_income" for line in lines):
+            raise ValueError("Customer income candidates require a positive amount.")
+    elif lines is not None:
+        raise ValueError("Split lines require a split classification.")
     if category == "customer_income" and entry["pence"] <= 0:
         raise ValueError("Customer income candidates require a positive amount.")
     actor = _actor_fingerprint(actor)
     ref = entry["ref"]
     operation = fingerprint([ref, evidence, revision, category, actor, legacy_evidence])
+    if category == "split":
+        operation = fingerprint([operation, lines])
     with closing(connect()) as db, db:
+        db.execute("PRAGMA foreign_keys=ON")
         tables(db)
         db.execute("BEGIN IMMEDIATE")
         old = db.execute("SELECT revision FROM monzo_sheet_classification_events WHERE operation=?", (operation,)).fetchone()
@@ -192,6 +213,9 @@ def save(entry, evidence, revision, category, actor, legacy_evidence):
             (ref,revision+1,evidence,category,operation,actor,datetime.now(timezone.utc).isoformat()))
         db.execute("INSERT INTO monzo_sheet_classification_legacy_evidence VALUES(?,?,?,?)",
             (ref,revision+1,legacy_evidence,entry["legacy_category"]))
+        if category == "split":
+            db.executemany("INSERT INTO monzo_sheet_classification_split_lines VALUES(?,?,?,?,?)",
+                [(ref,revision+1,i,line["category"],line["pence"]) for i,line in enumerate(lines)])
         return revision+1
 
 
@@ -203,7 +227,7 @@ def register(bp):
             abort(503)
         entries, error, notice, status, offset, count = None, None, None, 200, 0, 0
         if request.method == "POST":
-            request.max_content_length = 4096
+            request.max_content_length = 8192
             csrf = session.get("csrf")
             if not csrf or not secrets.compare_digest(request.form.get("csrf",""),csrf):
                 abort(403)
@@ -213,16 +237,16 @@ def register(bp):
                 if not re.fullmatch(r"[0-9]{1,5}",raw_offset) or int(raw_offset)>10000:
                     raise ValueError("Invalid page.")
                 offset = int(raw_offset)
-                if action not in ("load","save"):
+                if action not in ("load","save","split"):
                     raise ValueError("Invalid action.")
-                if action == "save":
+                if action in ("save","split"):
                     ref = request.form.get("ref","")
                     revision = request.form.get("revision","")
                     evidence = request.form.get("evidence","")
-                    category = request.form.get("category","")
+                    category = "split" if action == "split" else request.form.get("category","")
                     legacy_evidence = request.form.get("legacy_evidence","")
                     if (not ID.fullmatch(ref) or not re.fullmatch(r"[0-9]{1,19}",revision)
-                            or not DIGEST.fullmatch(evidence) or not DIGEST.fullmatch(legacy_evidence) or category not in categories()
+                            or not DIGEST.fullmatch(evidence) or not DIGEST.fullmatch(legacy_evidence) or (action == "save" and category not in categories())
                             or request.form.get("confirm") != "yes"):
                         raise ValueError("Explicit classification confirmation required.")
                 provider = current_app.extensions["hq_sheets_connection"]()
@@ -230,10 +254,11 @@ def register(bp):
                     error,status = "Connect Google Sheets with read-only permission first.",401
                 else:
                     feed = read_feed(provider[0])
-                    if action == "save":
+                    if action in ("save","split"):
                         if ref not in feed:
                             raise Conflict("Original transaction not found in current source.")
-                        save(feed[ref],evidence,int(revision),category,session.get("google_sub",""),legacy_evidence)
+                        save(feed[ref],evidence,int(revision),category,session.get("google_sub",""),legacy_evidence,
+                             parse_form(request.form) if action == "split" else None)
                         notice = "Classification proposal saved. Source and financial balances unchanged."
                     with closing(connect()) as db, db:
                         tables(db)
@@ -247,6 +272,7 @@ def register(bp):
                         entry["revision"] = events[0]["revision"] if events else 0
                         entry["stale"] = bool(events and events[0]["evidence"] != entry["evidence"])
                         entry["proposal"] = events[0]["category"] if events else "unclassified"
+                        entry["split_lines"] = events[0].get("lines",[]) if events else []
                         entry["legacy_changed"] = bool(events and
                             events[0]["legacy_evidence"] != entry["legacy_evidence"])
             except Conflict as exc:

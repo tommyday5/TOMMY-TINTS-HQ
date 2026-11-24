@@ -246,3 +246,22 @@ This change is pending CI, deployment and owner acceptance. Verified bank
 allocation, split-source settlement, creditor matching, historical customer
 and vehicle imports, full formula parity and authenticated production
 customer acceptance remain open. No domain cutover.
+
+
+## 24 November follow-up — split classification of Monzo worksheet entries
+
+PR #266 passed HQ tests (run 45455468232) and merged as aa9b29cb.
+Its invoice candidates are inactive proposals, not verified receipts.
+This new change adds two to five signed, exact-penny category lines to the
+existing Monzo source-ID classification review. Split and single-category
+edits share the same revision stream, so a stale form cannot overwrite a
+different kind of classification. Source amount and legacy override hashes
+are checked again before save; prior line history remains intact after a
+replacement or withdrawal. Open Finance Command Centre > Transactions &
+reconciliation > Monzo transaction classification review > Load current Monzo
+feed for review > Edit split classification. No cash entries or source writes,
+no aggregation into authoritative finance, no invoice allocation or bank
+verification. New UI acceptance, deployment, historical reconciliation,
+verified payment allocation, and reversible customer/vehicle imports remain
+unverified. The existing customer booking pathways are preserved; no live
+customer data was changed.
