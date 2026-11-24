@@ -298,3 +298,46 @@ class HistoricalJobBatchTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT count(*) FROM hq_work_records WHERE revision=0 AND status='draft'").fetchone()[0],2)
             self.assertEqual(db.execute("SELECT price_pence FROM hq_work_records WHERE id=?", (self.work_ids[0],)).fetchone()[0],12500)
             self.assertIsNone(db.execute("SELECT price_pence FROM hq_work_records WHERE id=?", (self.work_ids[1],)).fetchone()[0])
+
+    def test_dry_run_customer_proposal_crosscheck_is_inactive_and_versioned(self):
+        from hq_historical_customer_links import stage_customer_candidate, source_stamp, withdraw_customer_candidate
+        from hq_historical_job_dry_run import _customer_crosscheck
+        batch = self.create(self.ids, "a"*32)
+        full = self.full_snapshots()
+        with connect() as db:
+            customer_id = db.execute("SELECT customer_id FROM hq_work_records WHERE id=?",
+                                     (self.work_ids[0],)).fetchone()[0]
+        candidate = stage_customer_candidate(
+            formula=self.formula, computed=self.computed, sheet_row=5,
+            expected_source_stamp=source_stamp(self.formula,self.computed,5),
+            customer_id=customer_id, basis="name_crosscheck",
+            operation_id=uuid.uuid4().hex, owner_identity="synthetic-owner")
+        self.login()
+        evidence = dict(csrf="test-csrf",action="full_evidence",batch_id=batch,revision="0")
+        fields = dict(csrf="test-csrf",action="field_review",batch_id=batch,plan_revision="0",
+                      **{"f"+str(i):"u" for i in range(94)})
+        dry = dict(csrf="test-csrf",action="dry_run",batch_id=batch,plan_revision="1",dry_revision="0")
+        with patch.dict(app.extensions,{"hq_sheets_connection":lambda:("fixture",9999999999)}), patch("hq_historical_preview._read_live",return_value=(self.formula,self.computed)), patch("hq_historical_job_full_evidence.read_full_width",return_value=full):
+            self.assertEqual(self.client.post(self.url,data=evidence).status_code,303)
+            self.assertEqual(self.client.post(self.url,data=fields).status_code,303)
+            self.assertEqual(self.client.post(self.url,data=dry).status_code,303)
+            result = list_batches()[0]["dry_run"]["report"]["rows"][0]["customer_proposal"]
+            self.assertEqual(result["status"],"Current inactive proposal cross-check agrees")
+            self.assertEqual(result["proposal_id"],candidate)
+            self.assertEqual(result["customer_sheet_row"],5)
+            self.assertIn(b"Name-only review",self.client.get(self.url).data)
+            with connect() as db:
+                item = {"customer_id":customer_id,"vehicle_customer":customer_id}
+                self.assertIn("not literal",_customer_crosscheck(db,item,"=A1","Synthetic Client",self.formula,self.computed)["status"])
+                self.assertEqual(_customer_crosscheck(db,dict(item,vehicle_customer="other"),"Synthetic Client","Synthetic Client",self.formula,self.computed)["status"],"Native vehicle/customer conflict")
+                changed = copy.deepcopy(self.computed)
+                changed["valueRanges"][1]["values"][1][2] = "changed"
+                self.assertEqual(_customer_crosscheck(db,item,"Synthetic Client","Synthetic Client",self.formula,changed)["status"],"Customer proposal stale or ambiguous")
+            withdraw_customer_candidate(candidate,0,"synthetic-owner")
+            self.assertEqual(self.client.post(self.url,data=dict(dry,dry_revision="1")).status_code,303)
+            snapshot = list_batches()[0]["dry_run"]
+            self.assertEqual(snapshot["revision"],2)
+            self.assertEqual(snapshot["report"]["rows"][0]["customer_proposal"]["status"],"No active customer proposal")
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_historical_job_dry_runs").fetchone()[0],2)
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_work_records WHERE revision=0 AND status='draft'").fetchone()[0],2)
