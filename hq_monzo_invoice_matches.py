@@ -25,6 +25,28 @@ def tables(db):
         manifest TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('proposed','withdrawn')),
         operation TEXT NOT NULL UNIQUE, actor TEXT NOT NULL, created TEXT NOT NULL,
         PRIMARY KEY(source_id,revision))""")
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_monzo_invoice_match_source_evidence(
+        source_id TEXT NOT NULL, revision INTEGER NOT NULL, source_digest TEXT NOT NULL,
+        PRIMARY KEY(source_id,revision),
+        FOREIGN KEY(source_id,revision) REFERENCES hq_monzo_invoice_match_events(source_id,revision))""")
+    db.execute("""CREATE INDEX IF NOT EXISTS hq_monzo_match_pair_revision
+        ON hq_monzo_invoice_match_events(source_id,invoice_id,revision)""")
+
+
+def active_candidates(db, ref):
+    """Latest state per source/invoice pair; older single-candidate history is compatible."""
+    return [dict(r) for r in db.execute("""SELECT e.*,s.source_digest
+        FROM hq_monzo_invoice_match_events e
+        LEFT JOIN hq_monzo_invoice_match_source_evidence s
+          ON s.source_id=e.source_id AND s.revision=e.revision
+        WHERE e.source_id=? AND e.status='proposed'
+        AND NOT EXISTS (SELECT 1 FROM hq_monzo_invoice_match_events n
+            WHERE n.source_id=e.source_id AND n.invoice_id=e.invoice_id AND n.revision>e.revision)
+        ORDER BY e.revision DESC""", (ref,))]
+
+
+def source_digest(entry):
+    return fingerprint([entry["ref"],entry["evidence"],entry["legacy_evidence"],entry["pence"]])
 
 
 def history(db, ref):
@@ -53,19 +75,26 @@ def review(db, entry, invoice_ref, amount=None):
         raise ValueError("Choose an existing, issued, non-archived invoice.")
     if entry["pence"] <= 0:
         raise ValueError("Only positive worksheet transactions can be proposed against invoices.")
-    amount = entry["pence"] if amount is None else amount
-    if type(amount) is not int or not 1 <= amount <= entry["pence"]:
-        raise ValueError("Candidate cannot exceed the positive source transaction.")
     events = history(db, entry["ref"])
-    if events and events[0]["status"] == "proposed":
-        raise Conflict("Withdraw the existing candidate before proposing another.")
+    active = active_candidates(db, entry["ref"])
+    if any(e["invoice_id"] == invoice["id"] for e in active):
+        raise Conflict("Withdraw the existing candidate for this invoice before proposing another.")
+    digest = source_digest(entry)
+    if any(e["source_digest"] != digest for e in active):
+        raise Conflict("An existing candidate has older or changed source evidence. Withdraw and re-review it first.")
+    used = sum(e["amount_pence"] for e in active)
+    if len(active) >= 20:
+        raise ValueError("A source can have at most 20 active invoice candidates.")
+    amount = entry["pence"] - used if amount is None else amount
+    if type(amount) is not int or not 1 <= amount <= entry["pence"] - used:
+        raise ValueError("Candidate cannot exceed the unmatched positive source transaction.")
     reported = db.execute("""SELECT COALESCE(SUM(amount_pence),0)
         FROM hq_receivable_allocations WHERE invoice_id=? AND status='reported'""",
         (invoice["id"],)).fetchone()[0]
     proposed = db.execute("""SELECT COALESCE(SUM(e.amount_pence),0)
         FROM hq_monzo_invoice_match_events e WHERE e.invoice_id=? AND e.status='proposed'
         AND NOT EXISTS (SELECT 1 FROM hq_monzo_invoice_match_events n
-          WHERE n.source_id=e.source_id AND n.revision>e.revision)""",
+          WHERE n.source_id=e.source_id AND n.invoice_id=e.invoice_id AND n.revision>e.revision)""",
         (invoice["id"],)).fetchone()[0]
     remaining = invoice["amount_pence"] - reported - proposed
     if amount > remaining:
@@ -74,10 +103,10 @@ def review(db, entry, invoice_ref, amount=None):
     manifest = fingerprint([entry["ref"],entry["evidence"],entry["legacy_evidence"],
         invoice["id"],invoice["revision"],invoice["invoice_ref"],invoice["customer_id"],
         invoice["work_id"],invoice["customer_name"],invoice["work_service"],
-        invoice["amount_pence"],reported,proposed,entry["pence"],rev,amount])
+        invoice["amount_pence"],reported,proposed,entry["pence"],rev,amount,used,digest])
     return dict(invoice=dict(invoice), entry=entry, revision=rev, manifest=manifest,
                 reported=reported, proposed=proposed, remaining=remaining, amount=amount,
-                unallocated_source=entry["pence"]-amount)
+                unallocated_source=entry["pence"]-used-amount, source_used=used, source_digest=digest)
 
 
 def current_entry(ref):
@@ -100,6 +129,7 @@ def register(bp):
         ref = request.args.get("ref","") if request.method == "GET" else ""
         invoice_ref, preview, events, notice, error, status = "", None, [], None, None, 200
         raw_amount = ""
+        active = []
         try:
             if request.method == "POST":
                 request.max_content_length = 4096
@@ -111,7 +141,7 @@ def register(bp):
                 action = request.form.get("action","")
                 if not ID.fullmatch(ref) or action not in ("review","save","withdraw"):
                     raise ValueError("Enter a valid source transaction ID.")
-                if action != "withdraw" and not REF.fullmatch(invoice_ref):
+                if not REF.fullmatch(invoice_ref):
                     raise ValueError("Enter the exact HQ invoice reference.")
                 actor = _actor_fingerprint(session.get("google_sub",""))
                 revision = request.form.get("revision","")
@@ -144,23 +174,29 @@ def register(bp):
                             db.execute("INSERT INTO hq_monzo_invoice_match_events VALUES(?,?,?,?,?,?,?,?,?,?)",
                                 (ref,rev+1,inv["id"],inv["invoice_ref"],candidate["amount"],manifest,
                                  "proposed",operation,actor,datetime.now(timezone.utc).isoformat()))
+                            db.execute("INSERT INTO hq_monzo_invoice_match_source_evidence VALUES(?,?,?)",
+                                       (ref,rev+1,candidate["source_digest"]))
                             notice = "Private invoice match candidate saved. No payment or balance changed."
                         else:
                             old = history(db,ref)
-                            if not old or old[0]["status"]!="proposed" or old[0]["revision"]!=rev or old[0]["manifest"]!=manifest:
+                            prev = next((e for e in active_candidates(db,ref)
+                                         if e["invoice_ref"] == invoice_ref and e["revision"] == rev
+                                         and e["manifest"] == manifest),None)
+                            if not prev:
                                 raise Conflict("Candidate changed. Reload before withdrawing.")
-                            prev = old[0]
                             db.execute("INSERT INTO hq_monzo_invoice_match_events VALUES(?,?,?,?,?,?,?,?,?,?)",
-                                (ref,rev+1,prev["invoice_id"],prev["invoice_ref"],prev["amount_pence"],manifest,
+                                (ref,old[0]["revision"]+1,prev["invoice_id"],prev["invoice_ref"],prev["amount_pence"],manifest,
                                  "withdrawn",operation,actor,datetime.now(timezone.utc).isoformat()))
                             notice = "Candidate withdrawn. Audit history preserved."
                     events = history(db,ref)
+                    active = active_candidates(db,ref)
             elif ref:
                 if not ID.fullmatch(ref):
                     raise ValueError("Invalid source transaction ID.")
                 with closing(connect()) as db, db:
                     tables(db)
                     events = history(db,ref)
+                    active = active_candidates(db,ref)
         except Conflict as exc:
             error,status = str(exc),409
         except (ValueError,TypeError) as exc:
@@ -168,4 +204,4 @@ def register(bp):
         except (requests.RequestException,sqlite3.Error,OSError,KeyError):
             error,status = "Read-only source or HQ storage unavailable; no new save confirmed.",503
         return render_template("finance_monzo_invoice_match.html",ref=ref,invoice_ref=invoice_ref,
-            preview=preview,events=events,notice=notice,error=error,raw_amount=raw_amount,csrf=session.get("csrf","")),status,{"Cache-Control":"no-store"}
+            preview=preview,events=events,active=active,notice=notice,error=error,raw_amount=raw_amount,csrf=session.get("csrf","")),status,{"Cache-Control":"no-store"}

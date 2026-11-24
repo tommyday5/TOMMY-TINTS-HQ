@@ -267,3 +267,62 @@ class MonzoSheetReviewTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_monzo_invoice_match_events").fetchone()[0],1)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_receivable_allocations").fetchone()[0],0)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_transactions").fetchone()[0],0)
+
+
+    def test_multiple_invoice_candidates_share_source_and_independent_withdrawal(self):
+        import re
+        from hq_receivables import save as save_invoice
+        from hq_core_records import _schema
+        from hq_monzo_invoice_matches import active_candidates
+        with connect() as db:
+            _schema(db)
+            db.execute("INSERT INTO hq_customers VALUES(?,?,?,?,?,?)",
+                       ("a"*32,None,"Synthetic multi customer","","","2026-11-22"))
+        for key, op, ref in (("b","c","TEST-MULTI-1"),("d","e","TEST-MULTI-2"),("f","1","TEST-MULTI-3")):
+            save_invoice(dict(id=key*32,operation_id=op*32,revision=0,
+                         customer_id="a"*32,work_id=None,invoice_ref=ref,
+                         issue_date="2026-11-22",due_date="2026-12-10",amount_pence=20000,
+                         status="issued",archived=False,memo=""))
+        self.rows=[example(amount=100.25),example("tx_synthetic_2",amount=180)]
+        self.login()
+        url="/hq/finance/monzo-invoice-match"
+        def form(ref, amount):
+            return dict(action="review",csrf="test-csrf",ref="tx_synthetic_1",
+                        invoice_ref=ref,candidate_amount=amount)
+        def proposal(f, rev):
+            page=self.client.post(url,data=f)
+            self.assertEqual(page.status_code,200)
+            manifest=re.search(rb'name="manifest" value="([a-f0-9]{64})"',page.data)[1].decode()
+            return dict(f,action="save",revision=str(rev),manifest=manifest,confirm="yes")
+        first=proposal(form("TEST-MULTI-1","60.00"),0)
+        stale=proposal(form("TEST-MULTI-2","40.25"),0)
+        self.assertEqual(self.client.post(url,data=first).status_code,200)
+        self.assertEqual(self.client.post(url,data=stale).status_code,409)
+        self.assertEqual(self.client.post(url,data=form("TEST-MULTI-2","40.26")).status_code,400)
+        self.rows[0]=example(amount=101.25)
+        self.assertEqual(self.client.post(url,data=form("TEST-MULTI-2","40.25")).status_code,409)
+        self.rows[0]=example(amount=100.25)
+        second=proposal(form("TEST-MULTI-2",""),1)
+        self.assertEqual(self.client.post(url,data=second).status_code,200)
+        self.assertEqual(self.client.post(url,data=second).status_code,200)
+        self.assertEqual(self.client.post(url,data=form("TEST-MULTI-3","0.01")).status_code,400)
+        loaded=self.client.get(url+"?ref=tx_synthetic_1")
+        self.assertIn(b"Active candidate: TEST-MULTI-1",loaded.data)
+        self.assertIn(b"Active candidate: TEST-MULTI-2",loaded.data)
+        # The second invoice remains reserved even after a different candidate is withdrawn.
+        self.reader.side_effect=AssertionError("No source read on withdrawal")
+        withdrawal=dict(first,action="withdraw",revision="1")
+        self.assertEqual(self.client.post(url,data=withdrawal).status_code,200)
+        self.assertEqual(self.client.post(url,data=withdrawal).status_code,200)
+        self.reader.side_effect=lambda _:self.feed()
+        self.assertEqual(self.client.post(url,data=dict(form("TEST-MULTI-2","180"),
+            ref="tx_synthetic_2")).status_code,400)
+        third=proposal(form("TEST-MULTI-3","60"),3)
+        self.assertEqual(self.client.post(url,data=third).status_code,200)
+        with connect() as db:
+            active=active_candidates(db,"tx_synthetic_1")
+            self.assertEqual({e["invoice_ref"]:e["amount_pence"] for e in active},
+                             {"TEST-MULTI-2":4025,"TEST-MULTI-3":6000})
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_monzo_invoice_match_events").fetchone()[0],4)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_receivable_allocations").fetchone()[0],0)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_transactions").fetchone()[0],0)
