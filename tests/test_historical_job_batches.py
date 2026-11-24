@@ -23,7 +23,7 @@ def snapshots():
             + [""]*10 + ["Quoted Price","Status"]]
     for i in range(2):
         jobs.append(["J%04d" % (i+1),"","Synthetic Client","Retail","SYNTH","Tinting"]
-                    + [""]*10 + [125,"Quoted"])
+                    + [""]*10 + [125,"Quoted"] + [""]*14 + [2.5,0,"",7.25])
     customers = [["Customer","Type","Postcode"],["Synthetic Client","Retail",""]]
     formula = {"valueRanges":[{"range":"Jobs!A4:AZ1000","values":jobs},
                               {"range":"Customers!A4:AF1000","values":customers}]}
@@ -352,6 +352,8 @@ class HistoricalJobBatchTests(unittest.TestCase):
         fields = dict(csrf="test-csrf",action="field_review",batch_id=batch,plan_revision="0",
                       **{"f"+str(i):"u" for i in range(94)})
         fields["f16"] = fields["f5"] = fields["f3"] = "n"
+        for i in range(32,36):
+            fields["f"+str(i)] = "n"
         from hq_native_work import _tables
         with connect() as db:
             _tables(db)
@@ -386,6 +388,27 @@ class HistoricalJobBatchTests(unittest.TestCase):
             self.assertIn(b"=25+50",page.data)
             self.assertIn(b"Original staged source cells (94 columns)",page.data)
             self.assertIn(b"Save service mapping draft",page.data)
+            self.assertIn(b"Actual time and cost aggregate mapping drafts",page.data)
+            self.assertIn(b"150 minutes",page.data)
+            actual = dict(csrf="test-csrf",revision="0",field="actual_hours",decision="propose")
+            self.assertEqual(app.test_client().post(mapping,data=actual).status_code,302)
+            self.assertEqual(self.client.post(mapping,data=dict(actual,csrf="bad")).status_code,403)
+            self.assertEqual(self.client.post(mapping,data=actual).status_code,303)
+            self.assertEqual(self.client.post(mapping,data=actual).status_code,303)
+            self.assertEqual(self.client.post(mapping,data=dict(actual,field="actual_materials")).status_code,303)
+            self.assertEqual(self.client.post(mapping,data=dict(actual,field="actual_extra_costs")).status_code,303)
+            self.assertIn(b"Mapping not saved",self.client.post(mapping,data=dict(actual,field="actual_consumables")).data)
+            self.assertIn(b"Mapping not saved",self.client.post(mapping,data=dict(actual,decision="preserve")).data)
+            self.assertEqual(self.client.post(mapping,data=dict(actual,revision="1",decision="preserve")).status_code,303)
+            self.assertIn(b"150 minutes",self.client.get(mapping).data)
+            with connect() as db:
+                events = db.execute("SELECT field,revision,decision,source_amount FROM hq_historical_job_actual_mapping ORDER BY field,revision").fetchall()
+                self.assertEqual([tuple(e) for e in events],[
+                    ("actual_extra_costs",1,"propose",725),("actual_hours",1,"propose",150),
+                    ("actual_hours",2,"preserve",150),("actual_materials",1,"propose",0)])
+                for table in ("hq_work_time_entries","hq_work_material_entries","hq_work_expense_entries"):
+                    if db.execute("SELECT 1 FROM sqlite_master WHERE name=?", (table,)).fetchone():
+                        self.assertEqual(db.execute(f"SELECT count(*) FROM {table}").fetchone()[0],0)
             service = dict(csrf="test-csrf",revision="0",field="service",
                            decision="propose",target="Window Tinting")
             tier = dict(csrf="test-csrf",revision="0",field="tier",
@@ -422,6 +445,7 @@ class HistoricalJobBatchTests(unittest.TestCase):
             self.assertIn(b"editing disabled",self.client.get(mapping).data)
             self.assertIn(b"Mapping not saved",self.client.post(mapping,data=dict(decision,revision="2")).data)
             self.assertIn(b"Mapping not saved",self.client.post(mapping,data=dict(service,revision="2")).data)
+            self.assertIn(b"Mapping not saved",self.client.post(mapping,data=dict(actual,revision="2")).data)
             self.assertIn(b"Batch could not be saved",self.client.post(self.url,data=stage).data)
             self.assertEqual(self.client.post(self.url,data=dict(csrf="test-csrf",action="archive",batch_id=batch,revision="0")).status_code,303)
             self.assertIn(b"Source rows staged: 2",self.client.get(self.url).data)
@@ -464,3 +488,22 @@ class HistoricalJobBatchTests(unittest.TestCase):
             self.assertFalse(fields(effective)["service"]["eligible"])
             raw[3]="Unknown"
             self.assertFalse(fields()["tier"]["eligible"])
+
+    def test_actual_mapping_rejects_formula_fractional_minute_and_missing_values(self):
+        from hq_historical_job_actual_mapping import actual_context, _minutes
+        from hq_historical_job_field_review import field_rows
+        raw = [""] * 94
+        raw[32:36] = [0.01, "=5+5", "", 0]
+        effective = raw[:]
+        effective[33] = 10
+        row = dict(work_id=self.work_ids[0],status="draft",batch_id="a"*32,candidate_id=self.ids[0])
+        plan = {"fields":field_rows(["n"]*94)}
+        with connect() as db:
+            ctx = actual_context(db,row,raw,effective,plan,True)
+            self.assertEqual([i["eligible"] for i in ctx["fields"]],[False,False,False,True])
+            self.assertEqual([i["source"] for i in ctx["fields"]],[None,1000,None,0])
+            self.assertEqual(ctx["active"],{"time":0,"materials":0,"expenses":0})
+        self.assertIsNone(_minutes(True))
+        self.assertIsNone(_minutes(float("nan")))
+        self.assertIsNone(_minutes(-1))
+        self.assertEqual(_minutes(1.25),75)
