@@ -27,6 +27,21 @@ main{max-width:920px;margin:auto;padding:20px}a{color:#ff7881}section{background
 <ul>{% for item in batch['items'] %}<li>{{ item.job_ref }} · source row {{ item.sheet_row }} · HQ {{ item.work_id[:8] }} (rev {{ item.work_revision }}) — {% if item.stale %}Native changed / proposal unavailable{% else %}Native revision unchanged; source not rechecked{% endif %}</li>{% endfor %}</ul>
 <p>{% if batch.full_evidence_at %}94-column source evidence v2 saved at {{ batch.full_evidence_at }} (not freshly checked).{% else %}No 94-column source evidence saved; legacy scope only.{% endif %}</p>
 {% if not batch.archived_at %}<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="full_evidence"><input type="hidden" name="batch_id" value="{{ batch.id }}"><input type="hidden" name="revision" value="{{ batch.revision }}"><button type="submit">{{ "Recheck saved full-width evidence" if batch.full_evidence_at else "Save 94-column source evidence" }}</button></form><p><small>If the source changes after evidence is saved, archive and restage the batch. No historical record will be changed.</small></p>{% endif %}
+{% if batch.field_plan %}
+<details><summary>Field review plan · {{ batch.field_plan.reviewed }}/94 classified · revision {{ batch.field_plan.revision }}</summary>
+<p>Propose how each historical field should be handled. These decisions are batch-wide review instructions only, not a verified mapping, migration approval or source-of-truth change. A fresh source and native revision check is required for each save. Unresolved fields remain blocked.</p>
+{% if not batch.archived_at %}
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="field_review"><input type="hidden" name="batch_id" value="{{ batch.id }}"><input type="hidden" name="plan_revision" value="{{ batch.field_plan.revision }}">
+{% for field in batch.field_plan.fields %}
+<label for="{{ batch.id }}-f{{ field.index }}">{{ loop.index }}. {{ field.header }}{% if field.hint %} <small> — {{ field.hint }}</small>{% endif %}
+<select style="display:block;max-width:100%;padding:8px;margin-top:5px" id="{{ batch.id }}-f{{ field.index }}" name="f{{ field.index }}">{% for code,title in field.options %}<option value="{{ code }}" {% if code == field.decision %}selected{% endif %}>{{ title }}</option>{% endfor %}</select></label>
+{% endfor %}
+<button type="submit">Save field review plan</button></form>
+{% else %}
+<ul>{% for field in batch.field_plan.fields %}<li>{{ field.header }} — {% for code,title in field.options %}{% if code == field.decision %}{{ title }}{% endif %}{% endfor %}</li>{% endfor %}</ul>
+{% endif %}
+</details>
+{% endif %}
 {% if not batch.archived_at %}<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="archive"><input type="hidden" name="batch_id" value="{{ batch.id }}"><input type="hidden" name="revision" value="{{ batch.revision }}"><button type="submit">Archive batch</button></form>{% endif %}
 </section>
 {% else %}<p>No review batches saved.</p>{% endfor %}
