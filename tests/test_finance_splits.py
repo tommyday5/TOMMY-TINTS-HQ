@@ -75,3 +75,54 @@ class FinanceSplitTests(unittest.TestCase):
         with connect() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_transactions").fetchone()[0],1)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_split_events").fetchone()[0],2)
+
+    def test_monthly_report_conserves_cash_and_follows_current_split(self):
+        from hq_finance_splits import classification_report
+        url="/hq/finance/classifications?month=2026-01"
+        self.assertEqual(self.client.get(url).status_code,302)
+        self.login()
+        with connect() as db:
+            for ref, day, label, amount, cat in [
+                ("b"*32,"2026-01-02","Synthetic transfer",25000,"internal_transfer"),
+                ("c"*32,"2026-01-03","Synthetic income",5000,"customer_income"),
+                ("d"*32,"2026-02-01","Outside month",-12300,"fuel")]:
+                db.execute("INSERT INTO finance_transactions VALUES(?,?,?,?,?,?,?)",
+                           (ref,day,label,amount,cat,1,1))
+        self.assertEqual(self.client.post(self.url,data=self.form()).status_code,303)
+        report=classification_report("2026-01")
+        self.assertEqual((len(report["entries"]),report["split_count"],report["incoming"],
+                          report["outgoing"],report["unclassified"]),(3,1,30000,10000,0))
+        self.assertEqual(dict(report["totals"]),{
+            "materials":{"incoming":0,"outgoing":7000},
+            "fuel":{"incoming":0,"outgoing":3000},
+            "internal_transfer":{"incoming":25000,"outgoing":0},
+            "customer_income":{"incoming":5000,"outgoing":0}})
+        page=self.client.get(url)
+        self.assertEqual(page.status_code,200)
+        self.assertIn("no-store",page.headers["Cache-Control"])
+        self.assertIn(b"Edit / withdraw split",page.data)
+        self.assertIn(b"Active split proposal",page.data)
+        self.assertIn(b"70.00",page.data)
+        self.assertNotIn(b"Outside month",page.data)
+        self.assertEqual(self.client.get("/hq/finance/classifications?month=2026-13").status_code,400)
+        self.assertIn(b"Actual bank activity is unknown",self.client.get(
+            "/hq/finance/classifications?month=2026-03").data)
+        self.assertEqual(self.client.post(self.url,data=self.form(revision="2",
+            amount_0="-60",amount_1="-40")).status_code,303)
+        self.assertEqual(dict(classification_report("2026-01")["totals"])["fuel"]["outgoing"],4000)
+        self.assertEqual(self.client.post(self.url,data=self.form(revision="3",action="withdraw")).status_code,303)
+        report=classification_report("2026-01")
+        self.assertEqual((report["outgoing"],report["split_count"],report["unclassified"]),(10000,0,10000))
+        self.assertNotIn("fuel",dict(report["totals"]))
+        self.assertIn(b"Create split / view history",self.client.get(url).data)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_transactions").fetchone()[0],4)
+
+    def test_monthly_report_withholds_inconsistent_active_split(self):
+        self.login()
+        self.assertEqual(self.client.post(self.url,data=self.form()).status_code,303)
+        with connect() as db:
+            db.execute("UPDATE finance_transactions SET revision=revision+1 WHERE id=?",(self.ref,))
+        page=self.client.get("/hq/finance/classifications?month=2026-01")
+        self.assertEqual(page.status_code,400)
+        self.assertNotIn(b"Effective category totals",page.data)
