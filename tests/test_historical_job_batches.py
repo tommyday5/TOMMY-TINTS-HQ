@@ -467,6 +467,35 @@ class HistoricalJobBatchTests(unittest.TestCase):
                 self.assertIn(b"Private backup not completed",self.client.post(mapping,data=dict(backup,operation_id="c"*32)).data)
             path = Path(os.environ["HQ_DATA_DIR"])/"private_recovery_snapshots"/("b"*32+".sqlite3")
             self.assertEqual(path.stat().st_mode & 0o777,0o600)
+            from cryptography.hazmat.primitives.asymmetric import rsa
+            from cryptography.hazmat.primitives import serialization
+            from hq_recovery_export import decrypt_for_isolated_verification
+            key = rsa.generate_private_key(public_exponent=65537,key_size=3072)
+            pem = key.public_key().public_bytes(serialization.Encoding.PEM,
+                serialization.PublicFormat.SubjectPublicKeyInfo).decode("ascii")
+            export = dict(csrf="test-csrf", action="encrypted_export", snapshot_id="b"*32,
+                          public_key=pem,confirm_export="yes")
+            self.assertIn(b"Download encrypted recovery copy",self.client.get(mapping).data)
+            self.assertEqual(app.test_client().post(mapping,data=export).status_code,302)
+            self.assertEqual(self.client.post(mapping,data=dict(export,csrf="bad")).status_code,403)
+            self.assertEqual(self.client.post(mapping,data=dict(export,confirm_export="")).status_code,400)
+            self.assertIn(b"Encrypted export not completed",self.client.post(mapping,data=dict(export,snapshot_id="../bad")).data)
+            self.assertIn(b"Encrypted export not completed",self.client.post(mapping,data=dict(export,public_key="invalid")).data)
+            encrypted = self.client.post(mapping,data=export)
+            self.assertEqual(encrypted.status_code,200)
+            self.assertIn("attachment",encrypted.headers["Content-Disposition"])
+            self.assertIn("no-store",encrypted.headers["Cache-Control"])
+            self.assertNotIn(b"SQLite format 3",encrypted.data)
+            self.assertEqual(decrypt_for_isolated_verification(encrypted.data,key),path.read_bytes())
+            again = self.client.post(mapping,data=export)
+            self.assertNotEqual(again.data,encrypted.data)
+            self.assertEqual(decrypt_for_isolated_verification(again.data,key),path.read_bytes())
+            with self.assertRaises(ValueError):
+                decrypt_for_isolated_verification(encrypted.data[:-1]+bytes([encrypted.data[-1]^1]),key)
+            with self.assertRaises(ValueError):
+                decrypt_for_isolated_verification(encrypted.data,rsa.generate_private_key(public_exponent=65537,key_size=3072))
+            self.assertEqual(len(list_snapshots()),1)
+
             from contextlib import closing
             with closing(sqlite3.connect(path.as_uri()+"?mode=ro",uri=True)) as saved:
                 self.assertEqual(saved.execute("PRAGMA quick_check").fetchone()[0],"ok")
