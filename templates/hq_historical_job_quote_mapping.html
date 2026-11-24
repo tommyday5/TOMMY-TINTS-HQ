@@ -69,6 +69,19 @@
 {% else %}<p>Snapshot capacity reached. No additional copies can be created.</p>{% endif %}
 <h3>Saved recovery snapshots</h3>
 {% for item in backups %}<p>Snapshot {{ item.id }} · {{ item.bytes }} bytes · previously checked before saving (not reverified on this page).</p>{% else %}<p>No private recovery snapshots saved.</p>{% endfor %}
+{% if backups %}
+<h3>Download an encrypted recovery copy</h3>
+<p>Save a copy outside Railway on storage you control. Use a 3072- or 4096-bit RSA public key in PEM format; keep its corresponding private key separately offline. Never paste the private key here. No automatic cloud upload or restore takes place. If the private key is lost the export cannot be recovered.</p>
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="encrypted_export">
+<label for="snapshot-id">Saved snapshot</label>
+<select id="snapshot-id" name="snapshot_id" required>{% for item in backups %}<option value="{{ item.id }}">{{ item.id }} ({{ item.bytes }} bytes)</option>{% endfor %}</select>
+<p><label for="recovery-public-key">RSA public key (BEGIN PUBLIC KEY)</label></p>
+<textarea id="recovery-public-key" name="public_key" rows="8" maxlength="2000" required autocomplete="off" spellcheck="false" style="width:100%;box-sizing:border-box"></textarea>
+<p><label><input type="checkbox" name="confirm_export" value="yes" required> I authorise downloading this encrypted copy of private HQ records to my device.</label></p>
+<button type="submit">Download encrypted recovery copy</button>
+</form>
+{% endif %}
 {% endif %}</section>
 <section><h2>Original staged source cells (94 columns)</h2><p>Formula strings are displayed as text and are never executed. Blank is not zero.</p>
 <table><thead><tr><th>Field</th><th>Original / formula</th><th>Effective value</th></tr></thead><tbody>
