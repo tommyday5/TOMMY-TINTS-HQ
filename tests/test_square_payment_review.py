@@ -101,6 +101,55 @@ class PaymentReviewTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM payments").fetchone()[0], 1)
         self.assertFalse(any("match" in x.name.lower() for x in Path(os.environ["HQ_DATA_DIR"]).iterdir()))
 
+    def test_owner_can_save_reload_withdraw_inactive_candidate_without_payment(self):
+        job_id = self.job()
+        self.seed()
+        self.owner()
+        compare = self.client.post("/hq/square-payment-review", data={
+            "csrf":"csrf", "work_id":job_id, "payment_id":"square-01"})
+        self.assertIn(b"Save inactive payment review draft", compare.data)
+        digest = self.api(job_id).json["draft_evidence"]
+        self.assertEqual(len(digest),64)
+        data = dict(csrf="csrf",work_id=job_id,payment_id="square-01",
+                    revision="0",decision="save",digest=digest)
+        path = "/hq/square-payment-review/draft"
+        self.assertEqual(app.test_client().post(path,data=data).status_code,302)
+        self.assertEqual(self.client.post(path,data=dict(data,csrf="wrong")).status_code,403)
+        with patch.object(square.requests,"get") as provider:
+            first = self.client.post(path,data=data,follow_redirects=True)
+            self.assertIn(b"Inactive candidate",first.data)
+            retry = self.client.post(path,data=data,follow_redirects=True)
+            self.assertIn(b"Draft state saved",retry.data)
+            provider.assert_not_called()
+        database = Path(os.environ["HQ_DATA_DIR"])/"customer_requests.sqlite3"
+        with sqlite3.connect(database) as db:
+            self.assertEqual(db.execute("SELECT revision,decision,amount_pence FROM hq_square_review_drafts").fetchall(),
+                             [(1,"save",7600)])
+        # A newly opened browser with a new owner session reads the same disk record.
+        self.client = app.test_client()
+        self.owner()
+        self.assertIn(b"Inactive candidate",self.client.get("/hq/square-payment-review").data)
+        other = self.job()
+        other_digest = self.api(other).json["draft_evidence"]
+        collision = self.client.post(path,data=dict(data,work_id=other,digest=other_digest),follow_redirects=True)
+        self.assertIn(b"Draft not saved",collision.data)
+        # Refund invalidates the original observation, but withdrawal remains possible.
+        self.seed(refund=1000)
+        self.assertIsNone(self.api(job_id).json["draft_evidence"])
+        self.assertIn(b"Draft not saved",self.client.post(path,data=dict(data,revision="1"),follow_redirects=True).data)
+        withdrawn = dict(data,revision="1",decision="withdraw",digest="")
+        self.assertIn(b"Withdrawn",self.client.post(path,data=withdrawn,follow_redirects=True).data)
+        self.assertIn(b"Draft state saved",self.client.post(path,data=withdrawn,follow_redirects=True).data)
+        with sqlite3.connect(database) as db:
+            self.assertEqual(db.execute("SELECT revision,decision,amount_pence FROM hq_square_review_drafts ORDER BY revision").fetchall(),
+                             [(1,"save",7600),(2,"withdraw",7600)])
+        after = self.api(job_id).json
+        self.assertFalse(after["payment_verified_for_job"])
+        self.assertFalse(after["bank_settlement_verified"])
+        self.assertIsNone(after["verified_job_receipts_pence"])
+        self.assertEqual(read_work_record(job_id)["status"],"approved")
+        self.assertEqual(read_work_record(job_id)["price_pence"],35000)
+
     def test_exact_full_price_and_mismatch_are_only_candidates(self):
         job_id = self.job()
         self.seed(amount=35000)
