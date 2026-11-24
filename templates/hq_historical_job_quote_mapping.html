@@ -32,6 +32,20 @@
 {% endif %}
 {% for event in item.history %}<p>Revision {{ event.revision }} · {{ event.decision }} · {{ event.target or 'historical evidence only' }} · previous native {{ event.native_value or 'unknown' }} · {{ event.created_at }}</p>{% else %}<p>No mapping saved.</p>{% endfor %}
 {% endfor %}</section>
+<section><h2>Actual time and cost aggregate mapping drafts</h2>
+<p>Historical aggregates only. No workshop time, material usage, expense, inventory, invoice or payment entries are created. Missing is not zero. Formula-derived or ambiguous figures cannot be proposed.</p>
+<p>Existing active native entries: {{ ctx.actual.active.time }} time · {{ ctx.actual.active.materials }} materials · {{ ctx.actual.active.expenses }} expenses. Counts are not proof of complete costs or matching scope; do not add historical totals to these ledgers.</p>
+{% for item in ctx.actual.fields %}
+<h3>{{ item.label }}</h3>
+<p>Normalised historical amount: {% if item.source is none %}Unknown / missing{% elif item.unit == 'minutes' %}{{ item.source }} minutes{% else %}{{ '£%.2f'|format(item.source/100) }}{% endif %}</p>
+{% if ctx.current %}
+{% if not item.eligible %}<p>Proposal unavailable: requires an exact literal value, current draft and native mapping field-plan decision.</p>{% endif %}
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="field" value="{{ item.field }}"><input type="hidden" name="revision" value="{{ item.history[0].revision if item.history else 0 }}">
+<label for="{{ item.field }}-decision">Decision</label><select id="{{ item.field }}-decision" name="decision"><option value="preserve">Preserve historical evidence</option>
+{% if item.eligible %}<option value="propose" {% if item.history and item.history[0].decision == 'propose' %}selected{% endif %}>Propose separate historical aggregate</option>{% endif %}</select>
+<button type="submit">Save {{ item.label }} draft</button></form>{% endif %}
+{% for event in item.history %}<p>Revision {{ event.revision }} · {{ event.decision }} · {{ event.source_amount if event.source_amount is not none else 'unknown' }} {{ item.unit }} · {{ event.created_at }}</p>{% else %}<p>No mapping saved.</p>{% endfor %}
+{% endfor %}</section>
 <section><h2>Original staged source cells (94 columns)</h2><p>Formula strings are displayed as text and are never executed. Blank is not zero.</p>
 <table><thead><tr><th>Field</th><th>Original / formula</th><th>Effective value</th></tr></thead><tbody>
 {% for field,raw,effective in ctx.cells %}<tr><th scope="row">{{ field }}</th><td>{{ raw if raw is not none and raw != '' else '—' }}</td><td>{{ effective if effective is not none and effective != '' else '—' }}</td></tr>{% endfor %}
