@@ -351,6 +351,7 @@ class HistoricalJobBatchTests(unittest.TestCase):
         evidence = dict(csrf="test-csrf",action="full_evidence",batch_id=batch,revision="0")
         fields = dict(csrf="test-csrf",action="field_review",batch_id=batch,plan_revision="0",
                       **{"f"+str(i):"u" for i in range(94)})
+        fields["f16"] = "n"
         dry = dict(csrf="test-csrf",action="dry_run",batch_id=batch,plan_revision="1",dry_revision="0")
         stage = dict(csrf="test-csrf",action="stage_source",batch_id=batch,plan_revision="1",
                      dry_revision="1",confirm_stage="yes")
@@ -371,8 +372,29 @@ class HistoricalJobBatchTests(unittest.TestCase):
             self.assertEqual(self.client.post(self.url,data=stage).status_code,303)
             self.assertIn(b"Source rows staged: 2",self.client.get(self.url).data)
             self.assertTrue(list_batches()[0]["source_stage"]["row_count_consistent"])
+            mapping = self.url + "/" + batch + "/mapping/" + self.ids[0]
+            self.assertEqual(app.test_client().get(mapping).status_code,302)
+            self.assertIn(b"edit quote mapping draft",self.client.get(self.url).data)
+            page = self.client.get(mapping)
+            self.assertEqual(page.status_code,200)
+            self.assertIn("no-store",page.headers["Cache-Control"])
+            self.assertIn(b"=25+50",page.data)
+            self.assertIn(b"Original staged source cells (94 columns)",page.data)
+            decision = dict(csrf="test-csrf",revision="0",decision="propose")
+            self.assertEqual(self.client.post(mapping,data=dict(decision,csrf="bad")).status_code,403)
+            self.assertEqual(self.client.post(mapping,data=decision).status_code,303)
+            self.assertEqual(self.client.post(mapping,data=decision).status_code,303)
+            self.assertIn(b"Revision 1",self.client.get(mapping).data)
+            self.assertIn(b"Mapping not saved",self.client.post(mapping,data=dict(decision,decision="preserve")).data)
+            self.assertEqual(self.client.post(mapping,data=dict(decision,revision="1",decision="preserve")).status_code,303)
+            with connect() as db:
+                events = db.execute("SELECT decision,source_pence,native_pence FROM hq_historical_job_quote_mapping ORDER BY revision").fetchall()
+                self.assertEqual([tuple(e) for e in events],[("propose",12500,None),("preserve",12500,None)])
+                self.assertIsNone(db.execute("SELECT price_pence FROM hq_work_records WHERE id=?",(self.work_ids[0],)).fetchone()[0])
             self.assertEqual(self.client.post(self.url,data=dict(fields,plan_revision="1",f0="h")).status_code,303)
             self.assertIn(b"Review changed since staging",self.client.get(self.url).data)
+            self.assertIn(b"editing disabled",self.client.get(mapping).data)
+            self.assertIn(b"Mapping not saved",self.client.post(mapping,data=dict(decision,revision="2")).data)
             self.assertIn(b"Batch could not be saved",self.client.post(self.url,data=stage).data)
             self.assertEqual(self.client.post(self.url,data=dict(csrf="test-csrf",action="archive",batch_id=batch,revision="0")).status_code,303)
             self.assertIn(b"Source rows staged: 2",self.client.get(self.url).data)
