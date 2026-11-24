@@ -229,3 +229,41 @@ class MonzoSheetReviewTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM monzo_sheet_classification_split_lines").fetchone()[0],4)
             self.assertEqual(db.execute("SELECT SUM(pence) FROM monzo_sheet_classification_split_lines WHERE revision=2").fetchone()[0],-10025)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_transactions").fetchone()[0],0)
+
+
+    def test_bounded_invoice_candidate_amount_and_unmatched_source(self):
+        import re
+        from hq_receivables import save as save_invoice
+        from hq_core_records import _schema
+        with connect() as db:
+            _schema(db)
+            db.execute("INSERT INTO hq_customers VALUES(?,?,?,?,?,?)",
+                       ("a"*32,None,"Synthetic partial customer","","","2026-11-22"))
+        save_invoice(dict(id="b"*32,operation_id="c"*32,revision=0,
+                     customer_id="a"*32,work_id=None,invoice_ref="TEST-PARTIAL-1",
+                     issue_date="2026-11-22",due_date="2026-12-10",amount_pence=7500,
+                     status="issued",archived=False,memo=""))
+        self.rows=[example(amount=100.25)]
+        self.login()
+        url="/hq/finance/monzo-invoice-match"
+        form=dict(action="review",csrf="test-csrf",ref="tx_synthetic_1",
+                  invoice_ref="TEST-PARTIAL-1")
+        for amount in ("","0","-5","75.001","75.01","100.26","1e1","NaN"):
+            self.assertEqual(self.client.post(url,data=dict(form,candidate_amount=amount)).status_code,400)
+        page=self.client.post(url,data=dict(form,candidate_amount="75.00"))
+        self.assertEqual(page.status_code,200)
+        self.assertIn("Unmatched portion of source £25.25".encode(),page.data)
+        manifest=re.search(rb'name="manifest" value="([a-f0-9]{64})"',page.data)[1].decode()
+        proposal=dict(form,action="save",revision="0",manifest=manifest,confirm="yes",candidate_amount="75.00")
+        self.assertEqual(self.client.post(url,data=dict(proposal,candidate_amount="74.00")).status_code,409)
+        self.assertEqual(self.client.post(url,data=proposal).status_code,200)
+        self.assertEqual(self.client.post(url,data=proposal).status_code,200)
+        self.assertEqual(self.client.post(url,data=dict(proposal,candidate_amount="74.00")).status_code,409)
+        loaded=self.client.get(url+"?ref=tx_synthetic_1")
+        self.assertIn("£75.00".encode(),loaded.data)
+        self.assertEqual(self.client.post(url,data=dict(form,candidate_amount="25.25")).status_code,409)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT amount_pence FROM hq_monzo_invoice_match_events").fetchone()[0],7500)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_monzo_invoice_match_events").fetchone()[0],1)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_receivable_allocations").fetchone()[0],0)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_transactions").fetchone()[0],0)

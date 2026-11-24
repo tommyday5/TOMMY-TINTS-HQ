@@ -265,3 +265,20 @@ verification. New UI acceptance, deployment, historical reconciliation,
 verified payment allocation, and reversible customer/vehicle imports remain
 unverified. The existing customer booking pathways are preserved; no live
 customer data was changed.
+
+
+## 24 November follow-up — bounded invoice match amounts
+
+PR #267 merged at e8b71954; GitHub Actions run 45466481601 passed and
+Railway deployment 3c78c13a-5676-4fc1-9f31-6434516ba825 reported SUCCESS
+at 19:06 UTC with the existing 1024 MB /data volume. Workbook metadata
+still enumerates 48 tabs and the Monzo source/override headings match.
+The new proposal extends the existing owner invoice review to accept an
+explicit positive partial source amount in exact pennies, bounded by
+both source amount and invoice candidate capacity. The exact preview
+binds that amount and shows the unmatched portion separately. One
+active candidate per source remains; withdraw and re-review to correct.
+No source cash, receipt allocation, invoice balance or customer status
+is changed by a candidate. Multi-invoice splitting and verified provider
+allocations remain outstanding, as do owner acceptance and actual
+historical import/reconciliation. This change is pending CI and deploy.
