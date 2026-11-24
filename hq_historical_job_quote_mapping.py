@@ -15,6 +15,7 @@ from hq_historical_job_full_evidence import HEADERS, WIDTH, _digest
 from hq_historical_job_field_review import read_plan
 from hq_historical_job_dry_run import read_comparison, _pence
 from hq_work_progress import _actor_fingerprint
+from hq_historical_job_actual_mapping import FIELDS, actual_context, save_actual_mapping
 
 
 def _context(db, batch_id, candidate_id):
@@ -54,6 +55,7 @@ def _context(db, batch_id, candidate_id):
     classification = _classification_context(db, row, raw, effective, plan, current)
     return {"row":dict(row),"cells":list(zip(HEADERS,raw,effective)),"current":current,
             "classification":classification,
+            "actual":actual_context(db, row, raw, effective, plan, current),
             "eligible":eligible,"source_pence":price,"history":history}
 
 
@@ -175,6 +177,9 @@ def register_mapping_route(bp):
                 field = request.form.get("field", "quote")
                 if field == "quote":
                     save_mapping(batch_id,candidate_id,int(revision),request.form.get("decision"),session.get("google_sub"))
+                elif field in FIELDS:
+                    save_actual_mapping(batch_id,candidate_id,int(revision),field,
+                                        request.form.get("decision"),session.get("google_sub"))
                 else:
                     decision = request.form.get("decision")
                     save_classification(batch_id,candidate_id,int(revision),field,decision,
