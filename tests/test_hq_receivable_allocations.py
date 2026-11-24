@@ -149,5 +149,77 @@ class AllocationTests(unittest.TestCase):
             save_allocation(self.payload(invoice_id=pending_id))
 
 
+    def test_square_exact_evidence_persists_without_duplicate_receipt(self):
+        import re
+        self.login()
+        payload = self.payload(method="card_reported", evidence_ref="square-test-123")
+        self.assertEqual(self.post(payload).status_code, 200)
+        url = "/hq/finance/square-invoice-evidence"
+        form = dict(allocation=payload["id"], csrf="test", action="review")
+        evidence = dict(id="square-test-123", status="COMPLETED", total_minor=20000,
+                        refunded_minor=0, currency="GBP",
+                        created_at="2026-11-22T10:00:00+00:00",
+                        updated_at="2026-11-22T10:01:00+00:00")
+        with patch.dict(os.environ, {"HQ_SQUARE_READ_TOKEN":"test", "HQ_SQUARE_LOCATION_ID":"test-loc"}), \
+                patch("hq_square_invoice_evidence.storage_ready", return_value=True), \
+                patch("hq_square_invoice_evidence.inspect_exact_payment", return_value=evidence) as provider:
+            self.assertEqual(self.client.get(url+"?allocation="+payload["id"]).status_code, 200)
+            provider.assert_not_called()
+            self.assertEqual(self.client.post(url, data=dict(form, csrf="bad")).status_code, 403)
+            provider.assert_not_called()
+            page = self.client.post(url, data=form)
+            self.assertEqual(page.status_code, 200, page.get_data(as_text=True))
+            manifest = re.search(rb'name="manifest" value="([0-9a-f]{64})"', page.data)[1].decode()
+            approval = dict(form, action="save", manifest=manifest, confirm="yes")
+            self.assertEqual(self.client.post(url, data=dict(approval, confirm="")).status_code, 400)
+            provider.return_value = dict(evidence, refunded_minor=None)
+            self.assertEqual(self.client.post(url, data=approval).status_code, 400)
+            provider.return_value = dict(evidence, updated_at="2026-11-22T10:02:00+00:00")
+            self.assertEqual(self.client.post(url, data=approval).status_code, 409)
+            provider.return_value = evidence
+            self.assertEqual(self.client.post(url, data=approval).status_code, 200)
+            self.assertEqual(self.client.post(url, data=approval).status_code, 200)
+            self.assertIn(b"Retained provider observation",
+                          self.client.get(url+"?allocation="+payload["id"]).data)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_square_invoice_observations").fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_receivable_allocations").fetchone()[0], 1)
+        self.assertEqual(self.post(self.payload(amount_pence=100, evidence_ref="SQUARE-TEST-123")).status_code, 400)
+        self.assertEqual(self.post(dict(payload, operation_id=uuid.uuid4().hex, revision=1,
+                                        evidence_ref="other")).status_code, 400)
+        self.assertEqual(self.post(dict(payload, operation_id=uuid.uuid4().hex, revision=1,
+                                        status="reversed")).status_code, 200)
+        self.assertEqual(self.post(self.payload(amount_pence=100, evidence_ref="square-test-123")).status_code, 400)
+        with patch("hq_square_invoice_evidence.storage_ready", return_value=True):
+            self.assertIn(b"no longer matches the observed revision",
+                          self.client.get(url+"?allocation="+payload["id"]).data)
+        after = self.client.get("/api/hq/finance/receipt-allocations").json
+        self.assertFalse(after["receipts_verified"])
+        self.assertFalse(after["outstanding_verified"])
+        self.assertIsNone(after["collected_income"])
+
+    def test_square_evidence_rejects_duplicate_reference_wrong_amount_and_noncard(self):
+        self.login()
+        url = "/hq/finance/square-invoice-evidence"
+        bank = self.payload(amount_pence=100, evidence_ref="bank-test")
+        card = self.payload(method="card_reported", amount_pence=100, evidence_ref="card-test")
+        other = self.payload(method="card_reported", amount_pence=100, evidence_ref="card-test")
+        self.assertEqual(self.post(bank).status_code, 200)
+        self.assertEqual(self.post(card).status_code, 200)
+        form = dict(allocation=card["id"], csrf="test", action="review")
+        evidence = dict(id="card-test", status="COMPLETED", total_minor=99, refunded_minor=0, currency="GBP")
+        with patch.dict(os.environ, {"HQ_SQUARE_READ_TOKEN":"test", "HQ_SQUARE_LOCATION_ID":"test-loc"}), \
+                patch("hq_square_invoice_evidence.storage_ready", return_value=True), \
+                patch("hq_square_invoice_evidence.inspect_exact_payment", return_value=evidence) as provider:
+            self.assertEqual(self.client.post(url, data=dict(form, allocation=bank["id"])).status_code, 400)
+            provider.assert_not_called()
+            self.assertEqual(self.client.post(url, data=form).status_code, 400)
+            self.assertEqual(self.post(other).status_code, 200)
+            self.assertEqual(self.client.post(url, data=form).status_code, 409)
+            self.assertEqual(provider.call_count, 1)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_square_invoice_observations").fetchone()[0], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
