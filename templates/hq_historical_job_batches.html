@@ -44,7 +44,7 @@ main{max-width:920px;margin:auto;padding:20px}a{color:#ff7881}section{background
 {% endif %}
 {% if batch.field_plan and batch.field_plan.revision %}
 <h4>Saved dry-run comparison</h4>
-<p>Compare historical quoted prices and customer/vehicle text with the selected native jobs. Equal text does not establish identity. No payment, import or field mapping is approved.</p>
+<p>Compare historical quoted prices and customer/vehicle text with the selected native jobs. Equal text or an inactive customer proposal does not establish identity. No payment, import or field mapping is approved.</p>
 {% if not batch.archived_at %}
 <form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="dry_run">
 <input type="hidden" name="batch_id" value="{{ batch.id }}"><input type="hidden" name="plan_revision" value="{{ batch.field_plan.revision }}">
@@ -61,7 +61,8 @@ main{max-width:920px;margin:auto;padding:20px}a{color:#ff7881}section{background
 <li>HQ quote: {{ '£%.2f'|format(row.native_quote_pence/100) if row.native_quote_pence is not none else 'Unknown / missing' }}</li>
 <li>Quote comparison: {{ row.quote_comparison }}</li>
 <li>Customer name text: {{ row.customer_name_comparison }} · registration text: {{ row.registration_comparison }}</li>
-<li>Native vehicle/customer relationship: {{ 'Consistent' if row.vehicle_customer_consistent else 'Conflict' }}</li></ul></div>
+<li>Native vehicle/customer relationship: {{ 'Consistent' if row.vehicle_customer_consistent else 'Conflict' }}</li>
+<li>Customer proposal cross-check: {% if row.customer_proposal %}{{ row.customer_proposal.status }}{% if row.customer_proposal.customer_sheet_row %} · Customers source row {{ row.customer_proposal.customer_sheet_row }}{% endif %}{% if row.customer_proposal.basis %} · {{ 'Owner document review' if row.customer_proposal.basis == 'owner_document_review' else 'Name-only review' }}{% endif %}{% else %}Not checked in this older snapshot{% endif %}. <a href="/hq/migration/customers">Review customer proposals</a>.</li></ul></div>
 {% endfor %}
 {% endif %}
 {% endif %}
