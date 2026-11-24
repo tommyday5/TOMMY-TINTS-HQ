@@ -39,6 +39,9 @@
 {% if e.proceed_state.status == 'approved' and e.proceed_state.order_id %}
 <p role="status"><strong>Native product order {{ e.proceed_state.order_id[:8]|upper }} · {{ e.proceed_state.order_status|replace('_',' ')|title }}</strong>. This is a manually confirmed order record, not evidence of payment, reserved stock, shipment or collection.</p>
 {% if e.proceed_state.order_note %}<p>Order update: {{ e.proceed_state.order_note }}</p>{% endif %}
+{% if e.proceed_state.proposed_deposit_pence is defined %}
+<p><strong>Proposed deposit: £{{ '%.2f'|format(e.proceed_state.proposed_deposit_pence/100) }}</strong>. If that amount were paid and allocated, the remaining quoted amount would be £{{ '%.2f'|format(e.proceed_state.conditional_remainder_pence/100) }}. No payment is confirmed; this is not an invoice or actual outstanding balance.</p>
+{% endif %}
 {% if e.proceed_state.handover_state == 'recorded' %}
 <p role="status"><strong>Handover recorded by Tommy Tints on {{ e.proceed_state.handover_date }}</strong>. This is owner-entered handover evidence, not independently confirmed delivery or proof of payment.</p>
 {% if e.proceed_state.handover_note %}<p>Handover update: {{ e.proceed_state.handover_note }}</p>{% endif %}
