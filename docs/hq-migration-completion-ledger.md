@@ -133,3 +133,16 @@ price** is a separate approved compensating revision, available only while
 the draft is unchanged. History and original J reference are retained.
 No production import count is established or authorised by this code change.
 Deployment and owner acceptance must be recorded separately.
+
+## 24 November follow-up — native transaction split classifications
+
+PR #260 deployed SUCCESS on Railway at 13:06 UTC, commit 929792f4,
+deployment 5debe867-0d0b-4487-8ea1-bceae21969c8, original /data volume
+1024 MB. No owner-tested production import or recovery is established.
+Native Finance Command Centre now proposes split classification editing for
+existing owner-entered transactions, with exact signed pence conservation,
+parent revision locking, immutable split history and withdrawal. The split
+is a private overlay, not an extra cash event; no provider/Sheets records,
+balance or receipt totals change. Owner acceptance and deployment of this
+change, provider-backed import, matching, financial reporting parity and
+historical reconciliation remain separate and unverified. No domain cutover.
