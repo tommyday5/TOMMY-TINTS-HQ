@@ -373,6 +373,10 @@ def stage_j_candidate(*, formula, computed, sheet_row, job_ref, source_stamp,
                               (work_id,)).fetchone()
             if work is None or work["revision"] != work_revision:
                 raise ValueError("HQ work record changed or is unavailable; reload")
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_historical_created_work'").fetchone():
+                imported = db.execute("SELECT work_id,reversed_at FROM hq_historical_created_work WHERE job_ref=? COLLATE NOCASE OR sheet_row=?", (job_ref,sheet_row)).fetchone()
+                if imported and (imported["work_id"] != work_id or imported["reversed_at"]):
+                    raise ValueError("Original reference is reserved by historical creation history.")
             candidate_id = uuid.uuid4().hex
             db.execute("""INSERT INTO hq_historical_j_candidates
                 (id,operation_id,work_id,work_revision,workbook_id,sheet_id,
