@@ -986,3 +986,32 @@ No live finance, job, customer, booking, payment, Sheets or recovery records
 changed by development. Next: test and deploy proposal, independently
 verified payout batches and fees, historical actual-cost reconciliation,
 and exact owner-approved first migration manifest.
+
+
+## 25 November — single settlement live; combined payout proposal
+
+PR #289 final-head 2598877679fb40ace370df2ccce852e6ae09a7c0 Actions run
+45680511028 reports success. Merged as d59c7727; Railway deployment
+798d4798-1d17-4d75-976e-7c27d8637b1b reports SUCCESS at 18:59:32 UTC.
+Original 1024 MB /data volume 540528d1-3953-4737-9d92-3c861575c5d4
+is attached; no staged changes. Read-only workbook metadata still lists
+48 tabs. Owner acceptance and historical cutover remain unverified.
+
+Proposed new owner interface: Finance Command Centre > Settlement and fee
+review > Review combined Square payouts. Accept 2–20 distinct existing
+Square allocation IDs, one exact Monzo worksheet deposit ID, one documented
+total fee and independent statement reference. Each payment retains its
+invoice/allocation revisions, original provider observation and latest
+recheck ID. Only completed GBP payments with explicit zero refunds qualify;
+gross less documented fee must equal the positive deposit in exact pence.
+Fresh source read, exact preview, explicit approval, atomic append-only
+proposal and whole-batch withdrawal. Reject duplicate members and overlapping
+active single/batch proposals. The fee is not arbitrarily apportioned across
+jobs. No bank settlement or payout independently verified, no financial
+reservation across all other workflows, no fee expense or new receipt
+posted. Revalidate before future posting. Synthetic HTTP test added;
+full CI, deployment and owner browser acceptance pending. DNA Payments,
+refund-bearing batches and independent provider/bank payout checks remain
+outstanding. No public route changed; no real record, Sheets cell, booking,
+payment or recovery snapshot changed. Next: CI/deploy and historical actual
+cost reconciliation, bounded approved migration and customer acceptance.
