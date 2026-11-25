@@ -205,6 +205,8 @@ def register(bp):
                         raise ValueError("Explicit confirmation is required to retain a new observation.")
                     notice = recheck_saved(allocation_id)
                     with closing(connect()) as db, db:
+                        row = load_allocation(db, allocation_id)
+                        saved = observation(db, allocation_id)
                         history = recheck_history(db, saved["payment_id"])
                     return render_template("hq_square_invoice_evidence.html", allocation_id=allocation_id,
                         row=row, saved=saved, review=None, notice=notice, error=None,
