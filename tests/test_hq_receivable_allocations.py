@@ -280,5 +280,70 @@ class AllocationTests(unittest.TestCase):
         self.assertIsNone(after["collected_income"])
 
 
+    def test_square_full_refund_approval_reverses_only_reported_allocation(self):
+        import re
+        payload = self.payload(method="card_reported", evidence_ref="square-full-refund")
+        url = "/hq/finance/square-invoice-evidence"
+        form = dict(allocation=payload["id"], csrf="test", action="review")
+        check = dict(form, action="recheck", confirm="yes")
+        review = dict(form, action="refund-review")
+        initial = dict(id="square-full-refund", status="COMPLETED", total_minor=20000,
+                       refunded_minor=0, currency="GBP",
+                       created_at="2026-11-22T10:00:00+00:00",
+                       updated_at="2026-11-22T10:01:00+00:00")
+        partial = dict(initial, refunded_minor=5000, updated_at="2026-11-22T10:02:00+00:00")
+        full = dict(initial, refunded_minor=20000, updated_at="2026-11-22T10:03:00+00:00")
+        with patch.dict(os.environ, {"HQ_SQUARE_READ_TOKEN":"test", "HQ_SQUARE_LOCATION_ID":"test-loc"}), \
+                patch("hq_square_invoice_evidence.storage_ready", return_value=True), \
+                patch("hq_square_invoice_evidence.inspect_exact_payment", return_value=initial) as provider, \
+                patch("requests.post") as external_post:
+            self.assertEqual(self.client.post(url, data=review).status_code, 302)
+            provider.assert_not_called()
+            self.login()
+            self.assertEqual(self.post(payload).status_code, 200)
+            page = self.client.post(url, data=form)
+            manifest = re.search(rb'name="manifest" value="([0-9a-f]{64})"', page.data)[1].decode()
+            self.assertEqual(self.client.post(url, data=dict(form, action="save", manifest=manifest, confirm="yes")).status_code, 200)
+            provider.return_value = partial
+            self.assertEqual(self.client.post(url, data=check).status_code, 200)
+            self.assertEqual(self.client.post(url, data=review).status_code, 400)
+            provider.return_value = full
+            self.assertEqual(self.client.post(url, data=check).status_code, 200)
+            page = self.client.post(url, data=review)
+            self.assertEqual(page.status_code, 200, page.get_data(as_text=True))
+            self.assertIn(b"Approve exact full refund correction", page.data)
+            manifest = re.search(rb'name="action" value="refund-save"><input type="hidden" name="manifest" value="([0-9a-f]{64})"', page.data)[1].decode()
+            approval = dict(form, action="refund-save", confirm="yes", manifest=manifest)
+            self.assertEqual(self.client.post(url, data=dict(approval, confirm="")).status_code, 400)
+            self.assertEqual(self.client.post(url, data=dict(approval, csrf="bad")).status_code, 403)
+            provider.return_value = dict(full, refunded_minor=None)
+            self.assertEqual(self.client.post(url, data=approval).status_code, 409)
+            before = self.client.get("/api/hq/finance/receipt-allocations").json
+            self.assertEqual(before["invoices"][0]["owner_reported_allocated_pence"], 20000)
+            provider.return_value = full
+            with patch.dict(os.environ, {"HQ_SQUARE_LOCATION_ID":"other"}):
+                self.assertEqual(self.client.post(url, data=approval).status_code, 409)
+            page = self.client.post(url, data=approval)
+            self.assertEqual(page.status_code, 200, page.get_data(as_text=True))
+            self.assertIn(b"Full refund correction retained", page.data)
+            provider.reset_mock()
+            self.assertEqual(self.client.post(url, data=approval).status_code, 200)
+            self.assertIn(b"Full refund correction retained", self.client.get(url+"?allocation="+payload["id"]).data)
+            provider.assert_not_called()
+            external_post.assert_not_called()
+        after = self.client.get("/api/hq/finance/receipt-allocations").json
+        self.assertEqual(after["invoices"][0]["amount_pence"], 35000)
+        self.assertEqual(after["invoices"][0]["owner_reported_allocated_pence"], 0)
+        self.assertEqual(after["invoices"][0]["unallocated_owner_reported_pence"], 35000)
+        self.assertFalse(after["receipts_verified"])
+        self.assertFalse(after["outstanding_verified"])
+        self.assertIsNone(after["collected_income"])
+        self.assertEqual(self.post(self.payload(amount_pence=100, evidence_ref="square-full-refund")).status_code, 400)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_square_full_refund_corrections").fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_receivable_allocation_events").fetchone()[0], 2)
+            self.assertEqual(db.execute("SELECT amount_pence,status FROM hq_receivable_allocations").fetchone()[:], (20000,"reversed"))
+
+
 if __name__ == "__main__":
     unittest.main()

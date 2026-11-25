@@ -374,3 +374,31 @@ Direct /book access from the development environment failed DNS resolution;
 production browser acceptance remains unverified. Next customer slice:
 expose only appropriately authorised canonical status, never internal
 provider evidence or owner-reported allocations as verified payments.
+
+
+## 25 November follow-up — full-refund correction (bounded)
+
+PR #272 passed CI 45515251775 (127 root + 639 integration Python tests,
+9 JavaScript tests), merged as 990c8902; Railway deployment
+f80b517b-b12d-4645-b9d3-3d14915455e6 reported SUCCESS with original 1024 MB
+/data volume still attached. No owner production acceptance is established.
+Read-only workbook metadata still enumerates 48 tabs; Monzo A7:U7 headings
+were rechecked. Customer request, quote conversion, accepted appointment,
+combined basket, maintenance and account isolation synthetic tests passed.
+
+This proposal adds a separately approved local reversal of an existing
+owner-reported Square card allocation only when a retained recheck and fresh
+exact provider response agree that the entire original GBP amount is refunded.
+Finance > Invoice Payment Allocations > card entry > Check / view exact
+Square payment evidence > Recheck Square refund / status > Review full refund
+allocation correction > Approve full refund allocation reversal. The approval
+digest binds invoice/ allocation revisions, original observation and latest
+recheck; the reversal event and correction evidence are committed atomically.
+The original amount, evidence and invoice face amount remain intact. The
+payment reference stays reserved even after reversal; repeated exact approval
+is a no-op. Partial/unknown refunds, changed evidence and non-issued invoices
+are excluded. No refund is issued, no new cash entry or credit note is made,
+and no independently verified bank balance or customer paid status is inferred.
+This implementation awaits CI, deployment and owner acceptance. Historical
+customer/vehicle migration, creditor reconciliation, formula parity and
+off-volume recovery verification remain unverified; no domain authority changes.
