@@ -903,6 +903,15 @@ class CustomerFieldReviewTests(unittest.TestCase):
         overview=self.client.get("/hq/work/"+wid+"/costs")
         self.assertEqual(overview.status_code,200,overview.data)
         self.assertIn(b"Known historical non-labour portion only: \xc2\xa312.34",overview.data)
+        with connect() as db:
+            db.execute("UPDATE hq_work_time_entries SET voided_at=NULL WHERE entry_id=?",(detail,))
+        with app.app_context():
+            self.assertFalse(cost_overview_snapshot(wid)["historical_cost_baseline"]["current"])
+        stale=self.client.get("/hq/work/"+wid+"/costs")
+        self.assertIn(b"Baseline needs review",stale.data)
+        self.assertNotIn(b"Known historical non-labour portion only",stale.data)
+        with connect() as db:
+            db.execute("UPDATE hq_work_time_entries SET voided_at='2026-01-02' WHERE entry_id=?",(detail,))
         withdraw=dict(csrf="test-csrf",action="withdraw",operation=uuid.uuid4().hex,stamp=stamp,confirm="yes")
         self.assertEqual(self.client.post(cost_url,data=withdraw).status_code,409)
         revoke=dict(csrf="test-csrf",action="baseline_withdraw",operation=uuid.uuid4().hex,stamp=baseline_stamp,confirm="yes")
