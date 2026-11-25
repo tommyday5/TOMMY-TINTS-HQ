@@ -139,9 +139,10 @@ def search_work_records(query="", kind="", status="", limit=25, offset=0, archiv
         # instr treats % and _ literally, unlike unescaped SQL LIKE patterns.
         columns = ("c.name", "c.email", "c.phone", "v.registration",
                    "v.make", "v.model", "w.service")
-        where.append("(" + " OR ".join(
+        text_predicate = " OR ".join(
             f"instr(lower({col}), lower(?)) > 0" for col in columns
-        ) + ")")
+        )
+        where.append("(" + text_predicate + ")")
         args.extend([term] * len(columns))
     if kind:
         where.append("w.kind=?")
@@ -149,7 +150,6 @@ def search_work_records(query="", kind="", status="", limit=25, offset=0, archiv
     if status:
         where.append("w.status=?")
         args.append(status)
-    predicate = " WHERE " + " AND ".join(where) if where else ""
     joins = """ FROM hq_work_records w
         JOIN hq_customers c ON c.id=w.customer_id
         JOIN hq_vehicles v ON v.id=w.vehicle_id
@@ -158,6 +158,12 @@ def search_work_records(query="", kind="", status="", limit=25, offset=0, archiv
         _schema(db)
         # Both queries use the same read transaction for a consistent count/page.
         db.execute("BEGIN")
+        # Imported J references are immutable provenance, independent of notes.
+        # Older databases need not have created the migration table yet.
+        if term and db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_historical_created_work'").fetchone():
+            where[1] = "(" + text_predicate + " OR EXISTS (SELECT 1 FROM hq_historical_created_work h WHERE h.work_id=w.id AND h.job_ref=? COLLATE NOCASE))"
+            args.insert(len(columns), term)
+        predicate = " WHERE " + " AND ".join(where) if where else ""
         total = db.execute("SELECT COUNT(*)" + joins + predicate, args).fetchone()[0]
         rows = db.execute("""SELECT w.id,w.source_request_id,w.kind,w.service,
             w.notes,w.preferred_date,w.preferred_time,w.status,

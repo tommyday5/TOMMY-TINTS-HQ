@@ -465,6 +465,12 @@ class HistoricalJobBatchTests(unittest.TestCase):
             self.assertEqual(len(list_snapshots()),1)
             with patch("hq_private_recovery.MAX_BACKUPS",1):
                 self.assertIn(b"Private backup not completed",self.client.post(mapping,data=dict(backup,operation_id="c"*32)).data)
+            with patch("hq_private_recovery.MAX_TOTAL_BYTES",1):
+                self.assertIn(b"Private backup not completed",self.client.post(mapping,data=dict(backup,operation_id="c"*32)).data)
+            from types import SimpleNamespace
+            with patch("hq_private_recovery.shutil.disk_usage",return_value=SimpleNamespace(free=1)):
+                self.assertIn(b"Private backup not completed",self.client.post(mapping,data=dict(backup,operation_id="c"*32)).data)
+            self.assertEqual(len(list_snapshots()),1)
             path = Path(os.environ["HQ_DATA_DIR"])/"private_recovery_snapshots"/("b"*32+".sqlite3")
             self.assertEqual(path.stat().st_mode & 0o777,0o600)
             from cryptography.hazmat.primitives.asymmetric import rsa

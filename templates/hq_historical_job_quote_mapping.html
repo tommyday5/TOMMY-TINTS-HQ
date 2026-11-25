@@ -59,10 +59,10 @@
 <p>No customer, vehicle, invoice, deposit, receipt, inventory or actual cost ledger is migrated by this rehearsal.</p>{% endif %}</section>
 <section><h2>Private recovery snapshot</h2>
 <p>Before historical imports, save a consistent SQLite snapshot on the existing private HQ volume and restore it into an isolated in-memory database. Integrity, foreign keys, schema and row counts are checked before publication. No live restore, migration, booking or payment is performed.</p>
-<p>This contains private customer and financial records. It covers only the canonical customer_requests.sqlite3 database, not Sheets, attachments, other databases or Railway volume loss. Maximum three snapshots, 16 MiB each; administrator review is required when full. No existing backup is overwritten or deleted.</p>
+<p>This contains private customer and financial records. It covers only the canonical customer_requests.sqlite3 database, not Sheets, attachments, other databases or Railway volume loss. Maximum 64 snapshots, 16 MiB each, with a 256 MiB total backup budget and at least 128 MiB free-space reserve on the existing volume. The server checks available space before each copy; administrator review is required when full. No existing backup is overwritten or deleted.</p>
 {% if backup_saved %}<p role="status">Private recovery snapshot saved and isolated restore checked: {{ backup_saved }}.</p>{% endif %}
 {% if backups is none %}<p role="alert">Private recovery storage unavailable.</p>{% else %}
-{% if backups|length < 3 %}
+{% if backups|length < 64 %}
 <form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="private_backup"><input type="hidden" name="operation_id" value="{{ backup_operation }}">
 <label><input type="checkbox" name="confirm_backup" value="yes" required> I authorise a private recovery copy of the HQ database on the existing volume.</label>
 <button type="submit">Save private backup and check isolated restore</button></form>
