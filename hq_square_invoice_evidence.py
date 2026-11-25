@@ -491,6 +491,8 @@ def register(bp):
             error, status = "Invalid or ineligible evidence." if isinstance(exc, KeyError) else str(exc), 400
         except (requests.RequestException, RuntimeError, OSError, sqlite3.Error):
             error, status = "Provider read or HQ storage unavailable; no new save confirmed.", 503
+        if saved and gross is None:
+            gross = json.loads(saved["provider_snapshot"])["total_minor"]
         return render_template("hq_square_invoice_evidence.html", allocation_id=allocation_id,
             row=row, saved=saved, review=review, notice=notice, error=error,
             history=history, refund_review=refund_review, refund_correction=refund_correction,
