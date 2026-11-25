@@ -469,5 +469,65 @@ class CustomerFieldReviewTests(unittest.TestCase):
         self.assertEqual(archive_status(cid),(False,0))
 
 
+    def test_historical_vehicle_link_owner_approval_stale_source_and_reversal(self):
+        import re
+        from hq_private_recovery import create_snapshot
+        from hq_historical_customer_creation import review as create_review
+        self.login()
+        for payload in (self.formula,self.computed):
+            payload["valueRanges"][1]["values"].append(["Synthetic Imported Driver","Retail",""])
+            payload["valueRanges"][0]["values"].append(
+                ["J0456","","Synthetic Imported Driver","Retail","AB22 CDE","Window Tinting"]
+                +[""]*10+[125,"Quoted"])
+        source=(self.formula,self.computed)
+        batch=uuid.uuid4().hex
+        snap=create_snapshot(uuid.uuid4().hex)
+        manifest,stamp=create_review([6],snap,batch,source,"synthetic-owner")
+        create_review([6],snap,batch,source,"synthetic-owner",stamp)
+        cid=manifest["entries"][0]["customer_id"]
+        vehicle=uuid.uuid4().hex
+        other=uuid.uuid4().hex
+        with connect() as db:
+            db.execute("INSERT INTO hq_vehicles VALUES(?,?,?,?,?,?,?)",
+                       (vehicle,cid,"Hyundai","i30","2022","AB22 CDE","2026-01-01"))
+            db.execute("INSERT INTO hq_vehicles VALUES(?,?,?,?,?,?,?)",
+                       (other,self.customer,"Ford","Focus","2022","ZZ22 XYZ","2026-01-01"))
+        recovery=create_snapshot(uuid.uuid4().hex)
+        url="/hq/migration/customers/vehicle-links"
+        self.assertEqual(app.test_client().get(url).status_code,302)
+        data=dict(csrf="test-csrf",action="prepare",operation=uuid.uuid4().hex,
+                  row="6",ref="J0456",customer_row="6",customer_id=cid,
+                  vehicle_id=vehicle,snapshot_id=recovery)
+        a,b=self.live_source()
+        with a,b:
+            self.assertEqual(self.client.post(url,data=dict(data,csrf="bad")).status_code,403)
+            self.assertEqual(self.client.post(url,data=dict(data,vehicle_id=other)).status_code,409)
+            page=self.client.post(url,data=data)
+            self.assertEqual(page.status_code,200)
+            self.assertIn(b"Literal registration matches",page.data)
+            stamp=re.search(rb'name="stamp" value="([0-9a-f]{64})"',page.data).group(1).decode()
+            apply=dict(data,action="apply",stamp=stamp,confirm="yes")
+            self.assertEqual(self.client.post(url,data=dict(apply,confirm="")).status_code,409)
+            self.computed["valueRanges"][0]["values"][2][4]="AB22 XYZ"
+            self.assertEqual(self.client.post(url,data=apply).status_code,409)
+            self.computed["valueRanges"][0]["values"][2][4]="AB22 CDE"
+            self.assertEqual(self.client.post(url,data=apply).status_code,200)
+            self.assertEqual(self.client.post(url,data=apply).status_code,200)
+            self.assertEqual(self.client.post(url,data=dict(data,operation=uuid.uuid4().hex)).status_code,409)
+        with connect() as db:
+            links=db.execute("SELECT * FROM hq_historical_vehicle_links").fetchall()
+            self.assertEqual(len(links),1)
+            self.assertEqual(links[0]["vehicle_id"],vehicle)
+            self.assertNotIn("AB22 CDE",links[0]["manifest"])
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_work_records").fetchone()[0],0)
+        self.assertIn(b"J0456",self.client.get(url).data)
+        reversal=dict(csrf="test-csrf",action="reverse",operation=data["operation"],stamp=stamp,confirm="yes")
+        self.assertEqual(self.client.post(url,data=reversal).status_code,200)
+        self.assertEqual(self.client.post(url,data=reversal).status_code,200)
+        with connect() as db:
+            self.assertIsNotNone(db.execute("SELECT reversed_at FROM hq_historical_vehicle_links").fetchone()[0])
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_vehicles").fetchone()[0],2)
+
+
 if __name__=="__main__":
     unittest.main()
