@@ -58,6 +58,29 @@ def reported_links(db, ref):
         ON a.id=l.allocation_id WHERE l.source_id=? AND a.status='reported'""",(ref,))]
 
 
+
+def require_source_not_settled(db, ref):
+    """Prevent a payout deposit being reused as an independent invoice receipt.
+
+    Read existing settlement tables only, so older databases without the
+    additive settlement schema remain compatible. Caller holds the same
+    transaction used for candidate review/save or reported allocation.
+    """
+    for table, identity in (("hq_square_settlement_reviews", "allocation_id"),
+                            ("hq_square_batch_reviews", "source_id")):
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                          (table,)).fetchone():
+            continue
+        # Identifiers are fixed internal constants, never request input.
+        if db.execute(f"""SELECT 1 FROM {table} e
+            WHERE e.source_id=? AND e.state='proposed'
+            AND NOT EXISTS (SELECT 1 FROM {table} n
+                WHERE n.{identity}=e.{identity} AND n.id>e.id) LIMIT 1""",
+                (ref,)).fetchone():
+            raise Conflict("This bank deposit has an active Square settlement proposal. "
+                           "Withdraw it in Settlement and fee review before allocating this deposit directly.")
+
+
 def source_digest(entry):
     return fingerprint([entry["ref"],entry["evidence"],entry["legacy_evidence"],entry["pence"]])
 
@@ -80,6 +103,7 @@ def parse_candidate_amount(raw):
 
 
 def review(db, entry, invoice_ref, amount=None):
+    require_source_not_settled(db, entry["ref"])
     invoice = db.execute("""SELECT r.*,c.name AS customer_name,w.service AS work_service
         FROM hq_receivables r JOIN hq_customers c ON r.customer_id=c.id
         LEFT JOIN hq_work_records w ON r.work_id=w.id
@@ -127,6 +151,7 @@ def review(db, entry, invoice_ref, amount=None):
 
 def report_preview(db, entry, invoice_ref, rev, evidence_ref):
     """Owner attestation only; worksheet data cannot independently verify a receipt."""
+    require_source_not_settled(db, entry["ref"])
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._:/-]{2,119}", evidence_ref):
         raise ValueError("Enter the separate bank statement or receipt reference (3–120 characters).")
     if evidence_ref.casefold() == entry["ref"].casefold():
