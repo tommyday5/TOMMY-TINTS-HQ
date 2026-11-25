@@ -765,7 +765,8 @@ class CustomerFieldReviewTests(unittest.TestCase):
         from hq_core_records import change_work_status, set_draft_financials, work_summary, search_work_records
         self.login()
         examples = (("J0456", "Paid", 125), ("J0457", "Completed", 175),
-                    ("J0458", "Booked", 200), ("J0459", "Awaiting Payment", ""))
+                    ("J0458", "Booked", 200), ("J0459", "Awaiting Payment", ""),
+                    ("J0460", "Enquiry", ""), ("J0461", "Declined", 225))
         for payload in (self.formula,self.computed):
             payload["valueRanges"][1]["values"].append(["Synthetic History Driver","Retail",""])
             for ref,status,price in examples:
@@ -813,14 +814,15 @@ class CustomerFieldReviewTests(unittest.TestCase):
                 self.assertEqual(self.client.post(url,data=apply).status_code,200)
                 applied.append(apply)
         for ref,status,price in examples:
-            result=search_work_records(query=ref,kind="job",status="draft")
+            kind="quote" if status in ("Enquiry", "Declined") else "job"
+            result=search_work_records(query=ref,kind=kind,status="draft")
             self.assertEqual(result["total"],1)
             wid=result["records"][0]["id"]
             with connect() as db:
                 work=db.execute("SELECT * FROM hq_work_records WHERE id=?",(wid,)).fetchone()
                 self.assertEqual((work["kind"],work["status"],work["price_pence"],work["deposit_pence"],
                                   work["preferred_date"],work["preferred_time"]),
-                                 ("job","draft",None,0,"",""))
+                                 (kind,"draft",None,0,"",""))
                 evidence=json.loads(db.execute("SELECT manifest FROM hq_historical_created_work WHERE work_id=?",
                                                (wid,)).fetchone()[0])
                 self.assertEqual(evidence["source_status"],status)
@@ -846,7 +848,7 @@ class CustomerFieldReviewTests(unittest.TestCase):
         reversal=dict(csrf="test-csrf",action="reverse",operation=last["operation"],
                       stamp=last["stamp"],confirm="yes")
         self.assertEqual(self.client.post(url,data=reversal).status_code,200)
-        self.assertEqual(search_work_records(query="J0459",kind="job")["total"],0)
+        self.assertEqual(search_work_records(query="J0461",kind="quote")["total"],0)
 
 
 if __name__=="__main__":
