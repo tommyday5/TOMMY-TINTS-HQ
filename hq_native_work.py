@@ -227,9 +227,16 @@ def native_work_record(work_id):
             JOIN hq_vehicles v ON v.id=w.vehicle_id
             WHERE w.id=? AND w.source_request_id=?""",
             (work_id, "HQ-" + work_id)).fetchone()
+        historical = None
+        if row is not None and db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_historical_created_work'").fetchone():
+            historical = db.execute("SELECT job_ref,reversed_at FROM hq_historical_created_work WHERE work_id=?",(work_id,)).fetchone()
     if row is None:
         raise LookupError("Native work record not found")
-    return dict(row)
+    record = dict(row)
+    if historical:
+        record["historical_job_ref"] = historical["job_ref"]
+        record["historical_creation_reversed"] = bool(historical["reversed_at"])
+    return record
 
 
 def update_native_work(work_id, payload, expected_revision):
