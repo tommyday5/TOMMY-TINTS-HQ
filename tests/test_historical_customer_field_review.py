@@ -373,6 +373,15 @@ class CustomerFieldReviewTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT count(*) FROM hq_work_records").fetchone()[0],0)
         self.assertIn(b"2 customers",self.client.get(url).data)
         reversal=dict(csrf="test-csrf",action="reverse",batch_id=batch,stamp=stamp,confirm="yes")
+        # A dependent vehicle blocks the entire reversal, including the untouched customer.
+        vid=uuid.uuid4().hex
+        with connect() as db:
+            db.execute("INSERT INTO hq_vehicles VALUES(?,?,?,?,?,?,?)",
+                       (vid,rows[1]["id"],"Synthetic","Test","","","2026-01-01"))
+        self.assertEqual(self.client.post(url,data=reversal).status_code,409)
+        self.assertEqual(archive_status(rows[0]["id"]),(False,0))
+        with connect() as db:
+            db.execute("DELETE FROM hq_vehicles WHERE id=?",(vid,))
         self.assertEqual(self.client.post(url,data=reversal).status_code,200)
         self.assertEqual(self.client.post(url,data=reversal).status_code,200)
         for row in rows:
