@@ -953,3 +953,36 @@ payment records changed; no authority cutover.
 Next: verify full UI CI and deployment; actual historical cost parity,
 settlement/fee matching and approved bounded import, alongside independent
 customer workflow acceptance. Preserve provider connections.
+
+
+## 25 November — affordability live; single-payment settlement evidence
+
+PR #288 final-head bbc2bdc3 CI run 45660486648 passed (127 root +
+661 integration Python tests, 9 JavaScript tests). Merged as d555bfa2;
+Railway deployment b0d8bb34-4c83-463f-b114-7b417f9d969a SUCCESS at
+18:02:52 UTC. Owner acceptance and full workbook parity remain unverified.
+Read-only metadata reconfirmed 48 tabs. Original persistent volume was
+attached before merge. Native scenario and creditor register are planning
+inputs, not reconciled actuals; no production historical migration approved.
+
+Next proposed slice: owner-only single Square payment settlement review,
+linked from the retained Square observation and Finance Command Centre.
+Explicit exact source ID, independently documented fee and payout reference,
+gross-minus-fee equality in pence, unchanged invoice/allocation revision,
+retained completed zero-refund Square observation, fresh Monzo worksheet
+read and separate approval. Private append-only proposal and withdrawal
+history; stale source and duplicate active proposal checks. No automatic
+expense, bank entry, invoice allocation, cash receipt, or verified settlement.
+Cross-workflow match conflicts checked when creating, but no financial
+reservation is created; revalidation required before any posting.
+Batched payouts, refunds and independent bank/provider payout verification
+remain outstanding. Synthetic route test added; CI and deployment pending.
+
+Final-head PR #288 logs also confirm customer-to-HQ service review, owner
+quote conversion, appointment acceptance and owner confirmation, maintenance
+privacy and account isolation. No customer-facing route changed. Owner
+production acceptance and historical authority cutover remain unverified.
+No live finance, job, customer, booking, payment, Sheets or recovery records
+changed by development. Next: test and deploy proposal, independently
+verified payout batches and fees, historical actual-cost reconciliation,
+and exact owner-approved first migration manifest.
