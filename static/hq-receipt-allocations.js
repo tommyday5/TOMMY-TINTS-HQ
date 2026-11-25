@@ -51,7 +51,13 @@ async function load(){
     node('p','Reference: '+(r.evidence_ref||'None supplied')+' · revision '+r.revision),
     node('small','Owner reported, not independently verified or reconciled'));
   const btn=node('button',r.status==='reversed'?'View reversed entry':'Edit / reverse');
-  btn.type='button';btn.onclick=()=>edit(r);card.append(btn);records.append(card);
+  btn.type='button';btn.onclick=()=>edit(r);card.append(btn);
+  if(r.method==='card_reported'){
+   const link=node('a','Check / view exact Square payment evidence');
+   link.href='/hq/finance/square-invoice-evidence?allocation='+encodeURIComponent(r.id);
+   const line=node('p','');line.append(link);card.append(line);
+  }
+  records.append(card);
  }
  if(!state.allocations.length)records.append(node('p','No allocation reports yet.'));
  const history=$('history');history.replaceChildren();

@@ -138,6 +138,20 @@ def save(data):
                 AND (l.evidence_ref=? COLLATE NOCASE OR l.source_id=? COLLATE NOCASE)""",
                 (fields["evidence_ref"],fields["evidence_ref"])).fetchone():
                 raise ValueError("Evidence already linked to a Monzo source; use its reconciliation workflow")
+        # Exact Square observations are historical evidence, never another receipt.
+        # Reserve provider IDs even after a reversal until a separately reviewed
+        # correction workflow exists; never silently reassign a confirmed ID.
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_square_invoice_observations'").fetchone():
+            observed = db.execute("SELECT * FROM hq_square_invoice_observations WHERE allocation_id=?",
+                                  (fields["id"],)).fetchone()
+            if observed:
+                if fields["status"] != "reversed" or any(fields[k] != existing[k]
+                        for k in ("received_on","method","evidence_ref","memo")):
+                    raise ValueError("Provider-observed allocations can only be reversed without changing evidence")
+            elif fields["status"] == "reported" and fields["evidence_ref"] and db.execute("""
+                SELECT 1 FROM hq_square_invoice_observations WHERE payment_id=? COLLATE NOCASE""",
+                (fields["evidence_ref"],)).fetchone():
+                raise ValueError("Square payment reference already has retained provider evidence")
         counted = db.execute("""SELECT COALESCE(SUM(amount_pence),0) FROM hq_receivable_allocations
             WHERE invoice_id=? AND status='reported' AND id<>?""",
             (fields["invoice_id"], fields["id"])).fetchone()[0]
@@ -192,6 +206,9 @@ def snapshot():
 
 
 def register(bp):
+    from hq_square_invoice_evidence import register as register_square_evidence
+    register_square_evidence(bp)
+
     @bp.get("/hq/finance/receipt-allocations")
     @required
     def receipt_allocations_page():
