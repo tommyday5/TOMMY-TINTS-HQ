@@ -487,6 +487,54 @@ class AllocationTests(unittest.TestCase):
 
 
 
+
+    def test_direct_monzo_match_rejects_active_settlement_source_and_allows_withdrawal(self):
+        from hq_monzo_invoice_matches import require_source_not_settled, Conflict, tables
+        from hq_settlement_review import tables as settlement_tables
+        entry = dict(ref="tx-conflict-synthetic", pence=1000, day="2026-11-23",
+                     evidence="a"*64, legacy_evidence="b"*64)
+        self.login()
+        url = "/hq/finance/monzo-invoice-match"
+        form = dict(ref=entry["ref"], invoice_ref=self.invoice["invoice_ref"],
+                    csrf="test", action="review", candidate_amount="10")
+        with connect() as db:
+            tables(db)
+            # Before settlement schema exists, existing source checks still work.
+            require_source_not_settled(db, entry["ref"])
+            settlement_tables(db)
+        with patch("hq_monzo_invoice_matches.storage_ready", return_value=True), \
+                patch("hq_monzo_invoice_matches.current_entry", return_value=entry):
+            for table, key in (("hq_square_settlement_reviews", "allocation_id"),
+                               ("hq_square_batch_reviews", None)):
+                with connect() as db:
+                    columns = "source_id,manifest,state,evidence,actor,created,operation"
+                    values = [entry["ref"], "a"*64, "proposed", "{}", "synthetic", "2026-11-23", uuid.uuid4().hex]
+                    if key:
+                        columns = key + "," + columns
+                        values.insert(0, "a"*32)
+                    sql = f"INSERT INTO {table} ({columns}) VALUES ({','.join('?' for _ in values)})"
+                    db.execute(sql, values)
+                    with self.assertRaises(Conflict):
+                        require_source_not_settled(db, entry["ref"])
+                    require_source_not_settled(db, "unrelated-source")
+                response = self.client.post(url, data=form)
+                self.assertEqual(response.status_code, 409)
+                self.assertIn(b"active Square settlement proposal", response.data)
+                # Also guard the report path even if an old conflicting candidate exists.
+                from hq_monzo_invoice_matches import report_preview
+                with connect() as db:
+                    with self.assertRaisesRegex(Conflict, "active Square settlement"):
+                        report_preview(db, entry, self.invoice["invoice_ref"], 1, "other-ref")
+                    values[-1] = uuid.uuid4().hex
+                    values[3 if key else 2] = "withdrawn"
+                    db.execute(sql, values)
+                    require_source_not_settled(db, entry["ref"])
+                # The same source may be reviewed again after withdrawal.
+                from hq_monzo_invoice_matches import review
+                with connect() as db:
+                    self.assertEqual(review(db, entry, self.invoice["invoice_ref"], 1000)["amount"], 1000)
+
+
     def test_combined_settlement_proposal_exact_pence_replay_and_cross_conflicts(self):
         import re
         url = "/hq/finance/settlement-batches"
