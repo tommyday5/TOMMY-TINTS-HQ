@@ -265,5 +265,64 @@ class CustomerFieldReviewTests(unittest.TestCase):
                 operation_id="f"*32,revision="1")).status_code,409)
 
 
+    def test_bounded_postcode_import_and_guarded_reversal(self):
+        import re
+        from hq_private_recovery import create_snapshot
+        from hq_customer_postcodes import postcode_status
+        self.login()
+        withdraw_customer_candidate(self.candidate,0,"synthetic-owner")
+        candidate=stage_customer_candidate(
+            formula=self.formula,computed=self.computed,sheet_row=5,
+            expected_source_stamp=source_stamp(self.formula,self.computed,5),
+            customer_id=self.customer,basis="owner_document_review",
+            operation_id=uuid.uuid4().hex,owner_identity="synthetic-owner")
+        base="/hq/migration/customers/"+candidate
+        url=base+"/postcode-import"
+        self.assertEqual(app.test_client().get(url).status_code,302)
+        a,b=self.live_source()
+        def stamp(page):
+            self.assertEqual(page.status_code,200)
+            return re.search(rb'name="stamp" value="([0-9a-f]{64})"',page.data).group(1).decode()
+        with a,b:
+            self.assertEqual(self.client.post(base+"/fields",data=self.data()).status_code,303)
+            before=create_snapshot(uuid.uuid4().hex)
+            prepare=dict(csrf="test-csrf",action="prepare",snapshot_id=before)
+            identity_stamp=stamp(self.client.post(base+"/approved-link",data=prepare))
+            self.assertEqual(self.client.post(base+"/approved-link",data=dict(
+                prepare,action="apply",stamp=identity_stamp,confirm="yes")).status_code,200)
+            self.assertIn(self.client.post(url,data=prepare).status_code,(409,503))
+            snapshot=create_snapshot(uuid.uuid4().hex)
+            prepare["snapshot_id"]=snapshot
+            self.assertEqual(self.client.post(url,data=dict(prepare,csrf="bad")).status_code,403)
+            page=self.client.post(url,data=prepare)
+            self.assertIn(b"Never edited",page.data)
+            exact=stamp(page)
+            apply=dict(prepare,action="apply",stamp=exact,confirm="yes")
+            with connect() as db:
+                self.assertEqual(postcode_status(db,self.customer)["revision"],0)
+            self.assertEqual(self.client.post(url,data=dict(apply,confirm="")).status_code,409)
+            self.computed["valueRanges"][1]["values"][1][2]="ZZ1 1BB"
+            self.assertEqual(self.client.post(url,data=apply).status_code,409)
+            self.computed["valueRanges"][1]["values"][1][2]="ZZ0 0AA"
+            self.assertEqual(self.client.post(url,data=apply).status_code,200)
+            self.assertEqual(self.client.post(url,data=apply).status_code,200)
+            with connect() as db:
+                self.assertEqual(postcode_status(db,self.customer)["postcode"],"ZZ0 0AA")
+                self.assertEqual(postcode_status(db,self.customer)["revision"],1)
+                self.assertEqual(db.execute("SELECT count(*) FROM hq_customer_postcode_events").fetchone()[0],1)
+            self.assertIn(b"ZZ0 0AA",self.client.get("/hq/customers/"+self.customer+"/postcode").data)
+        reversal=dict(csrf="test-csrf",action="reverse",stamp=exact,confirm="yes")
+        identity_reversal=dict(reversal,stamp=identity_stamp)
+        self.assertEqual(self.client.post(base+"/approved-link",data=identity_reversal).status_code,409)
+        self.assertEqual(self.client.post(url,data=reversal).status_code,200)
+        self.assertEqual(self.client.post(url,data=reversal).status_code,200)
+        with connect() as db:
+            self.assertEqual(postcode_status(db,self.customer)["postcode"],"")
+            self.assertEqual(postcode_status(db,self.customer)["revision"],2)
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_customer_postcode_events").fetchone()[0],2)
+        self.assertEqual(self.client.post(base+"/approved-link",data=identity_reversal).status_code,200)
+        self.assertEqual((self.formula,self.computed),self.original)
+
+
 if __name__=="__main__":
     unittest.main()
