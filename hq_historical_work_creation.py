@@ -57,7 +57,10 @@ def _directory(db):
     return [[list(r) for r in db.execute(q)] for q in (
         "SELECT * FROM hq_work_records ORDER BY id",
         "SELECT * FROM hq_historical_j_candidates ORDER BY id",
-        "SELECT * FROM hq_job_sheet_links ORDER BY work_id")]
+        "SELECT * FROM hq_job_sheet_links ORDER BY work_id",
+        "SELECT * FROM hq_historical_created_work ORDER BY id",
+        "SELECT * FROM hq_historical_vehicle_links ORDER BY id",
+        "SELECT * FROM hq_work_archive_state ORDER BY work_id")]
 
 
 def _price(value, computed):
@@ -106,9 +109,34 @@ def _manifest(db, source, link_id, snapshot_id, operation, service):
                   (ref,row)).fetchone() or db.execute("SELECT 1 FROM hq_job_sheet_links WHERE job_ref=? COLLATE NOCASE",
                   (ref,)).fetchone():
         raise ValueError("Original reference already has mapping history; review existing work.")
-    if db.execute("SELECT 1 FROM hq_work_records WHERE customer_id=? AND vehicle_id=?",
-                  (link["customer_id"],link["vehicle_id"])).fetchone():
-        raise ValueError("This vehicle already has native work; independently review possible duplicates.")
+    # Repeat work on a vehicle is normal. Permit only separately identified,
+    # unchanged imported drafts, not unmapped native work or ambiguous history.
+    # Bind their references to this exact manifest and recheck fresh source.
+    prior_refs = []
+    for native in db.execute("SELECT * FROM hq_work_records WHERE vehicle_id=? ORDER BY id",
+                             (link["vehicle_id"],)):
+        prior = db.execute("SELECT * FROM hq_historical_created_work WHERE work_id=? AND reversed_at IS NULL",
+                           (native["id"],)).fetchone()
+        if (not prior or native["customer_id"] != link["customer_id"]
+                or h._stamp(dict(native)) != prior["native_stamp"]
+                or db.execute("SELECT 1 FROM hq_work_archive_state WHERE work_id=? AND is_archived=1",
+                              (native["id"],)).fetchone()):
+            raise ValueError("This vehicle has unmapped or changed native work; independently review possible duplicates.")
+        candidate = db.execute("SELECT * FROM hq_historical_j_candidates WHERE id=? AND withdrawn_at IS NULL",
+                               (prior["candidate_id"],)).fetchone()
+        previous_link, _ = _link(db, prior["vehicle_link_id"])
+        previous_manifest = json.loads(prior["manifest"])
+        if (not candidate or candidate["work_id"] != native["id"]
+                or candidate["job_ref"] != prior["job_ref"] or candidate["sheet_row"] != prior["sheet_row"]
+                or previous_link["vehicle_id"] != link["vehicle_id"]
+                or previous_link["customer_id"] != link["customer_id"]
+                or previous_link["job_ref"] != prior["job_ref"]
+                or previous_link["sheet_row"] != prior["sheet_row"]
+                or candidate["source_stamp"] != previous_manifest["source_stamp"]):
+            raise ValueError("Existing historical work provenance is inconsistent; review possible duplicates.")
+        _verified_source_candidate(*source, prior["sheet_row"], prior["job_ref"], previous_manifest["source_stamp"])
+        prior_refs.append(prior["job_ref"])
+    prior_refs.sort()
     directory = h._stamp(_directory(db))
     _, folder = _paths()
     if not any(s["id"] == snapshot_id for s in _existing(folder)):
@@ -130,7 +158,7 @@ def _manifest(db, source, link_id, snapshot_id, operation, service):
                 sheet_row=row,job_ref=ref,source_stamp=stamp,directory_stamp=directory,
                 link_stamp=h._stamp(link),customer_id=link["customer_id"],vehicle_id=link["vehicle_id"],
                 work_id=wid,candidate_id=cid,service=service,tier=tier,price_pence=price,
-                source_services=descriptions,source_status="Quoted")
+                source_services=descriptions,source_status="Quoted",prior_vehicle_refs=prior_refs)
 
 
 def review(source, link_id, snapshot_id, operation, service, owner, approval=None):
