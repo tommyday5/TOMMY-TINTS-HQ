@@ -461,6 +461,12 @@ class AllocationTests(unittest.TestCase):
             source.return_value = entry
             self.assertEqual(self.client.post(url, data=approval).status_code, 303)
             self.assertEqual(self.client.post(url, data=approval).status_code, 303)
+            # A replay cannot claim success with changed evidence or source data.
+            self.assertEqual(self.client.post(url, data=dict(approval, fee="4.00")).status_code, 409)
+            self.assertEqual(self.client.post(url, data=dict(approval, reference="Different statement")).status_code, 409)
+            source.return_value = dict(entry, evidence="d"*64)
+            self.assertEqual(self.client.post(url, data=approval).status_code, 409)
+            source.return_value = entry
             self.assertEqual(self.client.post(url, data=form).status_code, 409)
             self.assertIn(b"Synthetic payout statement", self.client.get(url).data)
             with connect() as db:
