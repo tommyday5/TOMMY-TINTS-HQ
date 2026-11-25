@@ -1076,3 +1076,30 @@ requests, product approval and customer isolation passed prior regression;
 no public routes changed in this slice. Next: historical cost mapping into
 native ledgers (without invented rates/stock), DNA payouts, customer
 acceptance and bounded approved historical import.
+
+
+## 25 November — historical actual-cost observations merged; native aggregate baseline
+
+PR #292 final head f8f56357 passed Actions 45709295606 (664 integration
+tests and 9 JS tests observed). Merged as a4ec4fc2. Original 1024 MB /data
+volume and 48 workbook tabs verified; Jobs AG4:AJ4 confirmed again.
+
+New proposed owner flow: Historical work > Review actual costs > Preview
+native cost baseline > Approve and save native cost baseline. An immutable
+retained observation becomes a separately versioned native aggregate with
+explicit approval, exact source and work revision, overlap refusal for any
+active detailed time/material/expense entry, replay protection and
+append-only withdrawal. Native private costing overview displays current
+historical baseline separately, or suppresses amounts if stale. Unknown
+and zero remain distinct; known non-labour portion is not complete cost.
+No invented material quantities, labour rates, stock, payment, fee,
+profit or booking. Existing detailed allocations are not changed or added
+to the historical baseline. Source observation withdrawal requires baseline
+withdrawal first. CI, production UI acceptance and real data reconciliation
+remain pending. No historical domain authority cutover.
+
+Customer request/approval, combined quotes, booking acceptance and
+confirmation, product deposit and maintenance account isolation passed
+PR #292 integration tests. No public route changed. Next: DNA Payments
+evidence, owner-approved bounded import and off-volume recovery, full
+financial parity and customer production acceptance.

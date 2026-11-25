@@ -68,6 +68,13 @@ a:focus-visible,button:focus-visible{outline:2px solid #f2cb24;outline-offset:3p
 <p>Known-cost portion only: £{{ '%.2f'|format(work.expense_known_pence/100) }}.</p>{% endif %}
 <p class="no-print"><a href="/hq/work/{{ work.id }}/expenses">Record / reverse actual expenses</a></p>
 </section>
+{% if work.historical_cost_baseline %}{% set b=work.historical_cost_baseline %}<section class="panel"><h2>Native historical aggregate cost baseline</h2>
+<p>{{ b.job_ref }} · original Jobs row {{ b.sheet_row }} · retained observation {{ b.observation_id }}</p>
+{% if b.current %}<dl><dt>Actual hours</dt><dd>{{ b.costs.hours if b.costs.hours is not none else "Unknown" }}</dd>
+{% for key,label in [('materials','Materials'),('consumables','Consumables'),('extra','Additional costs')] %}<dt>{{ label }}</dt><dd>{% if b.costs[key] is none %}Unknown{% else %}£{{ '%.2f'|format(b.costs[key]/100) }}{% endif %}</dd>{% endfor %}</dl>
+{% if b.nonlabour_pence is not none %}<p>Recorded historical non-labour subtotal: £{{ '%.2f'|format(b.nonlabour_pence/100) }}</p>{% elif b.known_nonlabour_pence is not none %}<p>Known historical non-labour portion only: £{{ '%.2f'|format(b.known_nonlabour_pence/100) }}</p>{% else %}<p>Historical non-labour amount unknown.</p>{% endif %}
+{% else %}<p class="notice">Baseline needs review — work or detailed cost evidence changed. No current baseline amount displayed.</p>{% endif %}
+<p>Separate aggregate evidence, not added to detailed allocations. Labour cost rate and final profitability remain unknown.</p><p class="no-print"><a href="/hq/migration/work/{{ work.id }}/actual-costs">Review / withdraw historical baseline</a></p></section>{% endif %}
 <section class="panel">
 <h2>Combined recorded ledger</h2>
 {% if work.recorded_labour_material_complete %}

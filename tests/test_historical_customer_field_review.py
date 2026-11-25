@@ -870,7 +870,46 @@ class CustomerFieldReviewTests(unittest.TestCase):
             self.assertEqual(len(rows),1)
             self.assertEqual(json.loads(rows[0]["manifest"])["costs"],
                 dict(hours="2.1",materials=1234,consumables=0,extra=None))
+        baseline=dict(csrf="test-csrf",action="baseline_prepare",operation=uuid.uuid4().hex)
+        page=self.client.post(cost_url,data=baseline)
+        self.assertEqual(page.status_code,200,page.data)
+        # The page has other forms: extract stamp from the baseline-save form.
+        baseline_stamp=re.search(rb'name="action" value="baseline_save".*?name="stamp" value="([0-9a-f]{64})"',page.data,re.S).group(1).decode()
+        adopt=dict(baseline,action="baseline_save",stamp=baseline_stamp,confirm="yes")
+        self.assertEqual(self.client.post(cost_url,data=dict(adopt,confirm="")).status_code,409)
+        # Simulate overlapping active native detail inside the synthetic DB.
+        from hq_work_time import _tables as time_tables
+        with connect() as db:
+            time_tables(db)
+            detail=uuid.uuid4().hex
+            db.execute("""INSERT INTO hq_work_time_entries
+                (entry_id,work_id,operation_id,payload_fingerprint,minutes,stage,note,
+                 hourly_cost_pence,actor_fingerprint,created_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (detail,wid,uuid.uuid4().hex,"synthetic",60,"repair","",None,"synthetic","2026-01-01"))
+        self.assertEqual(self.client.post(cost_url,data=adopt).status_code,409)
+        with connect() as db:
+            db.execute("UPDATE hq_work_time_entries SET voided_at='2026-01-02' WHERE entry_id=?",(detail,))
+        self.assertEqual(self.client.post(cost_url,data=adopt).status_code,200)
+        self.assertEqual(self.client.post(cost_url,data=adopt).status_code,200)
+        from hq_work_cost_overview import cost_overview_snapshot
+        with app.app_context():
+            snap=cost_overview_snapshot(wid)
+            self.assertTrue(snap["historical_cost_baseline"]["current"])
+            self.assertEqual(snap["historical_cost_baseline"]["known_nonlabour_pence"],1234)
+            self.assertIsNone(snap["historical_cost_baseline"]["nonlabour_pence"])
+            self.assertIsNone(snap["final_profit_pence"])
+            self.assertIsNone(snap["partial_known_three_ledger_pence"])
+        overview=self.client.get("/hq/work/"+wid+"/costs")
+        self.assertEqual(overview.status_code,200,overview.data)
+        self.assertIn(b"Known historical non-labour portion only: \xc2\xa312.34",overview.data)
         withdraw=dict(csrf="test-csrf",action="withdraw",operation=uuid.uuid4().hex,stamp=stamp,confirm="yes")
+        self.assertEqual(self.client.post(cost_url,data=withdraw).status_code,409)
+        revoke=dict(csrf="test-csrf",action="baseline_withdraw",operation=uuid.uuid4().hex,stamp=baseline_stamp,confirm="yes")
+        self.assertEqual(self.client.post(cost_url,data=revoke).status_code,200)
+        self.assertEqual(self.client.post(cost_url,data=revoke).status_code,200)
+        with app.app_context():
+            self.assertIsNone(cost_overview_snapshot(wid)["historical_cost_baseline"])
         self.assertEqual(self.client.post(cost_url,data=withdraw).status_code,200)
         self.assertEqual(self.client.post(cost_url,data=withdraw).status_code,200)
         with connect() as db:
