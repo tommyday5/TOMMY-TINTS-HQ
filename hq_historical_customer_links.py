@@ -348,3 +348,6 @@ def page():
 # This is an additive read/submit surface: no import or Sheet-write routes.
 from hq_historical_customer_field_review import register_routes as _register_field_review_routes
 _register_field_review_routes(customer_migration)
+
+from hq_approved_customer_links import register_routes as _register_approved_link_routes
+_register_approved_link_routes(customer_migration)
