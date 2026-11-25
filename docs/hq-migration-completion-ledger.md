@@ -720,3 +720,39 @@ resolution from this environment; authenticated production acceptance unverified
 Next: original J-series native job creation and historical price mapping,
 settlement/fees and creditor reconciliation, independent recovery verification.
 No domain authority changes.
+
+
+## 25 November — reviewed vehicle creation deployed; first native historical quote draft
+
+PR #282 passed Actions 45592021335 (650 integration Python tests and 9 JS
+tests observed in logs), merged as 13afac54. Railway deployment
+19fc8c10-1695-427a-bfe2-5252bb5bb6b0 reports SUCCESS at 10:58:25 UTC.
+Existing 1024 MB /data volume was attached before merge. Read-only
+workbook inventory confirms 48 tabs and Jobs 94 headings; among 60 J rows,
+10 have literal Quoted status, 8 literal numeric prices and 2 missing
+prices (source counts, not approved eligible records). Thirty J rows have
+additional service descriptions, so automatic category inference is unsafe.
+
+Proposed owner flow: Historical Customers > Historical vehicle relationships >
+Create a missing historical quote. Open page before making fresh private
+recovery snapshot, select an active reviewed vehicle link and explicitly
+review a native service category against all original literal descriptions.
+Only Quoted rows with unchanged source/customer/vehicle evidence qualify.
+Exact numeric quoted price is copied in pence or left missing; the original
+J reference is retained in a permanent provenance record, draft notes and a
+standard inactive review candidate. One native quote draft with canonical
+customer/vehicle and historical work tier, no entitlements or portal approval,
+no booking/payment/invoice/actual cost or Sheets sync link. Duplicate source
+history and any existing work for this vehicle block automatic creation.
+Atomic approval, keyed evidence, idempotency and guarded archive/withdraw
+rollback preserve the original draft and audit; dependencies or edits block
+rollback. Reversed drafts cannot be restored via ordinary archive controls.
+Synthetic route tests submitted; CI, deployment and owner acceptance pending.
+
+Customer app: PR #282 CI confirms public service request -> canonical owner
+approved portal, appointment acceptance/confirmation, product and maintenance
+isolation, and vehicle request/create/reload. No new public controls in this
+slice. Actual authenticated production browser acceptance remains unverified.
+No live record or Sheets changes authorised; paid/booked/completed historical
+rows, actual costs, multiple-work duplicate reconciliation, settlement,
+creditor/affordability and domain authority remain outstanding.

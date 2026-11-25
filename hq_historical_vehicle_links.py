@@ -186,6 +186,8 @@ def reverse(operation, stamp, owner):
         if not row or not hmac.compare_digest(stamp,row["stamp"]):
             raise ValueError("Link changed.")
         if not row["reversed_at"]:
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_historical_created_work'").fetchone() and db.execute("SELECT 1 FROM hq_historical_created_work WHERE vehicle_link_id=? AND reversed_at IS NULL",(operation,)).fetchone():
+                raise ValueError("Reverse the active historical work creation first.")
             db.execute("UPDATE hq_historical_vehicle_links SET reversed_at=?,reversed_by=? WHERE id=?",
                        (datetime.now(timezone.utc).isoformat(),_actor_fingerprint(owner),operation))
 
@@ -402,6 +404,8 @@ def register_creation_route(bp):
 
 
 def register_routes(bp):
+    from hq_historical_work_creation import register_routes as register_work_creation
+    register_work_creation(bp)
     register_creation_route(bp)
     @bp.route("/hq/migration/customers/vehicle-links", methods=["GET","POST"])
     @required

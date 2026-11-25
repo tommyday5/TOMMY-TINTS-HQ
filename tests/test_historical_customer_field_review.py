@@ -591,6 +591,82 @@ class CustomerFieldReviewTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT count(*) FROM hq_vehicles WHERE id=?",(vid,)).fetchone()[0],0)
             self.assertIsNotNone(db.execute("SELECT reversed_at FROM hq_historical_created_vehicles").fetchone()[0])
 
+    def test_missing_historical_quote_create_and_reverse(self):
+        import re
+        from hq_private_recovery import create_snapshot
+        from hq_historical_customer_creation import review as create_customer
+        from hq_historical_vehicle_links import review as link_vehicle, reverse as reverse_vehicle
+        from hq_work_archive import set_work_archived
+        self.login()
+        for payload in (self.formula,self.computed):
+            payload["valueRanges"][1]["values"].append(["Synthetic Imported Driver","Retail",""])
+            payload["valueRanges"][0]["values"].append(
+                ["J0456","","Synthetic Imported Driver","Retail","AB22 CDE","Window Tinting"]
+                +[""]*10+[125,"Quoted"])
+        source=(self.formula,self.computed)
+        batch=uuid.uuid4().hex
+        snap=create_snapshot(uuid.uuid4().hex)
+        manifest,stamp=create_customer([6],snap,batch,source,"synthetic-owner")
+        create_customer([6],snap,batch,source,"synthetic-owner",stamp)
+        cid=manifest["entries"][0]["customer_id"]
+        vid=uuid.uuid4().hex
+        with connect() as db:
+            db.execute("INSERT INTO hq_vehicles VALUES(?,?,?,?,?,?,?)",
+                       (vid,cid,"Hyundai","i30","2022","AB22 CDE","2026-01-01"))
+        snap=create_snapshot(uuid.uuid4().hex)
+        link=uuid.uuid4().hex
+        _,link_stamp=link_vehicle(source,6,"J0456",6,cid,vid,snap,link,"synthetic-owner")
+        link_vehicle(source,6,"J0456",6,cid,vid,snap,link,"synthetic-owner",link_stamp)
+        url="/hq/migration/customers/create-work"
+        self.assertEqual(app.test_client().get(url).status_code,302)
+        self.assertEqual(self.client.get(url).status_code,200)
+        snap=create_snapshot(uuid.uuid4().hex)
+        data=dict(csrf="test-csrf",action="prepare",operation=uuid.uuid4().hex,
+                  link_id=link,service="Window Tinting",snapshot_id=snap)
+        a,b=self.live_source()
+        with a,b:
+            self.assertEqual(self.client.post(url,data=dict(data,csrf="bad")).status_code,403)
+            page=self.client.post(url,data=data)
+            self.assertEqual(page.status_code,200,page.data)
+            self.assertIn(b"125.00",page.data)
+            approval=re.search(rb'name="stamp" value="([0-9a-f]{64})"',page.data).group(1).decode()
+            apply=dict(data,action="apply",stamp=approval,confirm="yes")
+            self.assertEqual(self.client.post(url,data=dict(apply,confirm="")).status_code,409)
+            self.assertEqual(self.client.post(url,data=dict(apply,service="Vehicle Wrapping")).status_code,409)
+            self.computed["valueRanges"][0]["values"][2][16]=126
+            self.assertEqual(self.client.post(url,data=apply).status_code,409)
+            self.computed["valueRanges"][0]["values"][2][16]=125
+            self.assertEqual(self.client.post(url,data=apply).status_code,200)
+            self.assertEqual(self.client.post(url,data=apply).status_code,200)
+            self.assertEqual(self.client.post(url,data=dict(data,operation=uuid.uuid4().hex)).status_code,409)
+        with connect() as db:
+            r=db.execute("SELECT * FROM hq_historical_created_work").fetchone()
+            wid=r["work_id"]
+            work=db.execute("SELECT * FROM hq_work_records").fetchone()
+            self.assertEqual((work["customer_id"],work["vehicle_id"],work["kind"],work["status"],work["price_pence"]),(cid,vid,"quote","draft",12500))
+            self.assertEqual(work["deposit_pence"],0)
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_job_sheet_links").fetchone()[0],0)
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_job_sync_outbox").fetchone()[0],0)
+            self.assertEqual(db.execute("SELECT job_ref FROM hq_historical_j_candidates").fetchone()[0],"J0456")
+        self.assertEqual(self.client.get("/hq/work/"+wid+"/edit").status_code,200)
+        with self.assertRaises(ValueError):
+            reverse_vehicle(link,link_stamp,"synthetic-owner")
+        reversal=dict(csrf="test-csrf",action="reverse",operation=data["operation"],stamp=approval,confirm="yes")
+        with connect() as db:
+            db.execute("CREATE TABLE synthetic_work_dependency(work_id TEXT)")
+            db.execute("INSERT INTO synthetic_work_dependency VALUES(?)",(wid,))
+        self.assertEqual(self.client.post(url,data=reversal).status_code,409)
+        with connect() as db:
+            db.execute("DELETE FROM synthetic_work_dependency")
+        self.assertEqual(self.client.post(url,data=reversal).status_code,200)
+        self.assertEqual(self.client.post(url,data=reversal).status_code,200)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT is_archived FROM hq_work_archive_state WHERE work_id=?",(wid,)).fetchone()[0],1)
+            self.assertIsNotNone(db.execute("SELECT withdrawn_at FROM hq_historical_j_candidates").fetchone()[0])
+        with self.assertRaises(ValueError):
+            set_work_archived(wid,"restore",1,uuid.uuid4().hex)
+        reverse_vehicle(link,link_stamp,"synthetic-owner")
+
 
 if __name__=="__main__":
     unittest.main()
