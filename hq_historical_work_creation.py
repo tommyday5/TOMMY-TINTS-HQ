@@ -1,7 +1,7 @@
-"""Bounded owner-approved historical Quoted row -> native editable quote draft.
+"""Bounded owner-approved historical rows -> native editable review drafts.
 
-Historical paid/booked/completed work and missing/derived financial values are
-not promoted to live status. No external calls except existing read-only source.
+Non-quote status and price are provenance only until independently reconciled.
+No external calls except existing read-only source.
 """
 from contextlib import closing
 from datetime import datetime, timezone
@@ -89,8 +89,10 @@ def _manifest(db, source, link_id, snapshot_id, operation, service):
     jobs, _ = _check_source(*source)
     effective, _ = _ranges(source[1])
     raw, actual = jobs[row-4], effective[row-4]
-    if _cell(raw,17) != "Quoted" or _cell(actual,17) != "Quoted":
-        raise ValueError("Only literal Quoted historical rows qualify; no booked, completed or paid work.")
+    source_status = _cell(raw,17)
+    if (source_status not in ("Quoted", "Booked", "Completed", "Paid", "Awaiting Payment")
+            or source_status != _cell(actual,17)):
+        raise ValueError("Choose an unchanged literal Quoted, Booked, Completed, Paid or Awaiting Payment row.")
     tier = {"Retail":"retail","Trader":"trade","Trade":"trade","Maintenance":"maintenance"}.get(_cell(raw,3))
     if not tier or _cell(raw,3) != _cell(actual,3):
         raise ValueError("Historical customer type is unknown or changed.")
@@ -158,7 +160,7 @@ def _manifest(db, source, link_id, snapshot_id, operation, service):
                 sheet_row=row,job_ref=ref,source_stamp=stamp,directory_stamp=directory,
                 link_stamp=h._stamp(link),customer_id=link["customer_id"],vehicle_id=link["vehicle_id"],
                 work_id=wid,candidate_id=cid,service=service,tier=tier,price_pence=price,
-                source_services=descriptions,source_status="Quoted",prior_vehicle_refs=prior_refs)
+                source_services=descriptions,source_status=source_status,prior_vehicle_refs=prior_refs)
 
 
 def review(source, link_id, snapshot_id, operation, service, owner, approval=None):
@@ -186,11 +188,13 @@ def review(source, link_id, snapshot_id, operation, service, owner, approval=Non
             raise ValueError("Source, mapping or work directory changed; prepare a fresh approval.")
         now=datetime.now(timezone.utc).isoformat()
         wid,cid=m["work_id"],m["candidate_id"]
+        quote = m["source_status"] == "Quoted"
         notes="Historical "+m["job_ref"]+" — original service descriptions: "+"; ".join(m["source_services"])
         db.execute("""INSERT INTO hq_work_records
             (id,source_request_id,customer_id,vehicle_id,kind,service,notes,preferred_date,preferred_time,status,price_pence,created_at)
-            VALUES(?,?,?,?,'quote',?,?,'','','draft',?,?)""",
-            (wid,"HQ-"+wid,m["customer_id"],m["vehicle_id"],service,notes,m["price_pence"],now))
+            VALUES(?,?,?,?,?,?,?,'','','draft',?,?)""",
+            (wid,"HQ-"+wid,m["customer_id"],m["vehicle_id"],"quote" if quote else "job",
+             service,notes,m["price_pence"] if quote else None,now))
         db.execute("INSERT INTO hq_native_work_details VALUES(?,?,?)",(wid,m["tier"],now))
         db.execute("INSERT INTO hq_native_work_operations VALUES(?,?,?,?)",(operation,wid,expected,now))
         db.execute("INSERT INTO hq_native_work_events VALUES(?,?,?,?,?)",(uuid.uuid4().hex,wid,"created",0,now))
@@ -290,7 +294,7 @@ def register_routes(bp):
                     if result:
                         manifest,stamp=result
                     else:
-                        notice="Historical quote draft saved; no booking, invoice or payment created."
+                        notice="Historical review draft saved; no booking, invoice or payment created."
                 else:
                     abort(400)
             with closing(connect()) as db:
