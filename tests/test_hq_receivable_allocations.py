@@ -49,6 +49,7 @@ class AllocationTests(unittest.TestCase):
     def login(self):
         with self.client.session_transaction() as sess, auth_db() as db:
             sess["hq_sid"] = issue_session(db, "synthetic-owner")
+            sess["google_sub"] = "synthetic-owner"
             sess["csrf"] = "test"
 
     def payload(self, **updates):
