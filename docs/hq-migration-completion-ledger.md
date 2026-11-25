@@ -340,3 +340,37 @@ paid status, verified balance or cash totals are published. Actual provider
 consent, current evidence, production UI acceptance, settlement/refund
 reconciliation and canonical historical migration remain open. Synthetic
 regression, deployment and owner acceptance of this proposal are pending.
+
+
+## 25 November — deployed Square evidence and changed-status/refund review
+
+PR #271 merged at 35a358b6 after Actions run 45506909422 passed (127 root
+and 638 integration Python tests, 9 JavaScript tests). Railway deployment
+42f768b7-4885-4754-8bab-25a558190c3d SUCCESS at 00:04:35 UTC, startup
+logs show Gunicorn listening and the original 1024 MB /data volume mounted.
+Workbook read-only metadata still lists 48 tabs; the Monzo Live Feed
+A7:U7 headings match the prior source and override IDs. No actual
+provider call, historical import, payment allocation or Sheets write
+was performed by development. Owner browser acceptance is not established.
+
+This proposed slice adds an explicit owner-confirmed **Recheck Square refund /
+status** action on an existing exact Square invoice observation. It preserves
+the initial evidence and appends changed provider observations with their
+allocation and invoice revisions. Unchanged responses do not duplicate
+records. Unknown refund amounts are shown as unknown, not zero. Changed
+location, conflicting timestamps or concurrent changes fail closed. No
+new receipt, automatic refund booking, allocation change, customer status
+or verified settlement claim is made. Chargeback and settlement
+reconciliation, actual refund allocation, authenticated production UI
+acceptance, and canonical historical customer/vehicle import remain open.
+Synthetic tests are proposed; new PR CI and deployment remain pending.
+No domain cutover or authority change.
+
+Customer workflow: CI explicitly covered service request to HQ review,
+owner conversion and customer-visible approval, combined quote appointment
+handoff, customer acceptance without booking until owner confirms, product
+deposit scope, maintenance pricing isolation and customer privacy.
+Direct /book access from the development environment failed DNS resolution;
+production browser acceptance remains unverified. Next customer slice:
+expose only appropriately authorised canonical status, never internal
+provider evidence or owner-reported allocations as verified payments.

@@ -9,7 +9,14 @@
 {% if saved %}
 <h3>Retained provider observation</h3><p>Square payment {{ saved.payment_id }} was observed as completed, for the exact allocation amount, with explicitly zero refunds, at {{ saved.observed_at }}. The original observation is retained even if the invoice or allocation subsequently changes.</p>
 {% if row.status != "reported" or row.revision != saved.allocation_revision or row.invoice_revision != saved.invoice_revision %}<p role="status">The current allocation or invoice no longer matches the observed revision. Do not use this as current payment evidence.</p>{% endif %}
-<p>No subsequent refunds, chargebacks, changes in account scope or bank settlement have been checked. Never count this again as a separate receipt.</p>
+<p>The original observation is historical. Neither it nor a later provider recheck establishes bank settlement, chargeback status or a current customer balance. Never count it again as a separate receipt.</p>
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="allocation" value="{{ row.id }}"><input type="hidden" name="action" value="recheck"><label><input type="checkbox" name="confirm" value="yes" required> Check the same Square payment now and retain any changed provider evidence only; do not alter the allocation.</label><button>Recheck Square refund / status</button></form>
+{% if history %}<h3>Subsequent provider observations (latest 50)</h3>
+{% for event in history %}<section><h4>{{ event.observed_at }} · {{ event.evidence.status }}</h4>
+<p>Provider total: £{{ "%.2f"|format(event.evidence.total_minor/100) }} · refund: {% if event.evidence.refunded_minor is none %}unknown (not zero){% else %}£{{ "%.2f"|format(event.evidence.refunded_minor/100) }}{% endif %} · provider updated {{ event.evidence.updated_at }}</p>
+{% if event.evidence.refunded_minor is none or event.evidence.refunded_minor != 0 or event.evidence.status != "COMPLETED" or event.evidence.total_minor != row.amount_pence %}<p role="status">Review required: provider status, amount or refund evidence does not support an unrefunded exact payment. The allocation is unchanged.</p>{% endif %}
+{% if row.revision != event.allocation_revision or row.invoice_revision != event.invoice_revision %}<p>Invoice or allocation revision has since changed.</p>{% endif %}</section>{% endfor %}
+{% else %}<p>No changed provider observations retained yet.</p>{% endif %}
 {% elif review %}
 <h3>Review exact provider response</h3>
 <p>Square {{ review.evidence.id }} · {{ review.evidence.status }} · GBP £{{ "%.2f"|format(review.evidence.total_minor/100) }} · refunds explicitly £0.00 · created {{ review.evidence.created_at }} · provider updated {{ review.evidence.updated_at }}</p>

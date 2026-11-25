@@ -221,5 +221,64 @@ class AllocationTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_square_invoice_observations").fetchone()[0], 0)
 
 
+    def test_square_refund_recheck_retains_changed_evidence_without_cash_changes(self):
+        import re
+        payload = self.payload(method="card_reported", evidence_ref="square-refund-test")
+        url = "/hq/finance/square-invoice-evidence"
+        form = dict(allocation=payload["id"], csrf="test", action="review")
+        check = dict(form, action="recheck", confirm="yes")
+        initial = dict(id="square-refund-test", status="COMPLETED", total_minor=20000,
+                       refunded_minor=0, currency="GBP",
+                       created_at="2026-11-22T10:00:00+00:00",
+                       updated_at="2026-11-22T10:01:00+00:00")
+        with patch.dict(os.environ, {"HQ_SQUARE_READ_TOKEN":"test", "HQ_SQUARE_LOCATION_ID":"test-loc"}), \
+                patch("hq_square_invoice_evidence.storage_ready", return_value=True), \
+                patch("hq_square_invoice_evidence.inspect_exact_payment", return_value=initial) as provider:
+            self.assertEqual(self.client.post(url, data=check).status_code, 302)
+            provider.assert_not_called()
+            self.login()
+            self.assertEqual(self.post(payload).status_code, 200)
+            self.assertEqual(self.client.post(url, data=check).status_code, 400)
+            provider.assert_not_called()
+            review = self.client.post(url, data=form)
+            self.assertEqual(review.status_code, 200)
+            manifest = re.search(rb'name="manifest" value="([0-9a-f]{64})"', review.data)[1].decode()
+            self.assertEqual(self.client.post(url, data=dict(form, action="save",
+                manifest=manifest, confirm="yes")).status_code, 200)
+            provider.reset_mock()
+            self.assertEqual(self.client.post(url, data=dict(check, csrf="bad")).status_code, 403)
+            self.assertEqual(self.client.post(url, data=dict(check, confirm="")).status_code, 400)
+            with patch.dict(os.environ, {"HQ_SQUARE_LOCATION_ID":"other-location"}):
+                self.assertEqual(self.client.post(url, data=check).status_code, 409)
+            provider.assert_not_called()
+            self.assertEqual(self.client.post(url, data=check).status_code, 200)
+            provider.return_value = dict(initial, refunded_minor=5000,
+                                         updated_at="2026-11-22T10:02:00+00:00")
+            result = self.client.post(url, data=check)
+            self.assertEqual(result.status_code, 200, result.get_data(as_text=True))
+            self.assertIn(b"Review required", result.data)
+            self.assertIn("£50.00".encode(), result.data)
+            self.assertEqual(self.client.post(url, data=check).status_code, 200)
+            provider.return_value = initial
+            self.assertEqual(self.client.post(url, data=check).status_code, 409)
+            provider.return_value = dict(initial, refunded_minor=None,
+                                         updated_at="2026-11-22T10:03:00+00:00")
+            self.assertEqual(self.client.post(url, data=check).status_code, 200)
+            provider.reset_mock()
+            page = self.client.get(url+"?allocation="+payload["id"])
+            self.assertIn(b"unknown (not zero)", page.data)
+            self.assertIn("£50.00".encode(), page.data)
+            provider.assert_not_called()
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_square_invoice_observations").fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_square_invoice_rechecks").fetchone()[0], 2)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_receivable_allocations").fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT amount_pence FROM hq_receivable_allocations").fetchone()[0], 20000)
+        after = self.client.get("/api/hq/finance/receipt-allocations").json
+        self.assertFalse(after["receipts_verified"])
+        self.assertFalse(after["outstanding_verified"])
+        self.assertIsNone(after["collected_income"])
+
+
 if __name__ == "__main__":
     unittest.main()
