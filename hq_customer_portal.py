@@ -312,10 +312,16 @@ def owner_invoice_publications(customer_id):
         try:
             if request.form.get("confirm") != "yes":
                 raise ValueError("Confirm this exact publication or withdrawal")
+            mode = request.form.get("payment_mode", "summary")
+            if mode not in ("summary", "observations"):
+                raise ValueError("Invalid publication mode")
+            if mode == "observations" and request.form.get("confirm_payment") != "yes":
+                raise ValueError("Confirm the exact historical card observations separately")
             invoice_publications.change(customer_id, request.form.get("invoice_id", ""),
                 request.form.get("action", ""), int(request.form.get("revision", "-1")),
-                request.form.get("digest", ""), request.form.get("operation_id", ""))
-            message = "Publication review saved. No payment status or message was sent."
+                request.form.get("digest", ""), request.form.get("operation_id", ""),
+                include_payments=mode == "observations")
+            message = "Publication review saved. No current paid status, settlement or message was sent."
         except ValueError as exc:
             error, status = str(exc), 400
         except (sqlite3.Error, OSError):
