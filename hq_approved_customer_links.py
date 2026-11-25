@@ -90,6 +90,8 @@ def _snapshot_check(snapshot_id, identity):
             ("hq_historical_customer_candidates","id",candidate),
             ("hq_historical_customer_field_reviews","candidate_id",review),
         ):
+            if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
+                raise ValueError("Snapshot predates the current candidate or field review.")
             row = db.execute("SELECT * FROM "+table+" WHERE "+key+"=?", (candidate["id"],)).fetchone()
             if not row or dict(row) != before:
                 raise ValueError("Snapshot predates the current candidate or field review.")
@@ -212,8 +214,11 @@ def register_routes(bp):
                 else:
                     abort(400)
             if candidate_id:
-                _, directory = _paths()
-                snapshots = _existing(directory)
+                try:
+                    _, directory = _paths()
+                    snapshots = _existing(directory)
+                except LookupError:
+                    snapshots = []
             rows = history()
         except (ValueError,LookupError) as exc:
             error,status = str(exc),409
