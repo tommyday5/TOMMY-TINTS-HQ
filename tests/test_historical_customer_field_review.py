@@ -668,6 +668,11 @@ class CustomerFieldReviewTests(unittest.TestCase):
         reverse_vehicle(link,link_stamp,"synthetic-owner")
 
     def test_repeat_vehicle_historical_drafts_and_original_reference_lookup(self):
+        # This disposable fixture needs several independent snapshots; production
+        # retains its current three-snapshot cap until safe retention is implemented.
+        capacity=patch("hq_private_recovery.MAX_BACKUPS",8)
+        capacity.start()
+        self.addCleanup(capacity.stop)
         import re
         from hq_private_recovery import create_snapshot
         from hq_historical_customer_creation import review as create_customer
