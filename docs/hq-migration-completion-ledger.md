@@ -680,3 +680,43 @@ or actual historical import established. Next: owner-approved missing
 vehicle creation and original J-series work creation from verified
 relationships, settlement/fees and creditor reconciliation. No authority
 change or workbook write.
+
+
+## 25 November — historical vehicle relationships deployed; reviewed missing vehicle creation
+
+PR #281 passed Actions 45581582307 (127 root + 649 integration Python
+tests, 9 JavaScript tests), merged as 4f0b6f6b. Railway deployment
+fc349bca-3035-41c2-9590-6bedc328c6c6 reported SUCCESS at 10:06:06 UTC;
+startup logs show volume mount and gunicorn worker boot. Existing 1024 MB
+/data volume ID unchanged. PR #258 remains merged. Workbook read-only
+metadata still lists 48 tabs; Jobs and Customers retain 94 and 32 headings.
+No production record approval, recovery snapshot or migration execution
+was performed.
+
+Proposed next slice: Historical vehicle relationships > Create a missing
+reviewed historical vehicle. Enter exact source coordinates, existing
+approved customer identity, document-reviewed make/model and optional year
+and registration, and a recovery snapshot of the current directory.
+Exact approval rechecks formula/computed source, parent provenance,
+registration collisions, ambiguous same-customer vehicle descriptions,
+snapshot, native directory and reviewed fields. A native canonical vehicle
+and keyed provenance are saved together. No guessing from mixed free text,
+job or payment creation, source edits or new portal entitlements; owner
+must explicitly approve possible visibility in an existing linked account.
+Replay is idempotent. Explicit rollback removes only the newly created,
+unchanged vehicle when no dependent references or history exist, retaining
+its separate creation provenance; later edits or dependencies block rollback.
+A subsequent J-row relationship uses the same vehicle ID and requires
+separate exact approval. Parent provenance cannot be reversed while a
+historical creation is active. Synthetic owner-route regression submitted;
+CI, deployment, owner acceptance and actual imports remain pending.
+
+PR #281 regression logs confirm combined baskets, canonical quote conversion,
+service request to HQ review, customer account isolation, appointment acceptance
+and owner confirmation, maintenance hidden pricing and portal vehicle request
+to canonical owner creation and reload. No public routes changed. Direct
+production HTTP probes for /book and the owner migration route failed DNS
+resolution from this environment; authenticated production acceptance unverified.
+Next: original J-series native job creation and historical price mapping,
+settlement/fees and creditor reconciliation, independent recovery verification.
+No domain authority changes.
