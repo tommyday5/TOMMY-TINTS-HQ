@@ -226,6 +226,94 @@ class CustomerPortalTests(unittest.TestCase):
         with connect() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_customer_invoice_publications").fetchone()[0], 3)
 
+    def test_card_observations_are_explicit_historical_and_fail_closed(self):
+        import json
+        from hq_receivables import save as save_invoice
+        from hq_receivable_payments import save as save_allocation
+        from hq_customer_invoice_publications import summaries, tables
+        from hq_square_invoice_evidence import digest
+
+        self.login_owner()
+        self.approve(self.work_id)
+        other_work = self.create_work("Other Person", "other@example.invalid", "ZZ20 BBB")
+        other_customer = native_work_record(other_work)["customer_id"]
+        invoice_id, allocation_id = uuid.uuid4().hex, uuid.uuid4().hex
+        save_invoice(dict(id=invoice_id, operation_id=uuid.uuid4().hex, revision=0,
+                          customer_id=self.customer_id, work_id=self.work_id,
+                          invoice_ref="FIXTURE-CARD-INV", issue_date="2026-11-24",
+                          due_date="2026-12-01", amount_pence=35000, status="issued",
+                          archived=False, memo="PRIVATE-INVOICE-NOTES"))
+        save_allocation(dict(id=allocation_id, operation_id=uuid.uuid4().hex,
+            invoice_id=invoice_id, revision=0, amount_pence=12500, received_on="2026-11-25",
+            method="card_reported", evidence_ref="PRIVATE-SQUARE-ID",
+            memo="PRIVATE-PAYMENT-NOTES", status="reported"))
+        path = f"/hq/customers/{self.customer_id}/invoice-publications"
+        code, _ = self.invite()
+        self.assertEqual(self.customer_signin(code).status_code, 303)
+
+        def payload(mode):
+            row = summaries(self.customer_id, owner=True)[0]
+            return dict(csrf="portal-test-csrf", action="publish", confirm="yes",
+                        invoice_id=invoice_id, revision=str(row["revision"]),
+                        digest=row["payment_digest"] if mode == "observations" else row["digest"],
+                        payment_mode=mode, confirm_payment="yes",
+                        operation_id=row["operation_id"])
+
+        self.assertEqual(summaries(self.customer_id, owner=True)[0]["payments"], [])
+        self.assertEqual(self.owner.post(path, data=payload("summary")).status_code, 200)
+        self.assertNotIn(b"Historical card payment observations", self.customer.get("/customer/account").data)
+
+        # Synthetic retained evidence only; provider lookup itself is covered by
+        # the Square allocation tests. No live provider or bank call is made.
+        proof = dict(id="PRIVATE-SQUARE-ID", currency="GBP", status="COMPLETED",
+                     total_minor=12500, refunded_minor=0)
+        with connect() as db:
+            tables(db)
+            a = db.execute("SELECT revision FROM hq_receivable_allocations WHERE id=?", (allocation_id,)).fetchone()
+            i = db.execute("SELECT revision FROM hq_receivables WHERE id=?", (invoice_id,)).fetchone()
+            db.execute("""INSERT INTO hq_square_invoice_observations VALUES(?,?,?,?,?,?,?,?,?)""",
+                       ("PRIVATE-SQUARE-ID", allocation_id, a["revision"], invoice_id, i["revision"],
+                        "fixture-scope", json.dumps(proof), "fixture-manifest", "2026-11-25T03:00:00+00:00"))
+        self.assertNotIn(b"FIXTURE-CARD-INV", self.customer.get("/customer/account").data)
+        self.assertIn(b"Publish invoice with card observations", self.owner.get(path).data)
+        self.assertEqual(self.owner.post(path, data=payload("summary")).status_code, 200)
+        self.assertNotIn(b"Historical card payment observations", self.customer.get("/customer/account").data)
+
+        post = payload("observations")
+        self.assertEqual(self.owner.post(path, data=dict(post, confirm_payment="")).status_code, 400)
+        self.assertEqual(self.owner.post(path, data=dict(post, csrf="wrong")).status_code, 403)
+        self.assertNotIn(b"Historical card payment observations", self.customer.get("/customer/account").data)
+        self.assertEqual(self.owner.post(path, data=post).status_code, 200)
+        self.assertEqual(self.owner.post(path, data=post).status_code, 200)
+        page = self.customer.get("/customer/account")
+        self.assertIn(b"Historical card payment observations", page.data)
+        self.assertIn(b"125.00", page.data)
+        self.assertIn(b"2026-11-25 03:00 UTC", page.data)
+        for private in (b"PRIVATE-SQUARE-ID", b"PRIVATE-PAYMENT-NOTES", b"fixture-scope", b"fixture-manifest"):
+            self.assertNotIn(private, page.data)
+        self.assertEqual(summaries(other_customer), [])
+        self.assertIn("no-store", page.headers["Cache-Control"])
+
+        # Summary-only re-publication removes the optional observations.
+        self.assertEqual(self.owner.post(path, data=payload("summary")).status_code, 200)
+        self.assertNotIn(b"Historical card payment observations", self.customer.get("/customer/account").data)
+        self.assertEqual(self.owner.post(path, data=payload("observations")).status_code, 200)
+        stale = payload("observations")
+        with connect() as db:
+            changed = dict(proof, refunded_minor=1000)
+            db.execute("""INSERT INTO hq_square_invoice_rechecks
+                (payment_id,allocation_revision,invoice_revision,provider_snapshot,evidence_digest,observed_at)
+                VALUES(?,?,?,?,?,?)""", ("PRIVATE-SQUARE-ID", a["revision"], i["revision"],
+                                        json.dumps(changed), digest(changed), "2026-11-25T04:00:00+00:00"))
+        self.assertEqual(self.owner.post(path, data=stale).status_code, 400)
+        self.assertEqual(summaries(self.customer_id), [])
+        self.assertEqual(summaries(self.customer_id, owner=True)[0]["payments"], [])
+        self.assertEqual(self.owner.post(path, data=payload("summary")).status_code, 200)
+        self.assertNotIn(b"Historical card payment observations", self.customer.get("/customer/account").data)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_customer_invoice_payment_publications").fetchone()[0], 2)
+            self.assertEqual(db.execute("SELECT amount_pence FROM hq_receivable_allocations WHERE id=?", (allocation_id,)).fetchone()[0], 12500)
+
     def test_expiry_replacement_logout_validation_and_stale_sessions(self):
         self.login_owner()
         code, _ = self.invite()

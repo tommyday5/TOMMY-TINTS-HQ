@@ -466,3 +466,35 @@ recovery snapshot or domain cutover authorised. Next: verified settlement
 and payment status publication with explicit owner approval, reversible
 historical customer/vehicle execution, creditor reconciliation and actual
 browser acceptance. Existing customer request and booking paths preserved.
+
+
+## 25 November — customer invoice publication deployed; optional historical card observations
+
+PR #275 passed Actions run 45536906457 (642 integration Python tests,
+9 JavaScript tests), merged as e5941497. Railway deployment
+bdfd08cd-a843-42d9-904f-a79c88844bd8 reported SUCCESS at 04:03:44 UTC.
+The original 1024 MB /data volume remains configured. Read-only workbook
+metadata confirms all 48 tabs; Monzo A7:U7 source/override headings remain
+unchanged. Synthetic customer service requests, canonical quote handoff,
+appointment acceptance and owner confirmation, maintenance restrictions,
+and customer invoice publication/isolation tests passed. Owner acceptance
+and direct production browser verification are not established.
+
+This proposed slice adds a separate explicit owner approval under Customers >
+Portal access > Review and publish customer invoice summaries > Publish
+invoice with card observations. Existing summary-only publications do not
+gain payment data automatically. Only original exact completed GBP Square
+observations on unchanged active card allocations with explicit zero refunds
+and no subsequent changed recheck qualify. The customer sees only the amount
+and historical observation timestamp. No current paid/unpaid status, balance,
+settlement, provider IDs, internal notes or cash inference. The approval is
+revision- and digest-bound, persisted atomically and idempotent. Changed
+invoice/work/allocation/provider evidence hides the publication. Publish
+invoice summary only removes payment observations; withdraw removes the
+entire publication. Synthetic route tests submitted; new CI and deployment
+remain unverified.
+
+No actual customer publication, payment, import, recovery snapshot, booking,
+or Sheets write was performed. Historical authority remains unchanged;
+verified bank settlement/fees, creditor reconciliation, reversible historical
+customer/vehicle execution and independent recovery acceptance remain open.

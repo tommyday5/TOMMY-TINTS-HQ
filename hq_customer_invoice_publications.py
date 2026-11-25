@@ -27,6 +27,9 @@ def tables(db):
         occurred_at TEXT NOT NULL,
         UNIQUE(invoice_id,revision)
     )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_customer_invoice_payment_publications (
+        operation_id TEXT PRIMARY KEY REFERENCES hq_customer_invoice_publications(operation_id)
+    )""")
 
 
 def _digest(value):
@@ -65,6 +68,47 @@ def _context(db, customer_id, invoice_id):
     return public, _digest([dict(invoice), allocations, evidence])
 
 
+def _payment_details(db, invoice_id):
+    """Only exact original observations on unchanged active allocations.
+    An observation is historical, never a current balance or settlement.
+    Changed refund/status evidence is deliberately withheld in this slice.
+    """
+    result = []
+    for row in db.execute("""SELECT o.*,a.amount_pence,a.method,a.status AS allocation_status,
+        a.revision AS current_allocation_revision,a.evidence_ref,
+        r.revision AS current_invoice_revision
+        FROM hq_square_invoice_observations o
+        JOIN hq_receivable_allocations a ON a.id=o.allocation_id AND a.invoice_id=o.invoice_id
+        JOIN hq_receivables r ON r.id=o.invoice_id
+        WHERE o.invoice_id=? AND NOT EXISTS (
+            SELECT 1 FROM hq_square_invoice_rechecks x WHERE x.payment_id=o.payment_id)
+        ORDER BY o.observed_at,o.payment_id""", (invoice_id,)):
+        if (row["allocation_status"] != "reported" or row["method"] != "card_reported"
+                or row["evidence_ref"] != row["payment_id"]
+                or row["allocation_revision"] != row["current_allocation_revision"]
+                or row["invoice_revision"] != row["current_invoice_revision"]):
+            continue
+        try:
+            proof = json.loads(row["provider_snapshot"])
+            observed = datetime.fromisoformat(row["observed_at"])
+            if (not isinstance(proof, dict) or observed.utcoffset() is None
+                    or proof.get("id") != row["payment_id"] or proof.get("currency") != "GBP"
+                    or proof.get("status") != "COMPLETED"
+                    or type(proof.get("total_minor")) is not int
+                    or proof["total_minor"] != row["amount_pence"] or row["amount_pence"] <= 0
+                    or type(proof.get("refunded_minor")) is not int or proof["refunded_minor"] != 0):
+                continue
+        except (ValueError, TypeError, OverflowError):
+            continue
+        result.append({"amount_pence": row["amount_pence"],
+                       "observed_on": observed.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")})
+    return result
+
+
+def _payment_digest(context, payments):
+    return _digest(["customer-card-observation-v1", context[1], payments])
+
+
 def _rows(db, customer_id, owner):
     ids = db.execute("""SELECT id FROM hq_receivables WHERE customer_id=?
         ORDER BY updated_at DESC,id DESC LIMIT 500""", (customer_id,)).fetchall()
@@ -73,18 +117,28 @@ def _rows(db, customer_id, owner):
         invoice_id = entry["id"]
         prior = _latest(db, invoice_id)
         context = _context(db, customer_id, invoice_id)
+        payments = _payment_details(db, invoice_id) if context else []
+        with_payments = bool(prior and db.execute(
+            "SELECT 1 FROM hq_customer_invoice_payment_publications WHERE operation_id=?",
+            (prior["operation_id"],)).fetchone())
+        expected = (_payment_digest(context, payments) if payments else "") if with_payments else (context[1] if context else "")
         published = bool(context and prior and prior["customer_id"] == customer_id
                          and prior["action"] == "publish"
-                         and secrets.compare_digest(prior["digest"], context[1]))
+                         and secrets.compare_digest(prior["digest"], expected))
         if owner:
             if context or (prior and prior["action"] == "publish"):
                 result.append(dict(invoice_id=invoice_id, summary=context[0] if context else None,
                                    digest=context[1] if context else "", published=published,
+                                   payments=payments, payment_digest=_payment_digest(context, payments) if payments else "",
+                                   payments_published=published and with_payments,
                                    revision=prior["revision"] if prior else 0,
                                    can_withdraw=bool(prior and prior["action"] == "publish"),
                                    operation_id=secrets.token_hex(16)))
         elif published:
-            result.append(context[0])
+            summary = dict(context[0])
+            if with_payments:
+                summary["card_observations"] = payments
+            result.append(summary)
     return result
 
 
@@ -97,7 +151,7 @@ def summaries(customer_id, *, owner=False):
         return _rows(db, customer_id, owner)
 
 
-def change(customer_id, invoice_id, action, revision, digest, operation_id):
+def change(customer_id, invoice_id, action, revision, digest, operation_id, *, include_payments=False):
     if not storage_ready() or any(not isinstance(v,str) or not HEX.fullmatch(v)
                                     for v in (customer_id,invoice_id,operation_id)):
         raise ValueError("Invalid publication identifiers")
@@ -105,6 +159,8 @@ def change(customer_id, invoice_id, action, revision, digest, operation_id):
         raise ValueError("Invalid publication action")
     if action == "publish" and (len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest)):
         raise ValueError("Review the exact invoice first")
+    if type(include_payments) is not bool or (action != "publish" and include_payments):
+        raise ValueError("Invalid payment publication mode")
     if action == "withdraw":
         digest = ""
     with closing(connect()) as db, db:
@@ -117,8 +173,10 @@ def change(customer_id, invoice_id, action, revision, digest, operation_id):
         replay = db.execute("SELECT * FROM hq_customer_invoice_publications WHERE operation_id=?",
                             (operation_id,)).fetchone()
         if replay:
-            if (replay["customer_id"],replay["invoice_id"],replay["action"],replay["revision"],replay["digest"]) == (
-                    customer_id,invoice_id,action,revision+1,digest):
+            replay_payments = bool(db.execute(
+                "SELECT 1 FROM hq_customer_invoice_payment_publications WHERE operation_id=?", (operation_id,)).fetchone())
+            if (replay["customer_id"],replay["invoice_id"],replay["action"],replay["revision"],replay["digest"],replay_payments) == (
+                    customer_id,invoice_id,action,revision+1,digest,include_payments):
                 return
             raise ValueError("Submission already used")
         prior = _latest(db, invoice_id)
@@ -126,10 +184,20 @@ def change(customer_id, invoice_id, action, revision, digest, operation_id):
             raise ValueError("Publication changed; reload before saving")
         if action == "publish":
             context = _context(db, customer_id, invoice_id)
-            if not context or not secrets.compare_digest(context[1], digest):
+            if not context:
+                raise ValueError("Invoice or payment evidence changed; review again")
+            expected = context[1]
+            if include_payments:
+                payments = _payment_details(db, invoice_id)
+                if not payments:
+                    raise ValueError("No eligible exact card payment observations")
+                expected = _payment_digest(context, payments)
+            if not secrets.compare_digest(expected, digest):
                 raise ValueError("Invoice or payment evidence changed; review again")
         elif not prior or prior["action"] != "publish":
             raise ValueError("No publication to withdraw")
         db.execute("INSERT INTO hq_customer_invoice_publications VALUES(?,?,?,?,?,?,?)",
                    (operation_id,invoice_id,customer_id,revision+1,action,digest,
                     datetime.now(timezone.utc).isoformat()))
+        if include_payments:
+            db.execute("INSERT INTO hq_customer_invoice_payment_publications VALUES(?)", (operation_id,))
