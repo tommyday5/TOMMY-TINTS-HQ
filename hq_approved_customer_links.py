@@ -159,6 +159,8 @@ def reverse(candidate_id,stamp,owner):
         if not row or not hmac.compare_digest(row["manifest_stamp"],stamp):
             raise ValueError("Link changed.")
         if not row["reversed_at"]:
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_historical_postcode_imports'").fetchone() and db.execute("SELECT 1 FROM hq_historical_postcode_imports WHERE candidate_id=? AND reversed_at IS NULL",(candidate_id,)).fetchone():
+                raise ValueError("Reverse the historical postcode import before reversing the identity link.")
             db.execute("""UPDATE hq_approved_customer_source_links
                 SET reversed_at=?,reversed_by=? WHERE candidate_id=?""",
                 (datetime.now(timezone.utc).isoformat(),_actor_fingerprint(owner),candidate_id))
@@ -229,3 +231,6 @@ def register_routes(bp):
         return render_template("hq_approved_customer_links.html",candidate_id=candidate_id,
             manifest=manifest,stamp=stamp,error=error,notice=notice,rows=rows,
             snapshots=snapshots,csrf=session.get("csrf","")),status
+
+    from hq_historical_postcode_import import register_routes as register_postcode_routes
+    register_postcode_routes(bp)
