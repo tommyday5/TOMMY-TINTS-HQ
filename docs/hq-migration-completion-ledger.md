@@ -646,3 +646,37 @@ made. Customer portal behaviour unchanged. Historical vehicle/J-series
 job creation and relationship mapping, finance settlement and creditor
 reconciliation, off-volume recovery verification, and domain-level
 reconciliation/authority approval remain open. No domain cutover.
+
+
+## 25 November — combined customer/postcode creation deployed; vehicle provenance
+
+PR #280 passed Actions run 45573400209 (648 integration Python tests and
+9 JavaScript tests observed in logs), merged as 76e8ec6b. Railway deployment
+006df137-9312-4901-ab1d-9dd22bb05eda reported SUCCESS at 09:00:39 UTC.
+Original 1024 MB /data volume was observed attached before merge; PR #258
+remains merged. Read-only workbook metadata lists 48 tabs and Jobs 94
+headings. Among 60 rows with syntactically valid J references, 52 have
+nonblank Vehicle/Reg and only one is a modern UK plate-only string;
+8 are blank. This is source inventory, not identity verification.
+
+Proposed owner workflow: Historical Customers > Review historical vehicle
+relationships. Select one original J reference and Jobs row, a Customers
+row with active approved/created provenance, the same canonical customer
+and their existing vehicle, and a recovery snapshot containing the current
+identity. The exact preview shows source text and native vehicle side by side.
+Literal modern plate-only strings must match; mixed descriptions require
+independent documentary review. Fresh source and native fingerprints,
+snapshot, owner approval, row and reference uniqueness, and replay are checked.
+Saved provenance is reversible without Sheets access; active links block
+parent approved-customer link reversal. Imported-customer archival remains
+conservative where dependent history exists. No new vehicle or work record,
+no field overwrite, no customer portal access or pricing change. Synthetic
+route regression submitted; CI/deployment and owner acceptance pending.
+
+PR #280 CI confirms combined basket, service submission, quote conversion,
+appointment acceptance and owner confirmation, native vehicle isolation and
+customer portal isolation. No production owner/customer browser acceptance
+or actual historical import established. Next: owner-approved missing
+vehicle creation and original J-series work creation from verified
+relationships, settlement/fees and creditor reconciliation. No authority
+change or workbook write.
