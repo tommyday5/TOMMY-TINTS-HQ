@@ -1,7 +1,7 @@
 """Bounded owner-approved creation of missing historical customer identities.
 
-Only literal names are imported; contact, pricing, entitlements, vehicles and
-jobs remain unmapped. Reversal archives untouched identities, never deletes.
+Literal names and separately selected literal postcodes may be imported;
+contact, pricing, entitlements, vehicles and jobs remain unmapped. Reversal archives untouched identities, never deletes.
 """
 from contextlib import closing
 from datetime import datetime, timezone
@@ -19,6 +19,8 @@ from hq_auth import required
 from hq_customer_archive import _tables as archive_tables
 from hq_private_recovery import _paths, _existing, _restore_check, MAX_SECONDS
 from hq_work_progress import _actor_fingerprint
+from hq_customer_postcodes import normalize_postcode, postcode_status, _tables as postcode_tables
+from hq_historical_postcode_import import _write_postcode
 
 
 def helpers():
@@ -30,6 +32,7 @@ def _init(db):
     from hq_approved_customer_links import _init as link_init
     link_init(db)
     archive_tables(db)
+    postcode_tables(db)
     db.execute("""CREATE TABLE IF NOT EXISTS hq_historical_customer_creation_batches(
         id TEXT PRIMARY KEY, stamp TEXT NOT NULL UNIQUE, manifest TEXT NOT NULL,
         actor TEXT NOT NULL, created_at TEXT NOT NULL, reversed_at TEXT, reversed_by TEXT)""")
@@ -71,7 +74,7 @@ def _rows(value):
     return rows
 
 
-def _manifest(db, rows, snapshot_id, batch_id, source):
+def _manifest(db, rows, snapshot_id, batch_id, source, include_postcodes=False):
     original = helpers()
     _snapshot(snapshot_id, db)
     native_names = {original._norm(r[0]) for r in db.execute("SELECT name FROM hq_customers")}
@@ -94,16 +97,28 @@ def _manifest(db, rows, snapshot_id, batch_id, source):
         customer_id = original._stamp(["historical-created-customer",batch_id,row])[:32]
         if db.execute("SELECT 1 FROM hq_customers WHERE id=?",(customer_id,)).fetchone():
             raise ValueError("Native ID collision.")
+        postcode = ""
+        if include_postcodes:
+            raw_postcode = original._cell(raw, 2)
+            if (not isinstance(raw_postcode, str) or raw_postcode.startswith("=")
+                    or raw_postcode != original._cell(effective, 2)):
+                raise ValueError("Row %d postcode is not an unchanged literal." % row)
+            try:
+                postcode = normalize_postcode(raw_postcode)
+            except ValueError:
+                raise ValueError("Row %d postcode format needs review; no batch prepared." % row) from None
         entries.append(dict(row=row, name=name, customer_id=customer_id,
-                            source_stamp=original.source_stamp(*source,row)))
+                            postcode=postcode, source_stamp=original.source_stamp(*source,row)))
     return dict(version=1,batch_id=batch_id,snapshot_id=snapshot_id,
                 workbook_id=original.WORKBOOK,sheet_id=original.CUSTOMERS_SHEET_ID,
                 directory_stamp=_directory_stamp(db),entries=entries,
+                include_postcodes=include_postcodes,
+                postcodes_filled=sum(bool(e['postcode']) for e in entries),
                 customers_created=len(entries),fields_overwritten=0,
                 vehicles_created=0,jobs_changed=0,unresolved_conflicts=0)
 
 
-def review(rows, snapshot_id, batch_id, source, owner, stamp=None):
+def review(rows, snapshot_id, batch_id, source, owner, stamp=None, *, include_postcodes=False):
     original = helpers()
     if not storage_ready() or not original.HEX.fullmatch(batch_id):
         raise ValueError("Persistent storage and a valid batch reference are required.")
@@ -117,10 +132,11 @@ def review(rows, snapshot_id, batch_id, source, owner, stamp=None):
             saved = json.loads(prior["manifest"])
             if (stamp and hmac.compare_digest(prior["stamp"],stamp) and prior["actor"]==actor
                     and not prior["reversed_at"] and rows==[e["row"] for e in saved["entries"]]
-                    and snapshot_id==saved["snapshot_id"]):
+                    and snapshot_id==saved["snapshot_id"]
+                    and include_postcodes==saved.get("include_postcodes",False)):
                 return None
             raise ValueError("Batch reference already used.")
-        manifest = _manifest(db,rows,snapshot_id,batch_id,source)
+        manifest = _manifest(db,rows,snapshot_id,batch_id,source,include_postcodes)
         expected = original._stamp(["historical-customer-creation-v1",manifest,actor])
         if stamp is None:
             return manifest,expected
@@ -128,14 +144,18 @@ def review(rows, snapshot_id, batch_id, source, owner, stamp=None):
             raise ValueError("Source or directory changed; prepare a fresh approval.")
         now = datetime.now(timezone.utc).isoformat()
         # PII remains only in the canonical native customer; store keyed provenance.
-        audit = dict(manifest,entries=[{k:v for k,v in e.items() if k!="name"}
-                                     for e in manifest["entries"]])
+        audit = dict(manifest,entries=[dict(
+            {k:v for k,v in e.items() if k not in ("name","postcode")},
+            postcode_stamp=original._stamp(["created-postcode",e["customer_id"],e["postcode"]])
+            if e["postcode"] else None) for e in manifest["entries"]])
         db.execute("INSERT INTO hq_historical_customer_creation_batches VALUES(?,?,?,?,?,NULL,NULL)",
                    (batch_id,expected,json.dumps(audit,sort_keys=True),actor,now))
         for entry in manifest["entries"]:
             cid=entry["customer_id"]
             db.execute("INSERT INTO hq_customers VALUES(?,?,?,?,?,?)",
                        (cid,None,entry["name"],"","",now))
+            if entry["postcode"]:
+                _write_postcode(db,cid,1,"",entry["postcode"],actor,now)
             native = original._native_row(db,cid)
             db.execute("INSERT INTO hq_historical_created_customers VALUES(?,?,?,?,?,?,?)",
                        (manifest["workbook_id"],manifest["sheet_id"],entry["row"],cid,batch_id,
@@ -147,15 +167,31 @@ def _quoted(value):
     return '"' + value.replace('"','""') + '"'
 
 
-def _untouched(db, row):
+def _untouched(db, row, entry, batch):
     original=helpers()
     cid=row["customer_id"]
     native=original._native_row(db,cid)
     if not native or original._native_digest(native)!=row["native_stamp"]:
         raise ValueError("Imported identity has changed or is archived; review manually.")
+    # An initial postcode is part of this exact creation, not a later edit.
+    # Preserve it on archival, but reject any subsequent native postcode history.
+    original_postcode = entry.get("postcode_stamp")
+    own_tables = set()
+    if original_postcode:
+        status = postcode_status(db,cid)
+        events = db.execute("SELECT * FROM hq_customer_postcode_events WHERE customer_id=?",(cid,)).fetchall()
+        if (status["revision"] != 1 or not status["postcode"]
+                or original._stamp(["created-postcode",cid,status["postcode"]]) != original_postcode
+                or len(events) != 1 or events[0]["revision"] != 1
+                or events[0]["previous_postcode"] != "" or events[0]["next_postcode"] != status["postcode"]
+                or events[0]["actor_fingerprint"] != batch["actor"]
+                or events[0]["occurred_at"] != batch["created_at"]
+                or status["updated_at"] != batch["created_at"]):
+            raise ValueError("Imported postcode has changed; review manually.")
+        own_tables = {"hq_customer_postcodes","hq_customer_postcode_events"}
     # Conservative: any later native relationship/history blocks automatic archival.
     for table, in db.execute("SELECT name FROM sqlite_master WHERE type='table'"):
-        if table in ("hq_customers","hq_historical_created_customers"):
+        if table in ("hq_customers","hq_historical_created_customers") or table in own_tables:
             continue
         for col in db.execute("PRAGMA table_info("+_quoted(table)+")"):
             if col["name"].lower().endswith("customer_id") and db.execute(
@@ -185,8 +221,11 @@ def reverse(batch_id, stamp, owner):
                         (batch_id,)).fetchall()
         if not rows:
             raise ValueError("Batch provenance missing.")
+        entries = {e["customer_id"]:e for e in json.loads(batch["manifest"])["entries"]}
         for row in rows:
-            _untouched(db,row)
+            if row["customer_id"] not in entries:
+                raise ValueError("Batch provenance missing.")
+            _untouched(db,row,entries[row["customer_id"]],batch)
         actor=_actor_fingerprint(owner)
         now=datetime.now(timezone.utc).isoformat()
         for row in rows:
@@ -230,7 +269,8 @@ def register_routes(bp):
                         raise ValueError("Connect read-only Sheets access first.")
                     result=review(_rows(request.form.get("rows","")),request.form.get("snapshot_id",""),
                                   batch_id,original._read_live(provider[0]),session.get("google_sub"),
-                                  request.form.get("stamp") if action=="apply" else None)
+                                  request.form.get("stamp") if action=="apply" else None,
+                                  include_postcodes=request.form.get("include_postcodes")=="yes")
                     if result:
                         manifest,stamp=result
                     else:

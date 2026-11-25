@@ -393,5 +393,81 @@ class CustomerFieldReviewTests(unittest.TestCase):
         self.assertRaises(ValueError,_rows,"5,6,7,8,9,10")
 
 
+    def test_missing_customer_batch_optional_postcodes_exact_and_reversible(self):
+        import re
+        from hq_private_recovery import create_snapshot
+        from hq_customer_postcodes import postcode_status
+        from hq_customer_archive import archive_status
+        url="/hq/migration/customers/create-batch"
+        self.login()
+        for payload in (self.formula,self.computed):
+            payload["valueRanges"][1]["values"].extend([
+                ["Synthetic Missing Alpha","Retail","zz1 1aa"],
+                ["Synthetic Missing Beta","Trader",""]])
+        snapshot=create_snapshot(uuid.uuid4().hex)
+        batch=uuid.uuid4().hex
+        data=dict(csrf="test-csrf",action="prepare",batch_id=batch,
+                  rows="6,7",snapshot_id=snapshot,include_postcodes="yes")
+        a,b=self.live_source()
+        with a,b:
+            for payload in (self.formula,self.computed):
+                payload["valueRanges"][1]["values"][2][2]="bad postcode"
+            self.assertEqual(self.client.post(url,data=data).status_code,409)
+            for payload in (self.formula,self.computed):
+                payload["valueRanges"][1]["values"][2][2]="zz1 1aa"
+            page=self.client.post(url,data=data)
+            self.assertEqual(page.status_code,200)
+            self.assertIn(b"ZZ1 1AA",page.data)
+            self.assertIn(b"1 postcodes populated",page.data)
+            stamp=re.search(rb'name="stamp" value="([0-9a-f]{64})"',page.data).group(1).decode()
+            apply=dict(data,action="apply",stamp=stamp,confirm="yes")
+            self.assertEqual(self.client.post(url,data=dict(apply,include_postcodes="")).status_code,409)
+            self.computed["valueRanges"][1]["values"][2][2]="ZZ2 2BB"
+            self.assertEqual(self.client.post(url,data=apply).status_code,409)
+            self.computed["valueRanges"][1]["values"][2][2]="zz1 1aa"
+            self.assertEqual(self.client.post(url,data=apply).status_code,200)
+            self.assertEqual(self.client.post(url,data=apply).status_code,200)
+            self.assertEqual(self.client.post(url,data=dict(apply,include_postcodes="")).status_code,409)
+        with connect() as db:
+            ids=[r[0] for r in db.execute("SELECT customer_id FROM hq_historical_created_customers ORDER BY sheet_row")]
+            self.assertEqual(len(ids),2)
+            self.assertEqual(postcode_status(db,ids[0])["postcode"],"ZZ1 1AA")
+            self.assertEqual(postcode_status(db,ids[0])["revision"],1)
+            self.assertEqual(postcode_status(db,ids[1])["revision"],0)
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_customer_postcode_events").fetchone()[0],1)
+            audit=db.execute("SELECT manifest FROM hq_historical_customer_creation_batches WHERE id=?",(batch,)).fetchone()[0]
+            self.assertNotIn("ZZ1 1AA",audit)
+        self.assertIn(b"ZZ1 1AA",self.client.get("/hq/customers/"+ids[0]+"/postcode").data)
+        reverse=dict(csrf="test-csrf",action="reverse",batch_id=batch,stamp=stamp,confirm="yes")
+        self.assertEqual(self.client.post(url,data=reverse).status_code,200)
+        self.assertEqual(self.client.post(url,data=reverse).status_code,200)
+        self.assertEqual(archive_status(ids[0]),(True,1))
+        self.assertEqual(archive_status(ids[1]),(True,1))
+        with connect() as db:
+            self.assertEqual(postcode_status(db,ids[0])["postcode"],"ZZ1 1AA")
+
+    def test_imported_customer_postcode_edit_blocks_batch_reversal(self):
+        import re
+        from hq_private_recovery import create_snapshot
+        from hq_customer_archive import archive_status
+        self.login()
+        url="/hq/migration/customers/create-batch"
+        for payload in (self.formula,self.computed):
+            payload["valueRanges"][1]["values"].append(["Synthetic Missing","Retail","ZZ1 1AA"])
+        data=dict(csrf="test-csrf",action="prepare",batch_id=uuid.uuid4().hex,
+                  rows="6",snapshot_id=create_snapshot(uuid.uuid4().hex),include_postcodes="yes")
+        a,b=self.live_source()
+        with a,b:
+            page=self.client.post(url,data=data)
+            self.assertEqual(page.status_code,200)
+            stamp=re.search(rb'name="stamp" value="([0-9a-f]{64})"',page.data).group(1).decode()
+            self.assertEqual(self.client.post(url,data=dict(data,action="apply",stamp=stamp,confirm="yes")).status_code,200)
+        with connect() as db:
+            cid=db.execute("SELECT customer_id FROM hq_historical_created_customers").fetchone()[0]
+        save_postcode(cid,"ZZ2 2BB",1,uuid.uuid4().hex,"synthetic-owner")
+        self.assertEqual(self.client.post(url,data=dict(data,action="reverse",stamp=stamp,confirm="yes")).status_code,409)
+        self.assertEqual(archive_status(cid),(False,0))
+
+
 if __name__=="__main__":
     unittest.main()
