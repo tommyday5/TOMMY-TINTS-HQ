@@ -76,21 +76,60 @@ def correction_tables(db):
     )""")
 
 
+def partial_tables(db):
+    correction_tables(db)
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_square_partial_refund_corrections (
+        id INTEGER PRIMARY KEY,
+        allocation_id TEXT NOT NULL REFERENCES hq_receivable_allocations(id),
+        recheck_id INTEGER NOT NULL UNIQUE REFERENCES hq_square_invoice_rechecks(id),
+        manifest TEXT NOT NULL UNIQUE,
+        prior_amount INTEGER NOT NULL,
+        result_amount INTEGER NOT NULL CHECK(result_amount > 0 AND result_amount < prior_amount),
+        prior_revision INTEGER NOT NULL,
+        result_revision INTEGER NOT NULL,
+        corrected_at TEXT NOT NULL,
+        UNIQUE(allocation_id,result_revision)
+    )""")
+
+
+def partial_history(db, allocation_id):
+    return [dict(r) for r in db.execute("""SELECT * FROM hq_square_partial_refund_corrections
+        WHERE allocation_id=? ORDER BY id DESC""", (allocation_id,))]
+
+
+def refund_baseline(db, row, original):
+    """Validate the original gross amount and every approved local reduction."""
+    initial = json.loads(original["provider_snapshot"])
+    gross = initial["total_minor"]
+    amount = gross
+    revision = original["allocation_revision"]
+    for prior in reversed(partial_history(db, row["id"])):
+        if (prior["prior_amount"] != amount or prior["prior_revision"] != revision
+                or prior["result_revision"] != revision + 1
+                or not 0 < prior["result_amount"] < amount):
+            raise EvidenceConflict("Prior refund correction history conflicts with this allocation.")
+        amount, revision = prior["result_amount"], prior["result_revision"]
+    if (type(gross) is not int or gross <= 0 or row["amount_pence"] != amount
+            or row["revision"] != revision):
+        raise EvidenceConflict("Allocation changed outside the retained refund correction history.")
+    return gross
+
+
 def correction(db, allocation_id):
     row = db.execute("SELECT * FROM hq_square_full_refund_corrections WHERE allocation_id=?",
                      (allocation_id,)).fetchone()
     return dict(row) if row else None
 
 
-def full_refund_context(db, allocation_id):
+def full_refund_context(db, allocation_id, partial=False):
     row = load_allocation(db, allocation_id)
     original = observation(db, allocation_id)
     if (not original or row["status"] != "reported" or row["method"] != "card_reported"
             or row["invoice_status"] != "issued" or row["invoice_archived"]
             or row["evidence_ref"] != original["payment_id"]
-            or row["invoice_id"] != original["invoice_id"]
-            or row["revision"] != original["allocation_revision"]):
+            or row["invoice_id"] != original["invoice_id"]):
         raise ValueError("Only an unchanged active Square-observed allocation on an issued invoice is eligible.")
+    gross = refund_baseline(db, row, original)
     latest = recheck_history(db, original["payment_id"])
     if not latest:
         raise ValueError("Retain a fresh full refund observation first.")
@@ -103,8 +142,13 @@ def full_refund_context(db, allocation_id):
             or evidence["currency"] != "GBP" or evidence["status"] != "COMPLETED"
             or type(evidence["total_minor"]) is not int
             or type(evidence["refunded_minor"]) is not int
-            or evidence["total_minor"] != row["amount_pence"]
-            or evidence["refunded_minor"] != row["amount_pence"]):
+            or evidence["total_minor"] != gross):
+        raise ValueError("Only exact retained completed GBP refund evidence qualifies.")
+    remaining = gross - evidence["refunded_minor"]
+    if partial:
+        if not 0 < remaining < row["amount_pence"]:
+            raise ValueError("Only an increased cumulative partial refund qualifies.")
+    elif remaining != 0:
         raise ValueError("Only a retained exact full refund qualifies; partial or unknown refunds require separate review.")
     return row, original, event
 
@@ -112,7 +156,7 @@ def full_refund_context(db, allocation_id):
 def full_refund_review(allocation_id, manifest=None):
     """Owner-approved local reversal only; never send a refund or claim bank settlement."""
     with closing(connect()) as db, db:
-        correction_tables(db)
+        partial_tables(db)
         prior = correction(db, allocation_id)
         if prior:
             if manifest and secrets.compare_digest(prior["manifest"], manifest):
@@ -134,7 +178,7 @@ def full_refund_review(allocation_id, manifest=None):
         raise EvidenceConflict("Invoice, allocation or evidence changed; review again.")
     with closing(connect()) as db, db:
         db.execute("PRAGMA foreign_keys=ON")
-        correction_tables(db)
+        partial_tables(db)
         db.execute("BEGIN IMMEDIATE")
         prior = correction(db, allocation_id)
         if prior:
@@ -157,6 +201,56 @@ def full_refund_review(allocation_id, manifest=None):
         db.execute("""INSERT INTO hq_square_full_refund_corrections VALUES(?,?,?,?,?,?,?,?)""",
                    (allocation_id, original["payment_id"], event["id"], manifest,
                     json.dumps(evidence, sort_keys=True), row["revision"], revision, stamp))
+    return None
+
+
+def partial_refund_review(allocation_id, manifest=None):
+    """Apply only the incremental reduction implied by a fresh cumulative refund."""
+    with closing(connect()) as db, db:
+        partial_tables(db)
+        if manifest and db.execute("""SELECT 1 FROM hq_square_partial_refund_corrections
+                WHERE allocation_id=? AND manifest=?""", (allocation_id, manifest)).fetchone():
+            return None
+        context = full_refund_context(db, allocation_id, partial=True)
+    row, original, event = context
+    if not configured() or digest(os.environ["HQ_SQUARE_LOCATION_ID"]) != original["scope_digest"]:
+        raise EvidenceConflict("Original Square location cannot be verified.")
+    evidence = inspect_exact_payment(original["payment_id"])
+    if (not configured() or digest(os.environ["HQ_SQUARE_LOCATION_ID"]) != original["scope_digest"]
+            or evidence != event["evidence"]):
+        raise EvidenceConflict("Provider evidence changed; retain a new recheck before review.")
+    remaining = evidence["total_minor"] - evidence["refunded_minor"]
+    expected = digest(["square-partial-refund-reduction-v1", row, original, event])
+    if manifest is None:
+        return {"manifest": expected, "prior_amount": row["amount_pence"],
+                "remaining": remaining, "reduction": row["amount_pence"] - remaining,
+                "cumulative_refund": evidence["refunded_minor"]}
+    if not secrets.compare_digest(expected, manifest):
+        raise EvidenceConflict("Invoice, allocation or evidence changed; review again.")
+    with closing(connect()) as db, db:
+        db.execute("PRAGMA foreign_keys=ON")
+        partial_tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        if db.execute("""SELECT 1 FROM hq_square_partial_refund_corrections
+                WHERE allocation_id=? AND manifest=?""", (allocation_id, manifest)).fetchone():
+            return None
+        if (not configured() or digest(os.environ["HQ_SQUARE_LOCATION_ID"]) != original["scope_digest"]
+                or full_refund_context(db, allocation_id, partial=True) != context):
+            raise EvidenceConflict("Invoice, allocation or evidence changed; review again.")
+        stamp = datetime.now(timezone.utc).isoformat()
+        revision = row["revision"] + 1
+        db.execute("""UPDATE hq_receivable_allocations SET amount_pence=?,revision=?,updated_at=?
+            WHERE id=?""", (remaining, revision, stamp, allocation_id))
+        snapshot = {k: row[k] for k in ("id","invoice_id","received_on","method","evidence_ref","memo")}
+        snapshot.update(status="reported", revision=revision, amount_pence=remaining,
+                        prior_amount_pence=row["amount_pence"], correction_reason="square_partial_refund",
+                        provider_recheck_id=event["id"], cumulative_refund_pence=evidence["refunded_minor"])
+        db.execute("INSERT INTO hq_receivable_allocation_events VALUES(?,?,?,?,?)",
+                   (secrets.token_hex(16), allocation_id, revision, json.dumps(snapshot, sort_keys=True), stamp))
+        db.execute("""INSERT INTO hq_square_partial_refund_corrections
+            (allocation_id,recheck_id,manifest,prior_amount,result_amount,prior_revision,result_revision,corrected_at)
+            VALUES(?,?,?,?,?,?,?,?)""", (allocation_id, event["id"], manifest, row["amount_pence"],
+            remaining, row["revision"], revision, stamp))
     return None
 
 
@@ -279,7 +373,8 @@ def register(bp):
             return "Persistent HQ storage unavailable", 503, {"Cache-Control": "no-store"}
         allocation_id = request.args.get("allocation", "")
         row = saved = review = notice = error = refund_review = refund_correction = None
-        history = []
+        history = partial_corrections = []
+        partial_review = gross = None
         status = 200
         try:
             if request.method == "POST":
@@ -291,14 +386,34 @@ def register(bp):
                 raise ValueError("Invalid allocation ID.")
             if allocation_id:
                 with closing(connect()) as db, db:
-                    correction_tables(db)
+                    partial_tables(db)
+                    partial_corrections = partial_history(db, allocation_id)
                     refund_correction = correction(db, allocation_id)
                     row = load_allocation(db, allocation_id)
                     saved = observation(db, allocation_id)
                     if saved:
+                        gross = json.loads(saved["provider_snapshot"])["total_minor"]
                         history = recheck_history(db, saved["payment_id"])
             if request.method == "POST":
                 action = request.form.get("action")
+                if action in ("partial-review", "partial-save") and allocation_id:
+                    if action == "partial-save":
+                        manifest = request.form.get("manifest", "")
+                        if not DIGEST.fullmatch(manifest) or request.form.get("confirm") != "yes":
+                            raise ValueError("Explicit approval of the exact partial refund correction is required.")
+                        partial_refund_review(allocation_id, manifest)
+                        notice = "Partial refund correction retained. Reported allocation reduced; no refund sent or bank settlement inferred."
+                        with closing(connect()) as db, db:
+                            row = load_allocation(db, allocation_id)
+                            partial_corrections = partial_history(db, allocation_id)
+                            history = recheck_history(db, saved["payment_id"])
+                    else:
+                        partial_review = partial_refund_review(allocation_id)
+                    return render_template("hq_square_invoice_evidence.html", allocation_id=allocation_id,
+                        row=row, saved=saved, review=None, notice=notice, error=None,
+                        history=history, refund_review=None, refund_correction=refund_correction,
+                        partial_review=partial_review, partial_corrections=partial_corrections, gross=gross,
+                        csrf=session.get("csrf", "")), 200, {"Cache-Control": "no-store"}
                 if action in ("refund-review", "refund-save") and allocation_id:
                     if action == "refund-save":
                         manifest = request.form.get("manifest", "")
@@ -316,6 +431,7 @@ def register(bp):
                     return render_template("hq_square_invoice_evidence.html", allocation_id=allocation_id,
                         row=row, saved=saved, review=None, notice=notice, error=None,
                         history=history, refund_review=refund_review, refund_correction=refund_correction,
+                        partial_review=partial_review, partial_corrections=partial_corrections, gross=gross,
                         csrf=session.get("csrf", "")), 200, {"Cache-Control": "no-store"}
                 if action == "recheck" and allocation_id:
                     if request.form.get("confirm") != "yes":
@@ -328,6 +444,7 @@ def register(bp):
                     return render_template("hq_square_invoice_evidence.html", allocation_id=allocation_id,
                         row=row, saved=saved, review=None, notice=notice, error=None,
                         history=history, refund_review=refund_review, refund_correction=refund_correction,
+                        partial_review=partial_review, partial_corrections=partial_corrections, gross=gross,
                         csrf=session.get("csrf", "")), 200, {"Cache-Control": "no-store"}
                 if action not in ("review", "save") or not allocation_id:
                     raise ValueError("Choose an allocation and review its evidence.")
@@ -374,7 +491,10 @@ def register(bp):
             error, status = "Invalid or ineligible evidence." if isinstance(exc, KeyError) else str(exc), 400
         except (requests.RequestException, RuntimeError, OSError, sqlite3.Error):
             error, status = "Provider read or HQ storage unavailable; no new save confirmed.", 503
+        if saved and gross is None:
+            gross = json.loads(saved["provider_snapshot"])["total_minor"]
         return render_template("hq_square_invoice_evidence.html", allocation_id=allocation_id,
             row=row, saved=saved, review=review, notice=notice, error=error,
             history=history, refund_review=refund_review, refund_correction=refund_correction,
+            partial_review=partial_review, partial_corrections=partial_corrections, gross=gross,
             csrf=session.get("csrf", "")), status, {"Cache-Control": "no-store"}
