@@ -402,3 +402,38 @@ and no independently verified bank balance or customer paid status is inferred.
 This implementation awaits CI, deployment and owner acceptance. Historical
 customer/vehicle migration, creditor reconciliation, formula parity and
 off-volume recovery verification remain unverified; no domain authority changes.
+
+
+## 25 November — cumulative partial Square refund corrections
+
+PR #273 merged as d9a04cc8 after successful CI run 45523174012
+(127 root and 640 integration Python tests, 9 JS tests); full-refund
+synthetic route test passed. Railway deployment 2c1875f0-481f-4edc-8a6d-9cd82ffffb6c
+SUCCESS at inspection. Existing /data volume 1024 MB
+was observed attached. Workbook read-only metadata still lists 48 tabs and
+Monzo A7:U7 headings match the original schema.
+
+This proposed change allows a local owner-approved reduction of the same
+reported card allocation after exact fresh cumulative partial-refund
+evidence. Original gross evidence remains immutable; the amount used in
+existing reported receivables calculations becomes the remaining amount.
+Each incremental correction binds the exact prior amount, revision,
+provider recheck and approval manifest; duplicate requests are idempotent.
+Subsequent increases in cumulative refund reduce only the additional amount;
+an eventual full refund reverses the remaining allocation. Unknown or
+decreasing refund observations do not authorise restoration. No credit
+note, refund sent, bank settlement, chargeback, verified outstanding
+balance or customer-visible payment status is implied. Owner workflow:
+Invoice payment allocations > Check/view exact Square payment evidence >
+Recheck Square refund/status > Review partial refund allocation correction >
+Approve partial refund allocation correction. Original invoice face amount
+and other allocations are not changed. Synthetic route regression is
+submitted; new CI, deployment and owner acceptance remain pending.
+
+No production allocation, payment, customer, job, booking or Sheets data
+was changed by development. No historical domain cutover. Canonical
+customer/vehicle import, independent recovery acceptance, creditor matching,
+settlement and formula parity remain outstanding. Existing customer request,
+quote approval, canonical job handoff and isolation tests passed in PR #273;
+direct production /book verification failed DNS resolution, and customer
+payment display remains unverified.
