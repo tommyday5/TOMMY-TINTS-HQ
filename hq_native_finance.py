@@ -127,3 +127,7 @@ register_monzo_invoice_matches(finance)
 # Private creditor planning records; not verified liabilities or payment actions.
 from hq_creditor_cases import register as register_creditor_cases
 register_creditor_cases(finance)
+
+# Owner-entered planning scenario; separate from verified finance.
+from hq_creditor_capacity import register as register_creditor_capacity
+register_creditor_capacity(finance)
