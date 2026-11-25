@@ -756,5 +756,98 @@ class CustomerFieldReviewTests(unittest.TestCase):
         self.assertEqual(app.test_client().get("/hq/work/"+two["id"]+"/edit").status_code,302)
 
 
+    def test_historical_nonquote_status_is_evidence_not_live_finance_or_booking(self):
+        import re
+        import json
+        from hq_private_recovery import create_snapshot
+        from hq_historical_customer_creation import review as create_customer
+        from hq_historical_vehicle_links import review as link_vehicle
+        from hq_core_records import change_work_status, set_draft_financials, work_summary, search_work_records
+        self.login()
+        examples = (("J0456", "Paid", 125), ("J0457", "Completed", 175),
+                    ("J0458", "Booked", 200), ("J0459", "Awaiting Payment", ""))
+        for payload in (self.formula,self.computed):
+            payload["valueRanges"][1]["values"].append(["Synthetic History Driver","Retail",""])
+            for ref,status,price in examples:
+                payload["valueRanges"][0]["values"].append(
+                    [ref,"","Synthetic History Driver","Retail","AB22 CDE","Window Tinting"]
+                    +[""]*10+[price,status])
+        source=(self.formula,self.computed)
+        snap=create_snapshot(uuid.uuid4().hex)
+        batch=uuid.uuid4().hex
+        manifest,stamp=create_customer([6],snap,batch,source,"synthetic-owner")
+        create_customer([6],snap,batch,source,"synthetic-owner",stamp)
+        cid=manifest["entries"][0]["customer_id"]
+        vid=uuid.uuid4().hex
+        with connect() as db:
+            db.execute("INSERT INTO hq_vehicles VALUES(?,?,?,?,?,?,?)",
+                       (vid,cid,"Hyundai","i30","2022","AB22 CDE","2026-01-01"))
+        links=[]
+        for row,(ref,status,price) in enumerate(examples,6):
+            snap=create_snapshot(uuid.uuid4().hex)
+            link=uuid.uuid4().hex
+            _,stamp=link_vehicle(source,row,ref,6,cid,vid,snap,link,"synthetic-owner")
+            link_vehicle(source,row,ref,6,cid,vid,snap,link,"synthetic-owner",stamp)
+            links.append(link)
+        url="/hq/migration/customers/create-work"
+        self.assertEqual(self.client.get(url).status_code,200)
+        before=work_summary()
+        applied=[]
+        a,b=self.live_source()
+        with a,b:
+            for i,(link,(ref,status,price)) in enumerate(zip(links,examples)):
+                data=dict(csrf="test-csrf",action="prepare",operation=uuid.uuid4().hex,
+                          link_id=link,service="Window Tinting",snapshot_id=create_snapshot(uuid.uuid4().hex))
+                page=self.client.post(url,data=data)
+                self.assertEqual(page.status_code,200,page.data)
+                self.assertIn(("Source status: "+status).encode(),page.data)
+                self.assertIn(b"without a live price or operational status",page.data)
+                stamp=re.search(rb'name="stamp" value="([0-9a-f]{64})"',page.data).group(1).decode()
+                apply=dict(data,action="apply",confirm="yes",stamp=stamp)
+                self.assertEqual(self.client.post(url,data=dict(apply,confirm="")).status_code,409)
+                if i==0:
+                    self.computed["valueRanges"][0]["values"][2][17]="Completed"
+                    self.assertEqual(self.client.post(url,data=apply).status_code,409)
+                    self.computed["valueRanges"][0]["values"][2][17]=status
+                self.assertEqual(self.client.post(url,data=apply).status_code,200)
+                self.assertEqual(self.client.post(url,data=apply).status_code,200)
+                applied.append(apply)
+        for ref,status,price in examples:
+            result=search_work_records(query=ref,kind="job",status="draft")
+            self.assertEqual(result["total"],1)
+            wid=result["records"][0]["id"]
+            with connect() as db:
+                work=db.execute("SELECT * FROM hq_work_records WHERE id=?",(wid,)).fetchone()
+                self.assertEqual((work["kind"],work["status"],work["price_pence"],work["deposit_pence"],
+                                  work["preferred_date"],work["preferred_time"]),
+                                 ("job","draft",None,0,"",""))
+                evidence=json.loads(db.execute("SELECT manifest FROM hq_historical_created_work WHERE work_id=?",
+                                               (wid,)).fetchone()[0])
+                self.assertEqual(evidence["source_status"],status)
+                self.assertEqual(evidence["price_pence"],price*100 if price!="" else None)
+            page=self.client.get("/hq/work/"+wid+"/edit")
+            self.assertEqual(page.status_code,200)
+            self.assertIn(("Original workbook status: "+status).encode(),page.data)
+            self.assertIn(b"blocked pending independent reconciliation",page.data)
+            with self.assertRaises(ValueError):
+                change_work_status(wid,"ready_for_review",0)
+            with self.assertRaises(ValueError):
+                set_draft_financials(wid,12500,0,0)
+            self.assertEqual(app.test_client().get("/hq/work/"+wid+"/edit").status_code,302)
+        after=work_summary()
+        for key in ("priced_draft_value_pence","outstanding_recorded_pence",
+                    "approved_price_total_pence","planned_deposit_total_pence",
+                    "verified_cash_received_pence","verified_cash_outstanding_pence"):
+            self.assertEqual(after[key],before[key],key)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_job_sheet_links").fetchone()[0],0)
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_job_sync_outbox").fetchone()[0],0)
+        last=applied[-1]
+        reversal=dict(csrf="test-csrf",action="reverse",operation=last["operation"],
+                      stamp=last["stamp"],confirm="yes")
+        self.assertEqual(self.client.post(url,data=reversal).status_code,200)
+        self.assertEqual(search_work_records(query="J0459",kind="job")["total"],0)
+
+
 if __name__=="__main__":
     unittest.main()
