@@ -235,6 +235,8 @@ class CustomerFieldReviewTests(unittest.TestCase):
             self.assertEqual(self.client.post(url,data=apply).status_code,200)
             self.assertEqual(len(history()),1)
             self.assertIsNone(history()[0]["reversed_at"])
+            with self.assertRaises(ValueError):
+                withdraw_customer_candidate(candidate,0,"synthetic-owner")
             self.assertIn(b"Approved historical link",self.client.get(
                 "/hq/migration/customers/approved-links").data)
         with connect() as db:
