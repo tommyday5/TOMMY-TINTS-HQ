@@ -159,6 +159,73 @@ class CustomerPortalTests(unittest.TestCase):
             "csrf": csrf, "code": code,
         }).status_code, 401)
 
+    def test_explicit_invoice_publication_withdrawal_and_stale_evidence(self):
+        from hq_receivables import save as save_invoice
+        from hq_receivable_payments import save as save_allocation
+        from hq_customer_invoice_publications import summaries
+
+        self.login_owner()
+        self.approve(self.work_id)
+        other_work = self.create_work("Other Person", "other@example.invalid", "ZZ20 BBB")
+        self.approve(other_work)
+        other_customer = native_work_record(other_work)["customer_id"]
+        invoice_id = uuid.uuid4().hex
+        fields = dict(id=invoice_id, operation_id=uuid.uuid4().hex, revision=0,
+                      customer_id=self.customer_id, work_id=self.work_id,
+                      invoice_ref="FIXTURE-PUBLIC-INV", issue_date="2026-11-24",
+                      due_date="2026-12-01", amount_pence=35000, status="issued",
+                      archived=False, memo="PRIVATE-INVOICE-NOTES")
+        save_invoice(fields)
+        save_invoice(dict(fields, id=uuid.uuid4().hex, operation_id=uuid.uuid4().hex,
+                          customer_id=other_customer, work_id=other_work,
+                          invoice_ref="FIXTURE-OTHER-INV"))
+        path = f"/hq/customers/{self.customer_id}/invoice-publications"
+        self.assertEqual(self.customer.get(path).status_code, 302)
+        code, _ = self.invite()
+        self.assertEqual(self.customer_signin(code).status_code, 303)
+        self.assertNotIn(b"FIXTURE-PUBLIC-INV", self.customer.get("/customer/account").data)
+
+        def payload(action):
+            row = summaries(self.customer_id, owner=True)[0]
+            return dict(csrf="portal-test-csrf", action=action, confirm="yes",
+                        invoice_id=row["invoice_id"], revision=str(row["revision"]),
+                        digest=row["digest"], operation_id=row["operation_id"])
+
+        owner_page = self.owner.get(path)
+        self.assertEqual(owner_page.status_code, 200)
+        self.assertIn(b"Publish invoice summary", owner_page.data)
+        self.assertNotIn(b"FIXTURE-OTHER-INV", owner_page.data)
+        post = payload("publish")
+        self.assertEqual(self.owner.post(path, data=dict(post, csrf="wrong")).status_code, 403)
+        self.assertEqual(self.owner.post(path, data=dict(post, confirm="")).status_code, 400)
+        self.assertEqual(self.owner.post(path, data=post).status_code, 200)
+        self.assertEqual(self.owner.post(path, data=post).status_code, 200)
+        customer_view = self.customer.get("/customer/account")
+        self.assertIn(b"FIXTURE-PUBLIC-INV", customer_view.data)
+        self.assertIn(b"Payment status is not shown", customer_view.data)
+        self.assertNotIn(b"FIXTURE-OTHER-INV", customer_view.data)
+        self.assertNotIn(b"PRIVATE-INVOICE-NOTES", customer_view.data)
+        self.assertEqual(summaries(other_customer), [])
+        self.assertIn("no-store", customer_view.headers["Cache-Control"])
+
+        # A new allocation invalidates the publication without exposing private evidence.
+        save_allocation(dict(id=uuid.uuid4().hex, operation_id=uuid.uuid4().hex,
+            invoice_id=invoice_id, revision=0, amount_pence=10000, received_on="2026-11-25",
+            method="cash_reported", evidence_ref="PRIVATE-EVIDENCE-REF",
+            memo="PRIVATE-PAYMENT-NOTES", status="reported"))
+        self.assertNotIn(b"FIXTURE-PUBLIC-INV", self.customer.get("/customer/account").data)
+        self.assertEqual(self.owner.post(path, data=post).status_code, 200)
+        self.assertEqual(summaries(self.customer_id), [])
+        self.assertEqual(self.owner.post(path, data=payload("publish")).status_code, 200)
+        view = self.customer.get("/customer/account").data
+        self.assertIn(b"FIXTURE-PUBLIC-INV", view)
+        self.assertNotIn(b"PRIVATE-EVIDENCE-REF", view)
+        self.assertNotIn(b"PRIVATE-PAYMENT-NOTES", view)
+        self.assertEqual(self.owner.post(path, data=payload("withdraw")).status_code, 200)
+        self.assertNotIn(b"FIXTURE-PUBLIC-INV", self.customer.get("/customer/account").data)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_customer_invoice_publications").fetchone()[0], 3)
+
     def test_expiry_replacement_logout_validation_and_stale_sessions(self):
         self.login_owner()
         code, _ = self.invite()

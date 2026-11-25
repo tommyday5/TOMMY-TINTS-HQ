@@ -19,7 +19,7 @@
 <input type="hidden" name="operation_id" value="{{ operation_id }}">
 <button type="submit">Generate single-use customer access code</button>
 </form></div>
-<div class="card danger"><h2>Revoke access</h2>
+<p><a href="/hq/customers/{{ details.id }}/invoice-publications">Review and publish customer invoice summaries</a></p><div class="card danger"><h2>Revoke access</h2>
 <p>Immediately invalidates all existing customer sessions and unused codes for this HQ customer; no jobs or records are removed.</p>
 <form method="post">
 <input type="hidden" name="csrf" value="{{ csrf }}">

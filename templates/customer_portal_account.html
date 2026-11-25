@@ -14,7 +14,7 @@
 {% if work.approved_price %}<p>Owner-approved work price: <strong>{{ work.approved_price }}</strong></p>{% endif %}
 {% if work.preferred_date %}<p>Requested date: {{ work.preferred_date }} {{ work.preferred_time }} (not a confirmed booking)</p>{% endif %}
 </article>{% else %}<div class="card"><p>No approved work is currently visible. An enquiry or draft alone does not become an appointment.</p></div>{% endfor %}
-<p>Work status does not establish payment, invoicing, appointment confirmation or a verified receipt. Contact Tommy Tints directly for booking and payment details.</p>
+{% if invoices %}<section><h2>Published invoices</h2>{% for invoice in invoices %}<article class="card"><h3>{{ invoice.invoice_ref }}</h3><p>Issued {{ invoice.issue_date }} · Due date {{ invoice.due_date }}</p><p>Invoice amount: <strong>£{{ '%0.2f'|format(invoice.amount_pence / 100) }}</strong></p><p>Payment status is not shown; this amount is not an outstanding balance or receipt.</p></article>{% endfor %}</section>{% endif %}<p>Work status does not establish payment, invoicing, appointment confirmation or a verified receipt. Contact Tommy Tints directly for booking and payment details.</p>
 <form method="post" action="/customer/logout">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <button type="submit">Sign out</button></form></main></body></html>

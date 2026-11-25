@@ -19,6 +19,7 @@ from hq_auth import required
 from hq_core_records import _schema
 from hq_customer_documents import _tables as _document_tables
 from hq_customer_account_types import public_account_label
+import hq_customer_invoice_publications as invoice_publications
 
 customer_portal = Blueprint("customer_portal", __name__)
 _ID = re.compile(r"[0-9a-f]{32}\Z")
@@ -290,6 +291,43 @@ def owner_portal_access(customer_id):
                            operation_id=secrets.token_hex(16))
 
 
+@customer_portal.route("/hq/customers/<customer_id>/invoice-publications", methods=["GET", "POST"])
+@required
+def owner_invoice_publications(customer_id):
+    if not _enabled():
+        abort(503)
+    message = error = None
+    status = 200
+    try:
+        details = portal_access_summary(customer_id)
+    except (ValueError, LookupError):
+        abort(404)
+    except (sqlite3.Error, OSError):
+        abort(503)
+    if request.method == "POST":
+        if request.content_length is None or request.content_length > 2000:
+            abort(413)
+        if not secrets.compare_digest(request.form.get("csrf", ""), session.get("csrf", "unset")):
+            abort(403)
+        try:
+            if request.form.get("confirm") != "yes":
+                raise ValueError("Confirm this exact publication or withdrawal")
+            invoice_publications.change(customer_id, request.form.get("invoice_id", ""),
+                request.form.get("action", ""), int(request.form.get("revision", "-1")),
+                request.form.get("digest", ""), request.form.get("operation_id", ""))
+            message = "Publication review saved. No payment status or message was sent."
+        except ValueError as exc:
+            error, status = str(exc), 400
+        except (sqlite3.Error, OSError):
+            abort(503)
+    try:
+        rows = invoice_publications.summaries(customer_id, owner=True)
+    except (ValueError, sqlite3.Error, OSError):
+        abort(503)
+    return render_template("hq_customer_invoice_publications.html", details=details,
+                           rows=rows, csrf=session["csrf"], message=message, error=error), status
+
+
 @customer_portal.route("/customer/login", methods=["GET", "POST"])
 def customer_login():
     if not _enabled():
@@ -335,12 +373,13 @@ def customer_account():
         return redirect(url_for(".customer_login"), code=302)
     try:
         name, works = customer_portal_snapshot(customer_id)
+        invoices = invoice_publications.summaries(customer_id)
     except (sqlite3.Error, OSError):
         current_app.logger.exception("Customer account read unavailable")
         abort(503)
     return render_template("customer_portal_account.html", name=name,
                            account_type=public_account_label(customer_id),
-                           works=works, csrf=session["customer_portal_csrf"])
+                           works=works, invoices=invoices, csrf=session["customer_portal_csrf"])
 
 
 @customer_portal.post("/customer/logout")
