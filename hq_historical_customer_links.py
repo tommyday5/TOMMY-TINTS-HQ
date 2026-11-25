@@ -359,3 +359,6 @@ _register_approved_link_routes(customer_migration)
 
 from hq_historical_customer_creation import register_routes as _register_customer_creation_routes
 _register_customer_creation_routes(customer_migration)
+
+from hq_historical_vehicle_links import register_routes as _register_vehicle_link_routes
+_register_vehicle_link_routes(customer_migration)
