@@ -773,6 +773,11 @@ class CustomerFieldReviewTests(unittest.TestCase):
                 payload["valueRanges"][0]["values"].append(
                     [ref,"","Synthetic History Driver","Retail","AB22 CDE","Window Tinting"]
                     +[""]*10+[price,status])
+        for payload in (self.formula,self.computed):
+            rows=payload["valueRanges"][0]["values"]
+            rows[0].extend([""]*(32-len(rows[0]))+
+                ["Actual Hours","Actual Materials £","Actual Consumables £","Actual Extra Costs £"])
+            rows[2].extend([""]*(32-len(rows[2]))+[2.1,12.34,0,""])
         source=(self.formula,self.computed)
         snap=create_snapshot(uuid.uuid4().hex)
         batch=uuid.uuid4().hex
@@ -836,6 +841,41 @@ class CustomerFieldReviewTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 set_draft_financials(wid,12500,0,0)
             self.assertEqual(app.test_client().get("/hq/work/"+wid+"/edit").status_code,302)
+        wid=search_work_records(query="J0456",kind="job",status="draft")["records"][0]["id"]
+        cost_url="/hq/migration/work/"+wid+"/actual-costs"
+        self.assertEqual(app.test_client().get(cost_url).status_code,302)
+        self.assertEqual(self.client.get(cost_url).status_code,200)
+        a,b=self.live_source()
+        with a,b:
+            prepare=dict(csrf="test-csrf",action="prepare",operation=uuid.uuid4().hex)
+            self.assertEqual(self.client.post(cost_url,data=dict(prepare,csrf="bad")).status_code,403)
+            page=self.client.post(cost_url,data=prepare)
+            self.assertEqual(page.status_code,200,page.data)
+            for value in (b"2.1 hours",b"12.34",b"0.00",b"Unknown (blank)"):
+                self.assertIn(value,page.data)
+            stamp=re.search(rb'name="stamp" value="([0-9a-f]{64})"',page.data).group(1).decode()
+            save=dict(prepare,action="save",stamp=stamp,confirm="yes")
+            self.assertEqual(self.client.post(cost_url,data=dict(save,confirm="")).status_code,409)
+            self.computed["valueRanges"][0]["values"][2][33]=12.35
+            self.assertEqual(self.client.post(cost_url,data=save).status_code,409)
+            self.computed["valueRanges"][0]["values"][2][33]=12.34
+            self.assertEqual(self.client.post(cost_url,data=save).status_code,200)
+            self.assertEqual(self.client.post(cost_url,data=save).status_code,200)
+            self.assertEqual(self.client.post(cost_url,data=dict(prepare,operation=uuid.uuid4().hex)).status_code,409)
+        page=self.client.get(cost_url)
+        self.assertEqual(page.headers["Cache-Control"],"no-store")
+        self.assertIn(b"12.34",page.data)
+        with connect() as db:
+            rows=db.execute("SELECT * FROM hq_historical_cost_observations WHERE work_id=?",(wid,)).fetchall()
+            self.assertEqual(len(rows),1)
+            self.assertEqual(json.loads(rows[0]["manifest"])["costs"],
+                dict(hours="2.1",materials=1234,consumables=0,extra=None))
+        withdraw=dict(csrf="test-csrf",action="withdraw",operation=uuid.uuid4().hex,stamp=stamp,confirm="yes")
+        self.assertEqual(self.client.post(cost_url,data=withdraw).status_code,200)
+        self.assertEqual(self.client.post(cost_url,data=withdraw).status_code,200)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_historical_cost_observations WHERE work_id=?",(wid,)).fetchone()[0],2)
+            self.assertEqual(db.execute("SELECT revision FROM hq_work_records WHERE id=?",(wid,)).fetchone()[0],0)
         after=work_summary()
         for key in ("priced_draft_value_pence","outstanding_recorded_pence",
                     "approved_price_total_pence","planned_deposit_total_pence",
