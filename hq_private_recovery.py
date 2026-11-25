@@ -4,6 +4,7 @@ from pathlib import Path
 import fcntl
 import os
 import re
+import shutil
 import sqlite3
 import stat
 import tempfile
@@ -11,7 +12,9 @@ import time
 
 MAX_BYTES = 16 * 1024 * 1024
 MAX_SECONDS = 8
-MAX_BACKUPS = 3
+MAX_BACKUPS = 64
+MAX_TOTAL_BYTES = 256 * 1024 * 1024
+MIN_FREE_BYTES = 128 * 1024 * 1024
 _ID = re.compile(r"[0-9a-f]{32}")
 
 
@@ -101,6 +104,12 @@ def create_snapshot(operation_id):
             return operation_id
         if len(existing) >= MAX_BACKUPS:
             raise ValueError("Recovery snapshot capacity reached")
+        # Reserve worst-case copy space rather than assuming the live DB size
+        # remains static. Never provision storage or delete existing backups.
+        if sum(item["bytes"] for item in existing) + MAX_BYTES > MAX_TOTAL_BYTES:
+            raise ValueError("Recovery snapshot byte budget reached")
+        if shutil.disk_usage(directory).free < MIN_FREE_BYTES + MAX_BYTES:
+            raise ValueError("Insufficient free volume space for safe recovery copy")
         # Bound orphaned temporary files after crashes without deleting evidence.
         if any(directory.glob(".pending-*")):
             raise ValueError("Incomplete recovery file requires administrator review")
