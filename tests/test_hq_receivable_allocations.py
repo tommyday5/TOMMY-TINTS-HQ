@@ -486,5 +486,82 @@ class AllocationTests(unittest.TestCase):
         self.assertIsNone(after["collected_income"])
 
 
+
+    def test_combined_settlement_proposal_exact_pence_replay_and_cross_conflicts(self):
+        import re
+        url = "/hq/finance/settlement-batches"
+        single = "/hq/finance/settlement-review"
+        self.assertEqual(self.client.get(url).status_code, 302)
+        self.login()
+        payments = [self.payload(method="card_reported", amount_pence=n,
+                    evidence_ref="square-batch-"+str(n)) for n in (20000,10000)]
+        square = "/hq/finance/square-invoice-evidence"
+        with patch.dict(os.environ, {"HQ_SQUARE_READ_TOKEN":"test", "HQ_SQUARE_LOCATION_ID":"test-loc"}), \
+                patch("hq_square_invoice_evidence.storage_ready", return_value=True), \
+                patch("hq_square_invoice_evidence.inspect_exact_payment") as provider:
+            for payment in payments:
+                self.assertEqual(self.post(payment).status_code, 200)
+                provider.return_value = dict(id=payment["evidence_ref"], status="COMPLETED",
+                    total_minor=payment["amount_pence"], refunded_minor=0, currency="GBP",
+                    created_at="2026-11-22T10:00:00+00:00", updated_at="2026-11-22T10:01:00+00:00")
+                form = dict(allocation=payment["id"], csrf="test", action="review")
+                review = self.client.post(square, data=form)
+                self.assertEqual(review.status_code, 200, review.get_data(as_text=True))
+                manifest = re.search(rb'name="manifest" value="([0-9a-f]{64})"', review.data)[1].decode()
+                self.assertEqual(self.client.post(square, data=dict(form, action="save",
+                    manifest=manifest, confirm="yes")).status_code, 200)
+        entry = dict(ref="tx-batch-synthetic", pence=29300, day="2026-11-23",
+                     evidence="a"*64, legacy_evidence="b"*64)
+        form = dict(allocations="\n".join(p["id"] for p in payments), csrf="test",
+                    action="preview", source=entry["ref"], fee="7.00",
+                    reference="Synthetic combined statement", operation=uuid.uuid4().hex)
+        with patch("hq_settlement_review.storage_ready", return_value=True), \
+                patch("hq_settlement_review.current_entry", return_value=entry) as source, \
+                patch("requests.post") as external_post:
+            self.assertEqual(self.client.get(url).status_code, 200)
+            source.assert_not_called()
+            self.assertEqual(self.client.post(url, data=dict(form,csrf="bad")).status_code, 403)
+            self.assertEqual(self.client.post(url, data=dict(form,fee="6.99")).status_code, 409)
+            self.assertEqual(self.client.post(url, data=dict(form,allocations=payments[0]["id"]+" "+payments[0]["id"])).status_code, 409)
+            review = self.client.post(url, data=form)
+            self.assertEqual(review.status_code, 200, review.get_data(as_text=True))
+            self.assertIn("£293.00".encode(), review.data)
+            manifest = re.search(rb'name="manifest" value="([0-9a-f]{64})"', review.data)[1].decode()
+            approval = dict(form,action="save",confirm="yes",manifest=manifest)
+            self.assertEqual(self.client.post(url,data=dict(approval,confirm="")).status_code,409)
+            source.return_value = dict(entry,evidence="c"*64)
+            self.assertEqual(self.client.post(url,data=approval).status_code,409)
+            source.return_value = entry
+            self.assertEqual(self.client.post(url,data=approval).status_code,303)
+            self.assertEqual(self.client.post(url,data=approval).status_code,303)
+            self.assertEqual(self.client.post(url,data=dict(approval,reference="changed")).status_code,409)
+            self.assertEqual(self.client.post(url,data=form).status_code,409)
+            self.assertIn(b"Synthetic combined statement",self.client.get(url).data)
+            single_entry = dict(entry,ref="tx-single-synthetic",pence=19500)
+            source.return_value = single_entry
+            one = dict(allocation=payments[0]["id"],csrf="test",action="preview",
+                       source=single_entry["ref"],fee="5",reference="Other statement",
+                       operation=uuid.uuid4().hex)
+            self.assertEqual(self.client.post(single,data=one).status_code,409)
+            with connect() as db:
+                event = db.execute("SELECT id FROM hq_square_batch_reviews").fetchone()[0]
+            undo = dict(action="withdraw",event=str(event),csrf="test",confirm="yes",operation=uuid.uuid4().hex)
+            self.assertEqual(self.client.post(url,data=undo).status_code,303)
+            self.assertEqual(self.client.post(url,data=undo).status_code,303)
+            preview = self.client.post(single,data=one)
+            self.assertEqual(preview.status_code,200,preview.get_data(as_text=True))
+            one_manifest = re.search(rb'name="manifest" value="([0-9a-f]{64})"',preview.data)[1].decode()
+            self.assertEqual(self.client.post(single,data=dict(one,action="save",confirm="yes",manifest=one_manifest)).status_code,303)
+            source.return_value = entry
+            self.assertEqual(self.client.post(url,data=form).status_code,409)
+            external_post.assert_not_called()
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_square_batch_reviews").fetchone()[0],2)
+            self.assertEqual(db.execute("SELECT SUM(amount_pence) FROM hq_receivable_allocations").fetchone()[0],30000)
+        after = self.client.get("/api/hq/finance/receipt-allocations").json
+        self.assertFalse(after["receipts_verified"])
+        self.assertIsNone(after["collected_income"])
+
+
 if __name__ == "__main__":
     unittest.main()
