@@ -498,3 +498,45 @@ No actual customer publication, payment, import, recovery snapshot, booking,
 or Sheets write was performed. Historical authority remains unchanged;
 verified bank settlement/fees, creditor reconciliation, reversible historical
 customer/vehicle execution and independent recovery acceptance remain open.
+
+
+## 25 November — customer card evidence deployed; bounded canonical customer links
+
+PR #276 passed CI 45544744084 (127 root + 643 integration Python tests,
+9 JavaScript tests), merged as bf8d1c63. Railway deployment
+a98a5a59-b142-4df1-8bb9-cda45ecd9fa0 reported SUCCESS at 05:05:33 UTC.
+The original 1024 MB /data volume was observed attached before the merge.
+The customer portal can now display separately approved historical Square
+observations; current payment status, refunds, settlement and balance are
+not inferred. The synthetic customer route test passed, including replay,
+privacy, withdrawal to summary-only and stale evidence suppression.
+Workbook metadata still enumerates 48 tabs; Customers A4:AF4 and Jobs
+A4:CP4 retain 32 and 94 headings respectively. Owner browser acceptance
+and actual publication remain unverified.
+
+This proposal implements the first bounded canonical historical customer
+provenance write: one existing Customers row to one existing HQ customer.
+It neither creates a customer nor edits any customer profile, vehicle, job,
+pricing, or workbook. Owner workflow: Historical Customers staging > select
+an independently document-reviewed candidate > Review & save three source
+fields (name and reviewed tier agree; postcode explicitly not mapped) >
+create a private recovery snapshot AFTER the review > Prepare approved
+historical link > select snapshot > Prepare exact link review > explicitly
+approve manifest > Approve and save historical customer link. The manifest
+records exact coordinates, HQ identity, source/native keyed fingerprints,
+review/tier revisions, snapshot ID and counts; source and native evidence
+are rechecked before transactional save. Active source-row and canonical
+customer uniqueness constraints prevent collisions. A candidate is single-use,
+even after reversal. No automatic source lookup or future synchronisation is
+authorised by this provenance link. The saved record is reversible via the
+approved-links history, including without live Sheets access; a linked
+proposal cannot be withdrawn until the link is separately reversed.
+Synthetic route regression submitted; CI and deployment pending. No actual
+production snapshot, link, import or customer publication was created.
+
+Historical customer fields, new customer/vehicle creation, job linking,
+financial and legal reconciliation, and owner-tested acceptance remain
+outstanding. No domain authority changes. Next bounded migration slice:
+verified vehicle/job relationships and canonical historical field import
+with a separately approved manifest; continue settlement/fees and creditor
+reconciliation in parallel.

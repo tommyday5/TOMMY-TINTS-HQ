@@ -231,6 +231,8 @@ def withdraw_customer_candidate(candidate_id, expected_revision, owner_identity)
             return  # exact replay is harmless and creates no duplicate event
         if row["revision"] != expected_revision:
             raise ValueError("Candidate changed; reload")
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_approved_customer_source_links'").fetchone() and db.execute("SELECT 1 FROM hq_approved_customer_source_links WHERE candidate_id=? AND reversed_at IS NULL", (candidate_id,)).fetchone():
+            raise ValueError("Reverse the approved historical link before withdrawing its proposal")
         now = datetime.now(timezone.utc).isoformat()
         db.execute("""UPDATE hq_historical_customer_candidates
             SET withdrawn_at=?,revision=1 WHERE id=? AND revision=0
@@ -348,3 +350,6 @@ def page():
 # This is an additive read/submit surface: no import or Sheet-write routes.
 from hq_historical_customer_field_review import register_routes as _register_field_review_routes
 _register_field_review_routes(customer_migration)
+
+from hq_approved_customer_links import register_routes as _register_approved_link_routes
+_register_approved_link_routes(customer_migration)

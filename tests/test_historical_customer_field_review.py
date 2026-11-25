@@ -198,6 +198,58 @@ class CustomerFieldReviewTests(unittest.TestCase):
                 postcode_decision="candidate_agreement")).status_code,409)
         self.assertEqual((self.formula,self.computed),self.original)
 
+    def test_approved_historical_link_requires_snapshot_and_exact_approval(self):
+        from hq_private_recovery import create_snapshot
+        from hq_approved_customer_links import history
+        self.login()
+        withdraw_customer_candidate(self.candidate,0,"synthetic-owner")
+        candidate=stage_customer_candidate(
+            formula=self.formula,computed=self.computed,sheet_row=5,
+            expected_source_stamp=source_stamp(self.formula,self.computed,5),
+            customer_id=self.customer,basis="owner_document_review",
+            operation_id=uuid.uuid4().hex,owner_identity="synthetic-owner")
+        field_url="/hq/migration/customers/"+candidate+"/fields"
+        url="/hq/migration/customers/"+candidate+"/approved-link"
+        self.assertEqual(app.test_client().get(url).status_code,302)
+        old_snapshot=create_snapshot(uuid.uuid4().hex)
+        a,b=self.live_source()
+        with a,b:
+            self.assertEqual(self.client.post(field_url,data=self.data()).status_code,303)
+            snapshot=create_snapshot(uuid.uuid4().hex)
+            prepare=dict(csrf="test-csrf",action="prepare",snapshot_id=snapshot)
+            self.assertEqual(self.client.post(url,data=dict(prepare,csrf="bad")).status_code,403)
+            self.assertEqual(self.client.post(url,data=dict(prepare,snapshot_id=old_snapshot)).status_code,409)
+            page=self.client.post(url,data=prepare)
+            self.assertEqual(page.status_code,200)
+            self.assertIn(b"Exact approval manifest",page.data)
+            import re
+            stamp=re.search(rb'name="stamp" value="([0-9a-f]{64})"',page.data).group(1).decode()
+            self.assertEqual(history(),[])
+            apply=dict(prepare,action="apply",stamp=stamp,confirm="yes")
+            self.assertEqual(self.client.post(url,data=dict(apply,confirm="")).status_code,409)
+            self.assertEqual(self.client.post(url,data=dict(apply,stamp="0"*64)).status_code,409)
+            self.computed["valueRanges"][1]["values"][1][2]="ZZ1 1BB"
+            self.assertEqual(self.client.post(url,data=apply).status_code,409)
+            self.computed["valueRanges"][1]["values"][1][2]="ZZ0 0AA"
+            self.assertEqual(self.client.post(url,data=apply).status_code,200)
+            self.assertEqual(self.client.post(url,data=apply).status_code,200)
+            self.assertEqual(len(history()),1)
+            self.assertIsNone(history()[0]["reversed_at"])
+            with self.assertRaises(ValueError):
+                withdraw_customer_candidate(candidate,0,"synthetic-owner")
+            self.assertIn(b"Approved historical link",self.client.get(
+                "/hq/migration/customers/approved-links").data)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_customers").fetchone()[0],1)
+            self.assertEqual(db.execute("SELECT name FROM hq_customers").fetchone()[0],
+                             "Synthetic Owner Customer")
+        # Reversal works without a Sheets connection and survives another request.
+        reversal=dict(csrf="test-csrf",action="reverse",stamp=stamp,confirm="yes")
+        self.assertEqual(self.client.post(url,data=reversal).status_code,200)
+        self.assertEqual(self.client.post(url,data=reversal).status_code,200)
+        self.assertIsNotNone(history()[0]["reversed_at"])
+        self.assertEqual((self.formula,self.computed),self.original)
+
     def test_withdrawal_and_security_gates(self):
         self.login()
         a,b=self.live_source()
