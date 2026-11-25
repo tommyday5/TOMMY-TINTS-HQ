@@ -611,3 +611,38 @@ browser acceptance remains unverified. Next: import verified vehicle
 and J-series work relationships, extend historical field mappings and
 batch reconciliation, and finish bank settlement/creditor/affordability
 flows. No historical domain is authoritative.
+
+
+## 25 November — historical customer batch creation deployed; optional native postcodes
+
+PR #279 passed GitHub Actions 45565496328, including 646 integration
+Python tests, dependency/syntax checks and the app-update JavaScript check.
+It merged as 0398015e and Railway deployment
+b9ed4b19-2f5e-4f61-8bf8-561d7da24253 reported SUCCESS at 08:05:20 UTC,
+with the existing 1024 MB /data volume attached. Read-only metadata
+confirms 48 workbook tabs, Customers 32 and Jobs 94 column headings.
+Synthetic customer service submission, owner quote conversion, appointment
+offer, customer vehicle addition, maintenance isolation and product order
+tests passed. No actual historical import or owner browser acceptance
+established.
+
+This proposed slice extends Historical Customer Migration > Create missing
+historical customers (reviewed batch) > Also import valid literal postcodes.
+The checkbox is optional, default off. An exact one-to-five row manifest
+shows names, prospective IDs and each selected postcode or blank, with
+counts. Both source readings must agree; malformed/formula-derived postcodes
+block the entire selected batch. The postcode is saved in the existing
+native revision/event tables in the same transaction as customer creation,
+without overwriting any field or granting pricing/portal rights. The
+migration audit stores a keyed postcode fingerprint rather than duplicating
+raw postcodes. Replay binds the option as well as the batch and approval.
+Archive reversal retains original data and history; it rejects any later
+postcode edit, dependent record or other native change. Existing names-only
+batch history remains supported. Synthetic tests submitted; new CI,
+deployment, owner acceptance and actual migration remain unverified.
+
+No actual customer, job, payment, booking, snapshot or workbook change
+made. Customer portal behaviour unchanged. Historical vehicle/J-series
+job creation and relationship mapping, finance settlement and creditor
+reconciliation, off-volume recovery verification, and domain-level
+reconciliation/authority approval remain open. No domain cutover.
