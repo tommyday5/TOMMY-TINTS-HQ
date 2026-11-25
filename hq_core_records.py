@@ -211,6 +211,15 @@ def recent_work_records(kind, limit=5):
             ORDER BY created_at DESC,id DESC LIMIT ?""", (kind, limit)).fetchall()
     return [dict(row) for row in rows]
 
+def _historical_job_reconciliation_required(db, record_id):
+    """Non-quote migration evidence must not enter active work/finance."""
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_historical_created_work'").fetchone():
+        return False
+    row = db.execute("SELECT manifest FROM hq_historical_created_work WHERE work_id=?",
+                     (record_id,)).fetchone()
+    return bool(row and json.loads(row["manifest"]).get("source_status") != "Quoted")
+
+
 def set_draft_financials(record_id, price_pence, deposit_pence, expected_revision=None):
     """Prevent older forms from overwriting updated draft financials.
 
@@ -236,6 +245,8 @@ def set_draft_financials(record_id, price_pence, deposit_pence, expected_revisio
         if db.execute("SELECT 1 FROM hq_work_archive_state WHERE work_id=? AND is_archived=1",
                       (record_id,)).fetchone():
             raise ValueError("Restore this archived record before changing its price or deposit")
+        if _historical_job_reconciliation_required(db, record_id):
+            raise ValueError("Historical job prices require independent financial reconciliation before promotion.")
         unchanged = row["price_pence"] == price_pence and row["deposit_pence"] == deposit_pence
         if expected_revision is not None and row["revision"] != expected_revision and not unchanged:
             raise StaleWorkRecordError("This work record changed. Refresh it before saving.")
@@ -285,6 +296,8 @@ def change_work_status(record_id, new_status, expected_revision=None):
                       (record_id,)).fetchone():
             raise ValueError("Restore this archived record before changing its status")
         old = row["status"]
+        if old != new_status and _historical_job_reconciliation_required(db, record_id):
+            raise ValueError("Historical job status requires independent reconciliation before promotion.")
         kind = "job" if row["kind"] == "quote" and new_status in ("approved", "in_progress") else row["kind"]
         unchanged = old == new_status and kind == row["kind"]
         if expected_revision is not None and row["revision"] != expected_revision and not unchanged:
