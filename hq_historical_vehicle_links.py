@@ -104,7 +104,9 @@ def _manifest(db, source, row, ref, customer_row, customer_id, vehicle_id, snaps
     native, vehicle, parent, revision = identity
     if _norm(native["name"]) != _norm(name):
         raise ValueError("Native customer name differs; resolve identity first.")
-    if parent[1]["source_stamp"] != h.source_stamp(*source, customer_row):
+    parent_source_stamp = (json.loads(parent[1]["manifest"])["source_stamp"]
+                           if parent[0] == "hq_approved_customer_source_links" else parent[1]["source_stamp"])
+    if parent_source_stamp != h.source_stamp(*source, customer_row):
         raise ValueError("Historical customer source changed; review provenance before linking.")
     # A literal plate-only cell can be checked exactly. Mixed descriptions
     # require explicit documentary identity review, never automated parsing.
@@ -120,7 +122,7 @@ def _manifest(db, source, row, ref, customer_row, customer_id, vehicle_id, snaps
     return dict(version=1, operation=operation, job_ref=ref, sheet_row=row,
                 workbook_id=h.WORKBOOK, sheet_id=330634230,
                 customer_row=customer_row, customer_id=customer_id, vehicle_id=vehicle_id,
-                source_stamp=stamp, customer_source_stamp=parent[1]["source_stamp"],
+                source_stamp=stamp, customer_source_stamp=parent_source_stamp,
                 parent_stamp=h._stamp(parent), native_stamp=h._stamp(identity),
                 vehicle_revision=revision, snapshot_id=snapshot_id, plate_only=plate_only,
                 source_vehicle=val, native_vehicle=" ".join(
