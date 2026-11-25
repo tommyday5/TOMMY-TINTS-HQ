@@ -756,3 +756,49 @@ slice. Actual authenticated production browser acceptance remains unverified.
 No live record or Sheets changes authorised; paid/booked/completed historical
 rows, actual costs, multiple-work duplicate reconciliation, settlement,
 creditor/affordability and domain authority remain outstanding.
+
+
+## 25 November — historical quote creation deployed; repeat vehicle work and recovery capacity
+
+PR #283 passed Actions 45600336380 (651 integration Python tests and 9 JS
+tests observed, including the synthetic creation/reversal route and public
+booking/account isolation tests). Merged as 086ceb9d. Railway deployment
+05595d44-bf75-4393-8e83-650486d6adfa reported SUCCESS at 12:03:24 UTC; the
+original 1024 MB /data volume remained attached. PR #258 remains merged.
+No production customer record, job, payment, booking or snapshot was created.
+
+Fresh read-only metadata confirms 48 workbook tabs; Jobs has 94 headings
+and Customers 32. The bounded Jobs A4:AZ1000 inventory now returns 76
+J-shaped rows and 75 distinct case-insensitive references (one duplicated
+reference across two Enquiry rows). Source status counts: 27 Paid,
+14 Declined, 12 Quoted, 4 Booked, 3 Completed, 8 Enquiry, 8 Awaiting Payment.
+Of the 12 Quoted rows, 10 have agreeing numeric literal prices and 2
+have missing prices. Counts are inventory, not approved migration eligibility.
+Resolve the duplicate through an independent identity review; no source
+rewrite or automatic merge is authorised.
+
+Proposed changes allow distinct historical quotes on a vehicle already
+containing separately mapped, unchanged historical drafts. Exact approval
+lists earlier J references, checks their source and canonical provenance,
+and refuses unmapped work, changes, or archive/withdrawal conflicts.
+Snapshot parity now binds creation and vehicle-link histories and archive
+state. Native owner work search accepts an exact original imported J reference
+case-insensitively, and the native editor shows this immutable provenance
+independently of mutable notes. No payment or booking status is promoted.
+
+The previous three-snapshot cap was a practical blocker to successive
+customer/vehicle/link/work approvals. Proposed recovery controls allow up to
+64 private snapshots of at most 16 MiB each, with a 256 MiB aggregate
+backup budget and a 128 MiB minimum free-space reserve on the existing
+volume (worst-case copy space reserved before each new snapshot).
+No automatic deletion, new storage, external transfer, or live restore.
+Independent encrypted off-volume recovery and longer-term approved
+retention/rotation remain outstanding. Synthetic route tests submitted;
+new CI, deployment and owner acceptance pending.
+
+Customer app: CI confirms public service request through canonical
+owner approval, portal account isolation and owner booking confirmation.
+No public routes changed in this slice. Direct authenticated production
+acceptance and actual migration are not established. Next: status-safe
+historical completed/booked/paid work migration without implied receipts,
+finance settlement and creditor reconciliation. No authority cutover.
