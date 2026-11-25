@@ -95,6 +95,8 @@ def set_work_archived(work_id, action, expected_revision, operation_id):
                 raise ValueError("Active approved work must be completed or cancelled before archiving")
         elif not is_archived:
             raise ValueError("This record is not archived")
+        elif db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_historical_created_work'").fetchone() and db.execute("SELECT 1 FROM hq_historical_created_work WHERE work_id=? AND reversed_at IS NOT NULL",(work_id,)).fetchone():
+            raise ValueError("Reversed historical creation is retained for audit; resolve manually.")
         revision = expected_revision + 1
         changed = db.execute("""UPDATE hq_work_records SET revision=revision+1
             WHERE id=? AND revision=?""", (work_id, expected_revision))
