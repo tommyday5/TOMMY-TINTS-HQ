@@ -540,3 +540,37 @@ outstanding. No domain authority changes. Next bounded migration slice:
 verified vehicle/job relationships and canonical historical field import
 with a separately approved manifest; continue settlement/fees and creditor
 reconciliation in parallel.
+
+
+## 25 November — canonical customer link deployed; bounded postcode field execution
+
+PR #277 passed CI 45551310011 (127 root + 644 integration Python tests,
+9 JavaScript tests), including the exact approval/snapshot/stale-source/reversal
+route test, and merged as cf5baff4. Railway deployment
+b085cfe2-d7ea-4a28-91b5-3fdafcbd5995 reported SUCCESS at 05:59:42 UTC.
+Original 1024 MB /data volume was observed attached before merge. Workbook
+metadata still lists 48 tabs and Customers A4:AF4 confirms 32 headings;
+Customer, Type, Postcode are the first three. No owner acceptance or
+actual historical link was established during development.
+
+Proposed next slice: from approved historical customer links, choose
+Review bounded historical postcode import. Requires an existing active
+document-reviewed link, unchanged identity/source/tier review, literal
+source postcode agreeing in formula and computed reads, never-edited native
+postcode (revision zero), and isolated restore verification of a snapshot
+containing that exact active link. Exact owner approval writes one native
+postcode plus native revision event and import provenance atomically.
+No other customer fields are overwritten. No address verification, routing,
+tier, customer-visible profile, job, authority or workbook changes.
+Reverse postcode import clears only an unchanged imported revision;
+later edits fail closed. Active postcode imports block reversal of the
+parent identity link. Synthetic route tests submitted; new CI, deployment,
+owner acceptance and actual imports remain pending.
+
+Customer app regression evidence from PR #277 includes service submission,
+canonical quote conversion, appointment acceptance/confirmation, combined
+baskets, invoice publication and account isolation. No new public routes or
+production customer data changes in this slice. Authenticated production
+browser acceptance remains unverified. Remaining: missing customer creation,
+vehicles/jobs, batch import, off-volume restore acceptance, finance settlement
+and creditor/affordability parity. No domain authority cutover.
