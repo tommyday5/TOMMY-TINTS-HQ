@@ -344,6 +344,78 @@ class AllocationTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_receivable_allocation_events").fetchone()[0], 2)
             self.assertEqual(db.execute("SELECT amount_pence,status FROM hq_receivable_allocations").fetchone()[:], (20000,"reversed"))
 
+    def test_square_partial_refunds_reduce_only_increment_and_allow_final_full_refund(self):
+        import re
+        self.login()
+        payload = self.payload(method="card_reported", evidence_ref="square-partial-refund")
+        self.assertEqual(self.post(payload).status_code, 200)
+        url = "/hq/finance/square-invoice-evidence"
+        form = dict(allocation=payload["id"], csrf="test", action="review")
+        check = dict(form, action="recheck", confirm="yes")
+        initial = dict(id="square-partial-refund", status="COMPLETED", total_minor=20000,
+                       refunded_minor=0, currency="GBP",
+                       created_at="2026-11-22T10:00:00+00:00",
+                       updated_at="2026-11-22T10:01:00+00:00")
+        def approval(action, page):
+            self.assertEqual(page.status_code, 200, page.get_data(as_text=True))
+            manifest = re.search(rb'name="manifest" value="([0-9a-f]{64})"', page.data)[1].decode()
+            return dict(form, action=action, confirm="yes", manifest=manifest)
+        def allocated():
+            data = self.client.get("/api/hq/finance/receipt-allocations").json
+            self.assertFalse(data["receipts_verified"])
+            self.assertFalse(data["outstanding_verified"])
+            self.assertIsNone(data["collected_income"])
+            self.assertEqual(data["invoices"][0]["amount_pence"], 35000)
+            return data["invoices"][0]["owner_reported_allocated_pence"]
+        with patch.dict(os.environ, {"HQ_SQUARE_READ_TOKEN":"test", "HQ_SQUARE_LOCATION_ID":"test-loc"}), \
+                patch("hq_square_invoice_evidence.storage_ready", return_value=True), \
+                patch("hq_square_invoice_evidence.inspect_exact_payment", return_value=initial) as provider, \
+                patch("requests.post") as external_post:
+            self.assertEqual(self.client.post(url, data=approval("save", self.client.post(url, data=form))).status_code, 200)
+            self.assertEqual(allocated(), 20000)
+            first = dict(initial, refunded_minor=5000, updated_at="2026-11-22T10:02:00+00:00")
+            provider.return_value = first
+            self.assertEqual(self.client.post(url, data=check).status_code, 200)
+            review = dict(form, action="partial-review")
+            page = self.client.post(url, data=review)
+            self.assertIn(b"Approve exact partial refund correction", page.data)
+            approved = approval("partial-save", page)
+            self.assertEqual(self.client.post(url, data=dict(approved, confirm="")).status_code, 400)
+            self.assertEqual(self.client.post(url, data=dict(approved, csrf="bad")).status_code, 403)
+            provider.return_value = dict(first, refunded_minor=None)
+            self.assertEqual(self.client.post(url, data=approved).status_code, 409)
+            self.assertEqual(allocated(), 20000)
+            provider.return_value = first
+            self.assertEqual(self.client.post(url, data=approved).status_code, 200)
+            self.assertEqual(allocated(), 15000)
+            provider.reset_mock()
+            self.assertEqual(self.client.post(url, data=approved).status_code, 200)
+            provider.assert_not_called()
+            self.assertIn(b"Approved partial refund corrections", self.client.get(url+"?allocation="+payload["id"]).data)
+            self.assertNotEqual(self.client.post(url, data=review).status_code, 200)
+            second = dict(initial, refunded_minor=8000, updated_at="2026-11-22T10:03:00+00:00")
+            provider.return_value = second
+            self.assertEqual(self.client.post(url, data=check).status_code, 200)
+            approved2 = approval("partial-save", self.client.post(url, data=review))
+            self.assertEqual(self.client.post(url, data=approved2).status_code, 200)
+            self.assertEqual(allocated(), 12000)
+            self.assertEqual(self.client.post(url, data=approved).status_code, 200)
+            self.assertEqual(allocated(), 12000)
+            full = dict(initial, refunded_minor=20000, updated_at="2026-11-22T10:04:00+00:00")
+            provider.return_value = full
+            self.assertEqual(self.client.post(url, data=check).status_code, 200)
+            final = approval("refund-save", self.client.post(url, data=dict(form, action="refund-review")))
+            self.assertEqual(self.client.post(url, data=final).status_code, 200)
+            self.assertEqual(allocated(), 0)
+            external_post.assert_not_called()
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_receivable_allocations").fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_receivable_allocation_events").fetchone()[0], 4)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_square_partial_refund_corrections").fetchone()[0], 2)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_square_full_refund_corrections").fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT amount_pence,status FROM hq_receivable_allocations").fetchone()[:], (12000,"reversed"))
+
+
 
 if __name__ == "__main__":
     unittest.main()
