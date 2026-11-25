@@ -802,3 +802,40 @@ No public routes changed in this slice. Direct authenticated production
 acceptance and actual migration are not established. Next: status-safe
 historical completed/booked/paid work migration without implied receipts,
 finance settlement and creditor reconciliation. No authority cutover.
+
+
+## 25 November — repeat-work deployment verified; historical job evidence drafts
+
+PR #284 Actions 45610596230 reports a successful tests job, including
+dependency checks, Python syntax, integration/regression and JS checks.
+Railway deployment 3c917787-88ad-4394-9369-997af70d5268 reported SUCCESS at
+12:07:48 UTC on main e1965516. Environment inventory confirms the original
+1024 MB volume 540528d1-3953-4737-9d92-3c861575c5d4 mounted at /data, no
+staged changes. Read-only workbook metadata still lists 48 tabs; Jobs
+A4:CP4 lists 94 headings. Fresh bounded formula inventory: 76
+J-series rows; source status counts {"Paid":27,"Declined":14,"Quoted":12,"Booked":4,"Completed":3,"Enquiry":8,"Awaiting Payment":8}. Source statuses
+are not proof of appointments, completion, invoices or receipt.
+
+Proposed owner flow extends Historical Customers > Historical vehicle
+relationships > Create missing historical work. Reviewed literal Booked,
+Completed, Paid and Awaiting Payment rows can now be created as native
+editable job review drafts with immutable source status and original quoted
+price in the exact approval/provenance record. They remain draft, with
+native price unset, planned deposit zero, no preferred appointment and no
+external side effects. The owner editor displays the source status and
+price separately; core status/financial promotion is refused pending
+independent reconciliation. Quoted row behavior remains unchanged.
+Duplicate/source/recovery checks, canonical identities, candidate,
+idempotency, and guarded archive reversal are reused. Missing price stays
+unknown. Synthetic route coverage added for all four source statuses,
+stale evidence, replays, privacy, unchanged financial aggregates and
+reversal. CI and new deployment pending; no owner acceptance or live
+import performed. The source price is preserved as evidence, not yet a
+reconciled native job amount. Actual historical lifecycle promotion,
+receipts, actual costs and bank settlement/creditor reconciliation remain
+outstanding.
+
+Customer portal routes are unchanged. Existing CI passed; direct owner
+and customer browser acceptance and independent off-volume recovery
+remain unverified. No authority cutover, production snapshot, live record
+change or workbook write in this iteration.
