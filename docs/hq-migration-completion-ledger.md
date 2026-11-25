@@ -574,3 +574,40 @@ production customer data changes in this slice. Authenticated production
 browser acceptance remains unverified. Remaining: missing customer creation,
 vehicles/jobs, batch import, off-volume restore acceptance, finance settlement
 and creditor/affordability parity. No domain authority cutover.
+
+
+## 25 November — postcode import deployed; missing customer identity batches
+
+PR #278 passed CI 45557495216 (127 root + 645 integration Python tests,
+9 JavaScript tests), including the bounded postcode import and guarded
+reversal route. Merged as bf5ecd18. Railway deployment
+bf4ba855-2712-4027-84f2-a2cf238be8c3 reported SUCCESS at 07:04:36 UTC;
+the original 1024 MB /data volume was observed attached before merge.
+PR #258 remains merged. Workbook metadata confirmed 48 tabs and
+Customers A4:AF4 confirmed the 32 headings. No actual historical import,
+snapshot or owner browser acceptance was established in this run.
+
+Proposed next slice: Historical Customers > Create missing historical
+customers (reviewed batch). Select one to five source row numbers and a
+private recovery snapshot containing the current native customer directory.
+Exact manifest identifies source coordinates, fresh formula/computed
+fingerprints, proposed canonical IDs, names, counts, and zero detected
+collisions. Explicit owner independent identity/alias review is still
+required. Apply rechecks source, directory, and snapshot and atomically
+creates canonical names only, with blank contacts, no reviewed tier,
+and immutable provenance. No pricing, portal accounts, vehicles, jobs,
+payments or Sheets changes. A replay cannot duplicate records. Reverse
+archives untouched identities only; later edits/dependent records block
+the whole reversal. Archive keeps IDs and provenance and prevents reimport
+of the same source row; manual resolution is required for changes.
+Synthetic owner HTTP route tests submitted; CI, deployment, actual import
+and owner acceptance remain pending.
+
+Customer app: PR #278 CI logs confirmed browser service requests and
+owner quote conversion, appointment acceptance/confirmation, combined
+baskets, maintenance isolation and customer profile restrictions. No
+public routes changed in the creation slice. Production owner/customer
+browser acceptance remains unverified. Next: import verified vehicle
+and J-series work relationships, extend historical field mappings and
+batch reconciliation, and finish bank settlement/creditor/affordability
+flows. No historical domain is authoritative.
