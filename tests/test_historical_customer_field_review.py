@@ -529,5 +529,68 @@ class CustomerFieldReviewTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT count(*) FROM hq_vehicles").fetchone()[0],2)
 
 
+
+    def test_reviewed_historical_vehicle_creation_and_guarded_rollback(self):
+        import re
+        from hq_private_recovery import create_snapshot
+        from hq_historical_customer_creation import review as create_customer
+        self.login()
+        for payload in (self.formula,self.computed):
+            payload["valueRanges"][1]["values"].append(["Synthetic Imported Driver","Retail",""])
+            payload["valueRanges"][0]["values"].append(
+                ["J0456","","Synthetic Imported Driver","Retail","AB22 CDE","Window Tinting"]
+                +[""]*10+[125,"Quoted"])
+        source=(self.formula,self.computed)
+        batch=uuid.uuid4().hex
+        snap=create_snapshot(uuid.uuid4().hex)
+        manifest,approval=create_customer([6],snap,batch,source,"synthetic-owner")
+        create_customer([6],snap,batch,source,"synthetic-owner",approval)
+        cid=manifest["entries"][0]["customer_id"]
+        recovery=create_snapshot(uuid.uuid4().hex)
+        url="/hq/migration/customers/create-vehicle"
+        self.assertEqual(app.test_client().get(url).status_code,302)
+        data=dict(csrf="test-csrf",action="prepare",operation=uuid.uuid4().hex,
+                  row="6",ref="J0456",customer_row="6",customer_id=cid,
+                  make="Hyundai",model="i30",model_year="2022",registration="AB22 CDE",
+                  snapshot_id=recovery)
+        a,b=self.live_source()
+        with a,b:
+            self.assertEqual(self.client.post(url,data=dict(data,csrf="bad")).status_code,403)
+            self.assertEqual(self.client.post(url,data=dict(data,registration="AB22 XYZ")).status_code,409)
+            page=self.client.post(url,data=data)
+            self.assertEqual(page.status_code,200)
+            self.assertIn(b"Literal registration matches",page.data)
+            stamp=re.search(rb'name="stamp" value="([0-9a-f]{64})"',page.data).group(1).decode()
+            apply=dict(data,action="apply",stamp=stamp,confirm="yes")
+            self.assertEqual(self.client.post(url,data=dict(apply,confirm="")).status_code,409)
+            self.assertEqual(self.client.post(url,data=dict(apply,model="i20")).status_code,409)
+            self.computed["valueRanges"][0]["values"][2][4]="AB22 XYZ"
+            self.assertEqual(self.client.post(url,data=apply).status_code,409)
+            self.computed["valueRanges"][0]["values"][2][4]="AB22 CDE"
+            self.assertEqual(self.client.post(url,data=apply).status_code,200)
+            self.assertEqual(self.client.post(url,data=apply).status_code,200)
+            self.assertEqual(self.client.post(url,data=dict(data,operation=uuid.uuid4().hex)).status_code,409)
+        with connect() as db:
+            imported=db.execute("SELECT * FROM hq_historical_created_vehicles").fetchone()
+            vid=imported["vehicle_id"]
+            vehicle=db.execute("SELECT * FROM hq_vehicles WHERE id=?",(vid,)).fetchone()
+            self.assertEqual((vehicle["customer_id"],vehicle["registration"]),(cid,"AB22 CDE"))
+            self.assertNotIn("AB22 CDE",imported["manifest"])
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_work_records").fetchone()[0],0)
+        self.assertIn(b"AB22 CDE",self.client.get("/hq/vehicles/"+vid+"/edit").data)
+        reversal=dict(csrf="test-csrf",action="reverse",operation=data["operation"],stamp=stamp,confirm="yes")
+        with connect() as db:
+            db.execute("CREATE TABLE synthetic_vehicle_dependency(vehicle_id TEXT)")
+            db.execute("INSERT INTO synthetic_vehicle_dependency VALUES(?)",(vid,))
+        self.assertEqual(self.client.post(url,data=reversal).status_code,409)
+        with connect() as db:
+            db.execute("DELETE FROM synthetic_vehicle_dependency")
+        self.assertEqual(self.client.post(url,data=reversal).status_code,200)
+        self.assertEqual(self.client.post(url,data=reversal).status_code,200)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_vehicles WHERE id=?",(vid,)).fetchone()[0],0)
+            self.assertIsNotNone(db.execute("SELECT reversed_at FROM hq_historical_created_vehicles").fetchone()[0])
+
+
 if __name__=="__main__":
     unittest.main()

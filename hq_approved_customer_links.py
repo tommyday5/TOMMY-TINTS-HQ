@@ -161,6 +161,8 @@ def reverse(candidate_id,stamp,owner):
         if not row["reversed_at"]:
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_historical_vehicle_links'").fetchone() and db.execute("SELECT 1 FROM hq_historical_vehicle_links WHERE customer_id=? AND reversed_at IS NULL",(row["customer_id"],)).fetchone():
                 raise ValueError("Reverse active historical vehicle links before reversing this customer link.")
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_historical_created_vehicles'").fetchone() and db.execute("SELECT 1 FROM hq_historical_created_vehicles WHERE customer_id=? AND reversed_at IS NULL",(row["customer_id"],)).fetchone():
+                raise ValueError("Resolve active historical vehicle creations before reversing this customer link.")
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_historical_postcode_imports'").fetchone() and db.execute("SELECT 1 FROM hq_historical_postcode_imports WHERE candidate_id=? AND reversed_at IS NULL",(candidate_id,)).fetchone():
                 raise ValueError("Reverse the historical postcode import before reversing the identity link.")
             db.execute("""UPDATE hq_approved_customer_source_links
