@@ -1048,3 +1048,31 @@ CI and deployment of this new slice pending.
 
 Next: DNA payout evidence, historical actual-cost reconciliation, first
 bounded approved import and independent off-volume recovery/owner acceptance.
+
+
+## 25 November — reverse settlement guard deployed; historical actual-cost observations
+
+PR #291 final head f29200aa passed Actions 45700938969 (root and integration
+regressions, 9 JavaScript tests). Merged as 0d8be3fa; Railway deployment
+c5329d75-4ef4-4d3e-b4f4-04e032263fea SUCCESS at 21:58:09 UTC.
+Original 1024 MB /data volume attachment and 48 workbook tabs rechecked.
+Jobs AG4:AJ4 confirmed Actual Hours, Actual Materials £, Actual Consumables £
+and Actual Extra Costs £.
+
+New slice: active imported historical work has an owner-only actual-cost
+observation route linked from historical work history. Fresh literal source
+values, exact decimal hours and GBP pennies are previewed, confirmed and
+saved against the existing canonical work ID, original J reference, source
+fingerprint and work revision. Blank and explicit zero are distinct.
+Duplicate/replay protection and append-only withdrawal retain evidence.
+No native cost ledger, stock, price, invoice, receipt or profit is changed.
+No actual historical observation has been saved; this is code and synthetic
+test coverage pending CI/deploy. Compare with native cost ledgers before
+separate approved reconciliation; no authority cutover. Owner production
+browser acceptance and off-volume recovery remain unverified.
+
+Customer service-to-HQ review, owner quote conversion, vehicle creation
+requests, product approval and customer isolation passed prior regression;
+no public routes changed in this slice. Next: historical cost mapping into
+native ledgers (without invented rates/stock), DNA payouts, customer
+acceptance and bounded approved historical import.
