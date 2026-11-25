@@ -123,3 +123,7 @@ register_monzo_classifications(finance)
 # Inactive owner-reviewed worksheet-to-invoice match candidates.
 from hq_monzo_invoice_matches import register as register_monzo_invoice_matches
 register_monzo_invoice_matches(finance)
+
+# Private creditor planning records; not verified liabilities or payment actions.
+from hq_creditor_cases import register as register_creditor_cases
+register_creditor_cases(finance)

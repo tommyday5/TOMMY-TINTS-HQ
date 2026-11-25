@@ -147,7 +147,13 @@ class CustomerPortalTests(unittest.TestCase):
         self.assertNotIn(other_id, view)
         self.assertNotIn("deposit", view.lower())
         self.assertNotIn("invoice received", view.lower())
-        self.assertNotIn("9999", view)
+        # Random canonical UUIDs and the hidden CSRF value can contain the
+        # same four digits as the private fixture. Exclude only these
+        # legitimate opaque tokens, not visible notes or currency values.
+        private_check = re.sub(r'(<input type="hidden" name="csrf" value=")[^"]+(">)',
+                               r'\1\2', view.replace(self.work_id, ""))
+        self.assertNotIn("9999", private_check)
+        self.assertNotIn("£99.99", private_check)
         self.assertEqual(read_work_record(self.work_id)["kind"], "job")
 
         self.assertEqual(self.owner.post(path, data={
@@ -438,7 +444,13 @@ class CustomerPortalTests(unittest.TestCase):
         self.assertIn(b"&lt;script&gt;", page.data)
         self.assertNotIn(b"<script>alert(1)</script>", page.data)
         self.assertNotIn(b"PRIVATE ACTUAL MATERIAL COST", page.data)
-        self.assertNotIn(b"9999", page.data)
+        # Random canonical UUIDs and the hidden CSRF value can contain the
+        # same four digits as the private fixture. Exclude only these
+        # legitimate opaque tokens, not visible notes or currency values.
+        private_check = re.sub(r'(<input type="hidden" name="csrf" value=")[^"]+(">)',
+                               r'\1\2', page.get_data(as_text=True).replace(self.work_id, ""))
+        self.assertNotIn("9999", private_check)
+        self.assertNotIn("£99.99", private_check)
         self.assertEqual(document_snapshot(self.work_id)["revision"], 6)
         self.assertEqual(self.owner.post(path, data={
             "csrf": "portal-test-csrf", "revision": "5", "action": "portal_update",

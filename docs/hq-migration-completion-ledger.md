@@ -878,3 +878,42 @@ not established. Next: independent off-volume recovery and first bounded
 owner-approved import, actual historical cost and status reconciliation,
 settlement/fee and creditor/affordability editing. Do not equate supported
 source statuses with migrated or reconciled records.
+
+
+## 25 November — all historical statuses deployed; editable creditor cases
+
+PR #286 full CI run 45630385704 completed successfully, including historical
+nonquote evidence and customer isolation/quote/booking tests. Merged as
+e636cf8c; Railway deployment fd52c746-3a9f-4af0-9494-9eda178c59b4 reports
+SUCCESS; original 1024 MB /data volume remains attached. All seven historical
+status categories now have draft representation, not actual migration.
+Fresh read-only workbook metadata: 48 tabs. Jobs header confirms distinct
+Actual Hours, Actual Materials £, Actual Consumables £ and Actual Extra
+Costs £; no actual cost reconciliation or payment promotion in this slice.
+
+This proposal introduces an editable native private creditor case register
+in Finance Command Centre > Creditor cases & affordability inputs. The
+Cashflow & Debt row-4 schema confirms separate Creditor, Balance, Current
+Monthly Payment, Proposed / Agreed Monthly Payment, Committed Monthly
+Payment, Liability Scope, Include in Affordability?, Account / Reference,
+Review Date, Last Confirmed, Evidence / Contact Notes and Next Action.
+Native owner-entered fields are intentionally not a historical import or
+formula parity claim. Unknown amounts remain null; explicit zero is zero.
+Claimed balances and proposed/committed amounts remain separate. Scope,
+status, affordability inclusion, evidence reference and notes are editable.
+Case ID, exact pence, revisions, durable event snapshots, duplicate guard,
+CSRF, owner-only access, replay guard and reversible archive/restore are
+implemented. No communication, payment, admission, hold confirmation,
+bank balance, commitment totals or affordability capacity inferred.
+Synthetic tests added; deployment and owner acceptance pending. Source
+data and existing provider links remain untouched. No creditor record
+was created in production, no production snapshot or import approved,
+and no authority cutover.
+
+Next: verify CI/deploy, map Creditor Casework and Creditor Affordability
+fields and formula dependencies, reconcile actual creditor identities and
+independent payment evidence before aggregating or deriving capacity.
+Continue historical cost reconciliation and bank settlement matching.
+Customer portal unchanged; PR #286 CI reverified isolated request-to-HQ,
+quote approval and appointment acceptance/confirmation. Authenticated
+production browser acceptance remains unverified.
