@@ -243,6 +243,10 @@ def register_routes(bp):
                     count(c.customer_id) AS count FROM hq_historical_customer_creation_batches b
                     JOIN hq_historical_created_customers c ON c.batch_id=b.id
                     GROUP BY b.id ORDER BY b.created_at DESC LIMIT 50""")]
+                for item in history:
+                    item["customers"]=[dict(r) for r in db.execute(
+                        "SELECT customer_id,sheet_row FROM hq_historical_created_customers WHERE batch_id=? ORDER BY sheet_row",
+                        (item["id"],))]
             try:
                 _,directory=_paths()
                 snapshots=_existing(directory)
