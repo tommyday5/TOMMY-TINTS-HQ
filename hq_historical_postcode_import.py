@@ -74,6 +74,8 @@ def _manifest(db, candidate_id, snapshot_id, source):
     with closing(sqlite3.connect(path.as_uri()+"?mode=ro", uri=True, timeout=1)) as saved:
         saved.row_factory = sqlite3.Row
         saved.execute("PRAGMA query_only=ON")
+        if not saved.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_approved_customer_source_links'").fetchone():
+            raise ValueError("Snapshot predates the approved historical link.")
         if _active_link(saved, candidate_id) != link or postcode_status(saved, native["id"])["revision"] != 0:
             raise ValueError("Snapshot must include the approved link and untouched native postcode.")
     return dict(version=1, candidate_id=candidate_id, customer_id=native["id"],
