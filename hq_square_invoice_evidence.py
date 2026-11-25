@@ -49,6 +49,71 @@ def tables(db):
     )""")
 
 
+def recheck_tables(db):
+    tables(db)
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_square_invoice_rechecks (
+        id INTEGER PRIMARY KEY,
+        payment_id TEXT NOT NULL REFERENCES hq_square_invoice_observations(payment_id),
+        allocation_revision INTEGER NOT NULL,
+        invoice_revision INTEGER NOT NULL,
+        provider_snapshot TEXT NOT NULL,
+        evidence_digest TEXT NOT NULL,
+        observed_at TEXT NOT NULL
+    )""")
+
+
+def recheck_history(db, payment_id):
+    return [dict(r) | {"evidence": json.loads(r["provider_snapshot"])}
+            for r in db.execute("""SELECT * FROM hq_square_invoice_rechecks
+                WHERE payment_id=? ORDER BY id DESC LIMIT 50""", (payment_id,))]
+
+
+def recheck_saved(allocation_id):
+    """Explicit owner action: append changed provider evidence only, never cash."""
+    with closing(connect()) as db, db:
+        recheck_tables(db)
+        original = observation(db, allocation_id)
+        if not original:
+            raise ValueError("Save the initial exact Square observation first.")
+        row = load_allocation(db, allocation_id)
+        history = recheck_history(db, original["payment_id"])
+    if not configured() or digest(os.environ["HQ_SQUARE_LOCATION_ID"]) != original["scope_digest"]:
+        raise EvidenceConflict("The original Square location cannot be verified.")
+    evidence = inspect_exact_payment(original["payment_id"])
+    if (evidence["id"] != original["payment_id"] or evidence["currency"] != "GBP"
+            or type(evidence["total_minor"]) is not int or evidence["total_minor"] < 0
+            or evidence["status"] not in ("APPROVED", "PENDING", "COMPLETED", "CANCELED", "FAILED")
+            or (evidence["refunded_minor"] is not None and
+                (type(evidence["refunded_minor"]) is not int
+                 or not 0 <= evidence["refunded_minor"] <= evidence["total_minor"]))):
+        raise ValueError("Invalid provider recheck evidence.")
+    previous = history[0]["evidence"] if history else json.loads(original["provider_snapshot"])
+    if (evidence["created_at"] != previous["created_at"]
+            or datetime.fromisoformat(evidence["updated_at"]) <
+               datetime.fromisoformat(previous["updated_at"])):
+        raise EvidenceConflict("Provider identity or update timestamp conflicts with retained evidence.")
+    fingerprint = digest(evidence)
+    with closing(connect()) as db, db:
+        db.execute("PRAGMA foreign_keys=ON")
+        recheck_tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        if (not configured() or digest(os.environ["HQ_SQUARE_LOCATION_ID"]) != original["scope_digest"]
+                or observation(db, allocation_id) != original or load_allocation(db, allocation_id) != row):
+            raise EvidenceConflict("Location, invoice or allocation changed; recheck again.")
+        latest = recheck_history(db, original["payment_id"])
+        if latest and latest[0]["evidence_digest"] == fingerprint:
+            return "Provider evidence is unchanged; no duplicate observation or receipt was created."
+        if (latest[0]["id"] if latest else None) != (history[0]["id"] if history else None):
+            raise EvidenceConflict("Another provider recheck was saved; recheck again.")
+        if fingerprint == digest(previous):
+            return "Provider evidence is unchanged; no duplicate observation or receipt was created."
+        db.execute("""INSERT INTO hq_square_invoice_rechecks
+            (payment_id,allocation_revision,invoice_revision,provider_snapshot,evidence_digest,observed_at)
+            VALUES(?,?,?,?,?,?)""", (original["payment_id"], row["revision"], row["invoice_revision"],
+            json.dumps(evidence, sort_keys=True), fingerprint, datetime.now(timezone.utc).isoformat()))
+    return "Changed provider observation retained. Review any refund or status change; no allocation or cash was changed."
+
+
 def observation(db, allocation_id):
     row = db.execute("""SELECT * FROM hq_square_invoice_observations
         WHERE allocation_id=?""", (allocation_id,)).fetchone()
@@ -116,6 +181,7 @@ def register(bp):
             return "Persistent HQ storage unavailable", 503, {"Cache-Control": "no-store"}
         allocation_id = request.args.get("allocation", "")
         row = saved = review = notice = error = None
+        history = []
         status = 200
         try:
             if request.method == "POST":
@@ -127,11 +193,22 @@ def register(bp):
                 raise ValueError("Invalid allocation ID.")
             if allocation_id:
                 with closing(connect()) as db, db:
-                    tables(db)
+                    recheck_tables(db)
                     row = load_allocation(db, allocation_id)
                     saved = observation(db, allocation_id)
+                    if saved:
+                        history = recheck_history(db, saved["payment_id"])
             if request.method == "POST":
                 action = request.form.get("action")
+                if action == "recheck" and allocation_id:
+                    if request.form.get("confirm") != "yes":
+                        raise ValueError("Explicit confirmation is required to retain a new observation.")
+                    notice = recheck_saved(allocation_id)
+                    with closing(connect()) as db, db:
+                        history = recheck_history(db, saved["payment_id"])
+                    return render_template("hq_square_invoice_evidence.html", allocation_id=allocation_id,
+                        row=row, saved=saved, review=None, notice=notice, error=None,
+                        history=history, csrf=session.get("csrf", "")), 200, {"Cache-Control": "no-store"}
                 if action not in ("review", "save") or not allocation_id:
                     raise ValueError("Choose an allocation and review its evidence.")
                 manifest = request.form.get("manifest", "")
@@ -179,4 +256,4 @@ def register(bp):
             error, status = "Provider read or HQ storage unavailable; no new save confirmed.", 503
         return render_template("hq_square_invoice_evidence.html", allocation_id=allocation_id,
             row=row, saved=saved, review=review, notice=notice, error=error,
-            csrf=session.get("csrf", "")), status, {"Cache-Control": "no-store"}
+            history=history, csrf=session.get("csrf", "")), status, {"Cache-Control": "no-store"}
