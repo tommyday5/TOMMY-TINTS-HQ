@@ -42,13 +42,11 @@ def _init(db):
         ON hq_historical_vehicle_links(sheet_row) WHERE reversed_at IS NULL""")
 
 
-def _identity(db, customer_id, vehicle_id, customer_row):
+def _customer_identity(db, customer_id, customer_row):
     h = source_helpers()
     native = h._native_row(db, customer_id)
-    vehicle = db.execute("SELECT * FROM hq_vehicles WHERE id=? AND customer_id=?",
-                         (vehicle_id, customer_id)).fetchone()
-    if not native or not vehicle:
-        raise ValueError("Choose an active canonical customer and their own vehicle.")
+    if not native:
+        raise ValueError("Choose an active canonical customer.")
     links = []
     for table, query in (
         ("hq_approved_customer_source_links",
@@ -61,11 +59,20 @@ def _identity(db, customer_id, vehicle_id, customer_row):
                 query, (customer_id, h.WORKBOOK, h.CUSTOMERS_SHEET_ID, customer_row)))
     if len(links) != 1:
         raise ValueError("First establish exactly one active historical customer provenance link.")
+    return dict(native), links[0]
+
+
+def _identity(db, customer_id, vehicle_id, customer_row):
+    native, parent = _customer_identity(db, customer_id, customer_row)
+    vehicle = db.execute("SELECT * FROM hq_vehicles WHERE id=? AND customer_id=?",
+                         (vehicle_id, customer_id)).fetchone()
+    if not vehicle:
+        raise ValueError("Choose a vehicle belonging to this canonical customer.")
     revision = 0
     if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_vehicle_edit_audit'").fetchone():
         revision = db.execute("SELECT COALESCE(MAX(id),0) FROM hq_vehicle_edit_audit WHERE vehicle_id=?",
                               (vehicle_id,)).fetchone()[0]
-    return dict(native), dict(vehicle), links[0], revision
+    return native, dict(vehicle), parent, revision
 
 
 def _snapshot(snapshot_id, identity, customer_id, vehicle_id, customer_row):
