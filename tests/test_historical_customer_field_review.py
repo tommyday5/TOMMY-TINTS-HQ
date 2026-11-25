@@ -667,6 +667,94 @@ class CustomerFieldReviewTests(unittest.TestCase):
             set_work_archived(wid,"restore",1,uuid.uuid4().hex)
         reverse_vehicle(link,link_stamp,"synthetic-owner")
 
+    def test_repeat_vehicle_historical_drafts_and_original_reference_lookup(self):
+        import re
+        from hq_private_recovery import create_snapshot
+        from hq_historical_customer_creation import review as create_customer
+        from hq_historical_vehicle_links import review as link_vehicle
+        from hq_core_records import search_work_records
+        self.login()
+        for payload in (self.formula,self.computed):
+            payload["valueRanges"][1]["values"].append(["Synthetic Repeat Driver","Retail",""])
+            for ref,price in (("J0456",125),("J0457",175)):
+                payload["valueRanges"][0]["values"].append(
+                    [ref,"","Synthetic Repeat Driver","Retail","AB22 CDE","Window Tinting"]
+                    +[""]*10+[price,"Quoted"])
+        source=(self.formula,self.computed)
+        snap=create_snapshot(uuid.uuid4().hex)
+        batch=uuid.uuid4().hex
+        manifest,stamp=create_customer([6],snap,batch,source,"synthetic-owner")
+        create_customer([6],snap,batch,source,"synthetic-owner",stamp)
+        cid=manifest["entries"][0]["customer_id"]
+        vid=uuid.uuid4().hex
+        with connect() as db:
+            db.execute("INSERT INTO hq_vehicles VALUES(?,?,?,?,?,?,?)",
+                       (vid,cid,"Hyundai","i30","2022","AB22 CDE","2026-01-01"))
+        links=[]
+        for row,ref in ((6,"J0456"),(7,"J0457")):
+            snap=create_snapshot(uuid.uuid4().hex)
+            link=uuid.uuid4().hex
+            _,stamp=link_vehicle(source,row,ref,6,cid,vid,snap,link,"synthetic-owner")
+            link_vehicle(source,row,ref,6,cid,vid,snap,link,"synthetic-owner",stamp)
+            links.append(link)
+        url="/hq/migration/customers/create-work"
+        self.assertEqual(self.client.get(url).status_code,200)
+        def payload(link,snapshot):
+            return dict(csrf="test-csrf",action="prepare",operation=uuid.uuid4().hex,
+                        link_id=link,service="Window Tinting",snapshot_id=snapshot)
+        def approved(data,page):
+            self.assertEqual(page.status_code,200,page.data)
+            stamp=re.search(rb'name="stamp" value="([0-9a-f]{64})"',page.data).group(1).decode()
+            return dict(data,action="apply",confirm="yes",stamp=stamp)
+        a,b=self.live_source()
+        with a,b:
+            data=payload(links[0],create_snapshot(uuid.uuid4().hex))
+            first=approved(data,self.client.post(url,data=data))
+            self.assertEqual(self.client.post(url,data=first).status_code,200)
+            data=payload(links[1],create_snapshot(uuid.uuid4().hex))
+            page=self.client.post(url,data=data)
+            second=approved(data,page)
+            self.assertIn(b"Existing verified historical drafts for this vehicle",page.data)
+            self.assertIn(b"J0456",page.data)
+            # Fresh source checks cover earlier work too.
+            self.computed["valueRanges"][0]["values"][2][16]=126
+            self.assertEqual(self.client.post(url,data=second).status_code,409)
+            self.computed["valueRanges"][0]["values"][2][16]=125
+            # Any unrelated native work on the same vehicle blocks creation.
+            other=uuid.uuid4().hex
+            with connect() as db:
+                db.execute("""INSERT INTO hq_work_records
+                    (id,source_request_id,customer_id,vehicle_id,kind,service,notes,
+                    preferred_date,preferred_time,status,created_at)
+                    VALUES(?,?,?,?,'quote','Window Tinting','','','','draft','2026-01-01')""",
+                    (other,"HQ-"+other,cid,vid))
+            self.assertEqual(self.client.post(url,data=second).status_code,409)
+            with connect() as db:
+                db.execute("DELETE FROM hq_work_records WHERE id=?",(other,))
+            self.assertEqual(self.client.post(url,data=second).status_code,200)
+            self.assertEqual(self.client.post(url,data=second).status_code,200)
+        first_records=search_work_records(query="j0456",kind="quote",status="draft")
+        second_records=search_work_records(query="J0457",kind="quote")
+        self.assertEqual((first_records["total"],second_records["total"]),(1,1))
+        one,two=first_records["records"][0],second_records["records"][0]
+        self.assertNotEqual(one["id"],two["id"])
+        self.assertEqual((one["price_pence"],two["price_pence"]),(12500,17500))
+        self.assertEqual(search_work_records(query="J0457",kind="job")["total"],0)
+        self.assertEqual(search_work_records(query="J045",kind="quote")["total"],0)
+        page=self.client.get("/hq/work/"+two["id"]+"/edit")
+        self.assertEqual(page.status_code,200)
+        self.assertIn(b"Original historical reference: J0457",page.data)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_historical_created_work").fetchone()[0],2)
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_job_sheet_links").fetchone()[0],0)
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_job_sync_outbox").fetchone()[0],0)
+            # Owner note changes cannot erase the original reference.
+            db.execute("UPDATE hq_work_records SET notes='Edited synthetic notes',revision=1 WHERE id=?",(two["id"],))
+        self.assertEqual(search_work_records(query="J0457")["total"],1)
+        self.assertIn(b"Original historical reference: J0457",
+                      self.client.get("/hq/work/"+two["id"]+"/edit").data)
+        self.assertEqual(app.test_client().get("/hq/work/"+two["id"]+"/edit").status_code,302)
+
 
 if __name__=="__main__":
     unittest.main()
