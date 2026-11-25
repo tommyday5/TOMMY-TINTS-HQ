@@ -76,7 +76,12 @@ def preview(db, allocation_id, entry, fee_pence, reference):
 def save(db, allocation_id, entry, fee, reference, manifest, operation, actor):
     old = db.execute("SELECT * FROM hq_square_settlement_reviews WHERE operation=?", (operation,)).fetchone()
     if old:
-        if old["allocation_id"] == allocation_id and old["manifest"] == manifest and old["actor"] == actor and old["state"] == "proposed":
+        previous = json.loads(old["evidence"])
+        if (old["allocation_id"] == allocation_id and old["manifest"] == manifest
+                and old["actor"] == actor and old["state"] == "proposed"
+                and previous.get("source_id") == entry["ref"]
+                and previous.get("source_digest") == source_digest(entry)
+                and previous.get("fee") == fee and previous.get("reference") == reference.strip()):
             return
         raise ValueError("Operation already used with different evidence.")
     data, expected = preview(db, allocation_id, entry, fee, reference)
