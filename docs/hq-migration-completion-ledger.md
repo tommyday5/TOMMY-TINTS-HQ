@@ -1015,3 +1015,36 @@ refund-bearing batches and independent provider/bank payout checks remain
 outstanding. No public route changed; no real record, Sheets cell, booking,
 payment or recovery snapshot changed. Next: CI/deploy and historical actual
 cost reconciliation, bounded approved migration and customer acceptance.
+
+
+## 25 November — combined Square proposals deployed; direct bank-match conflict guard
+
+PR #290 final head 8958c09bd7c7f1316c2daad612142781ed548bc4 passed
+Actions 45691356004 (127 root + 663 integration Python tests, 9 JavaScript
+tests). Merged as d06ec9b5; Railway deployment
+1f4f413b-e67c-4a55-9b93-b8ef470b86c1 SUCCESS at 21:03:34 UTC.
+Environment inventory confirms original 1024 MB /data volume
+540528d1-3953-4737-9d92-3c861575c5d4 attached, no staged configuration.
+Fresh read-only workbook metadata confirms 48 tabs; Jobs row 4 has
+distinct actual inputs in AG:AJ (hours, materials, consumables, extra costs).
+
+Combined proposals are deployed, not independently verified settlements
+or fee expenses. Owner browser acceptance, actual payment reconciliation,
+historical imports and authority cutover are unverified. CI confirms
+customer service-to-HQ review, owner quotation approval, canonical vehicle
+requests, product approval visibility and customer account isolation;
+no public route changes.
+
+New proposed slice closes the reverse direction of a source-ID conflict:
+direct Monzo invoice match review/save and owner-reported allocation review
+reject a bank deposit already covered by an active single or combined
+Square proposal. Prior tables may be absent on older databases; latest
+withdrawal releases the guard. Owner error links to the settlement
+workspaces. Existing checks in the opposite direction remain unchanged.
+Synthetic tests cover both proposal types, unrelated source, missing schema,
+withdrawal and direct report guard. Not a global reservation across all
+finance paths; no receipt or expense posting, no migration or data writes.
+CI and deployment of this new slice pending.
+
+Next: DNA payout evidence, historical actual-cost reconciliation, first
+bounded approved import and independent off-volume recovery/owner acceptance.
