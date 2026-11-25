@@ -917,3 +917,39 @@ Continue historical cost reconciliation and bank settlement matching.
 Customer portal unchanged; PR #286 CI reverified isolated request-to-HQ,
 quote approval and appointment acceptance/confirmation. Authenticated
 production browser acceptance remains unverified.
+
+
+## 25 November — creditor register live; native affordability scenario
+
+PR #287 deployed as f676da54; Railway deployment
+a73a7c2a-9434-41da-b0b9-cf2ce96d4a83 reports SUCCESS, original 1024 MB
+/data volume 540528d1-3953-4737-9d92-3c861575c5d4 attached, no staged
+changes. Owner acceptance and historical creditor migration remain
+outstanding. Fresh workbook metadata confirms all 48 tabs.
+
+PR #288 implements a private editable monthly scenario at Finance
+Command Centre > Affordability calculator, linked from creditor cases.
+Read-only formula inspection reconfirmed Cash Engine E9, H9, E10, H10,
+B11, E11, H11 and Creditor Affordability B14:B16. The native engine
+models the arithmetic subset on explicit owner-entered monthly inputs,
+with exact pence, conservative growth switch, critical director support
+guard, reserve rebuild and protected creditor contingency. Full workbook
+parity (including rolling transaction classification, date window,
+settings, all registered commitments and actual data) is NOT established.
+No automatic integration with verified bank totals or existing commitments;
+current case comparison reports known partial subtotals and unknowns
+separately. Capacity is an illustrative shared pool, not verified advice.
+
+Implemented versioned persistence, owner auth, CSRF, input validation,
+idempotent replay, stale revision rejection, no-store, revision history
+and responsive server-rendered form. Synthetic integration tests cover
+save/reload, edit, history, duplicate operation, conflicts, validation,
+case comparison and public portal exclusion; CI/deployment pending for
+the full UI revision. No customer-facing route modified. Production
+browser acceptance, off-volume recovery and actual historical import
+remain outstanding. No live finance, customer, debt, booking, Sheets or
+payment records changed; no authority cutover.
+
+Next: verify full UI CI and deployment; actual historical cost parity,
+settlement/fee matching and approved bounded import, alongside independent
+customer workflow acceptance. Preserve provider connections.
