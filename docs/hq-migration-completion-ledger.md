@@ -437,3 +437,32 @@ settlement and formula parity remain outstanding. Existing customer request,
 quote approval, canonical job handoff and isolation tests passed in PR #273;
 direct production /book verification failed DNS resolution, and customer
 payment display remains unverified.
+
+
+## 25 November follow-up — partial refunds deployed; customer invoice publication
+
+PR #274 passed CI 45530216604 (127 root + 641 integration Python tests,
+9 JavaScript tests), merged as 3fad0a0d and Railway deployment
+164b1310-3dc7-4254-9b2d-48e0218dbb3f reported SUCCESS at 02:58 UTC.
+The existing /data 1024 MB volume was observed attached before merge.
+Cumulative partial refund corrections are deployed; real owner acceptance,
+verified bank settlement and historical parity remain unverified.
+
+This proposed customer-facing slice adds a private owner form at Customers >
+select customer > Portal access > Review and publish customer invoice
+summaries. Only issued, non-archived invoices tied to approved work and the
+same canonical customer are eligible. The owner must confirm exact invoice
+and customer before publishing; withdrawal retains immutable history.
+Authenticated customers see only the reference, issue/due dates and face
+amount. Changes to invoice, work, allocations or retained Square observations
+suppress the publication until explicit review. No receipt, paid status,
+outstanding balance, internal memo, provider identifiers or bank settlement
+is exposed; no external communication or payment action. Synthetic route
+coverage is included; deployment and owner-browser acceptance are pending.
+No actual publication was made by development.
+
+Workbook metadata still enumerates the same 48 tabs. No historical import,
+recovery snapshot or domain cutover authorised. Next: verified settlement
+and payment status publication with explicit owner approval, reversible
+historical customer/vehicle execution, creditor reconciliation and actual
+browser acceptance. Existing customer request and booking paths preserved.
