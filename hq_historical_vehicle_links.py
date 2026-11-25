@@ -102,7 +102,8 @@ def _manifest(db, source, row, ref, customer_row, customer_id, vehicle_id, snaps
     if (not isinstance(val, str) or not val.strip() or val.startswith("=")
             or len(val) > 160 or any(ord(c) < 32 for c in val)
             or val != _cell(effective[row-4], 4)
-            or not isinstance(name, str) or not _norm(name)):
+            or not isinstance(name, str) or not _norm(name) or name.startswith("=")
+            or name != _cell(effective[row-4], 2)):
         raise ValueError("Vehicle/Reg and customer must be unchanged literal source fields.")
     customer_source, computed = h._source_row(*source, customer_row)
     if _norm(customer_source[0]) != _norm(name) or customer_source[0] != computed[0]:
@@ -125,6 +126,10 @@ def _manifest(db, source, row, ref, customer_row, customer_id, vehicle_id, snaps
     if db.execute("SELECT 1 FROM hq_historical_vehicle_links WHERE reversed_at IS NULL AND (job_ref=? OR sheet_row=?)",
                   (ref,row)).fetchone():
         raise ValueError("This historical job already has an active vehicle link.")
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_historical_created_vehicles'").fetchone():
+        created=db.execute("SELECT vehicle_id,reversed_at FROM hq_historical_created_vehicles WHERE job_ref=? OR sheet_row=?",(ref,row)).fetchone()
+        if created and (created["reversed_at"] or created["vehicle_id"]!=vehicle_id):
+            raise ValueError("Historical creation provenance conflicts with this vehicle link.")
     _snapshot(snapshot_id, identity, customer_id, vehicle_id, customer_row)
     return dict(version=1, operation=operation, job_ref=ref, sheet_row=row,
                 workbook_id=h.WORKBOOK, sheet_id=330634230,
