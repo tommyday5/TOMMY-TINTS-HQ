@@ -40,7 +40,7 @@ def _latest(db, invoice_id):
 
 def _context(db, customer_id, invoice_id):
     invoice = db.execute("""SELECT r.id,r.customer_id,r.work_id,r.invoice_ref,r.issue_date,
-        r.due_date,r.amount_pence,r.revision,w.status AS work_status
+        r.due_date,r.amount_pence,r.revision,w.status AS work_status,w.revision AS work_revision
         FROM hq_receivables r JOIN hq_work_records w
         ON w.id=r.work_id AND w.customer_id=r.customer_id
         WHERE r.id=? AND r.customer_id=? AND r.status='issued' AND r.archived=0
