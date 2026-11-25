@@ -259,6 +259,8 @@ def reverse(operation, stamp, owner):
 
 
 def register_routes(bp):
+    from hq_historical_actual_costs import register_routes as register_cost_routes
+    register_cost_routes(bp)
     @bp.route("/hq/migration/customers/create-work",methods=["GET","POST"])
     @required
     def historical_work_creation():
