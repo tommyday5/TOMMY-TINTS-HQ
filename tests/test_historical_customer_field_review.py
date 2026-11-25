@@ -324,5 +324,74 @@ class CustomerFieldReviewTests(unittest.TestCase):
         self.assertEqual((self.formula,self.computed),self.original)
 
 
+    def test_missing_customer_batch_exact_approval_and_archive(self):
+        import re
+        from hq_private_recovery import create_snapshot
+        from hq_historical_customer_creation import _rows
+        from hq_customer_archive import archive_status
+        url="/hq/migration/customers/create-batch"
+        self.assertEqual(self.client.get(url).status_code,302)
+        self.login()
+        for payload in (self.formula,self.computed):
+            payload["valueRanges"][1]["values"].extend([
+                ["Synthetic Missing Alpha","Retail","ZZ1 1AA"],
+                ["Synthetic Missing Beta","Trader","ZZ2 2BB"]])
+        original=copy.deepcopy((self.formula,self.computed))
+        snapshot=create_snapshot(uuid.uuid4().hex)
+        batch=uuid.uuid4().hex
+        data=dict(csrf="test-csrf",action="prepare",batch_id=batch,
+                  rows="6,7",snapshot_id=snapshot)
+        a,b=self.live_source()
+        with a,b:
+            self.assertEqual(self.client.post(url,data=dict(data,csrf="bad")).status_code,403)
+            self.assertEqual(self.client.post(url,data=dict(data,rows="5,6")).status_code,409)
+            self.assertEqual(self.client.post(url,data=dict(data,rows="6,6")).status_code,409)
+            page=self.client.post(url,data=data)
+            self.assertEqual(page.status_code,200)
+            self.assertIn(b"Synthetic Missing Alpha",page.data)
+            self.assertIn(b"Synthetic Missing Beta",page.data)
+            stamp=re.search(rb'name="stamp" value="([0-9a-f]{64})"',page.data).group(1).decode()
+            with connect() as db:
+                self.assertEqual(db.execute("SELECT count(*) FROM hq_customers").fetchone()[0],1)
+            apply=dict(data,action="apply",stamp=stamp,confirm="yes")
+            self.assertEqual(self.client.post(url,data=dict(apply,confirm="")).status_code,409)
+            self.computed["valueRanges"][1]["values"][2][0]="Changed"
+            self.assertEqual(self.client.post(url,data=apply).status_code,409)
+            self.computed["valueRanges"][1]["values"][2][0]="Synthetic Missing Alpha"
+            self.assertEqual(self.client.post(url,data=apply).status_code,200)
+            self.assertEqual(self.client.post(url,data=apply).status_code,200)
+            self.assertEqual(self.client.post(url,data=dict(apply,rows="6")).status_code,409)
+            self.assertEqual(self.client.post(url,data=dict(data,batch_id=uuid.uuid4().hex)).status_code,409)
+        with connect() as db:
+            rows=db.execute("""SELECT c.id,c.name,c.email,c.phone,c.source_request_id
+                FROM hq_customers c JOIN hq_historical_created_customers h
+                ON h.customer_id=c.id ORDER BY h.sheet_row""").fetchall()
+            self.assertEqual([r["name"] for r in rows],["Synthetic Missing Alpha","Synthetic Missing Beta"])
+            self.assertTrue(all(not r["email"] and not r["phone"] and r["source_request_id"] is None for r in rows))
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_historical_customer_creation_batches").fetchone()[0],1)
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_vehicles").fetchone()[0],0)
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_work_records").fetchone()[0],0)
+        self.assertIn(b"2 customers",self.client.get(url).data)
+        reversal=dict(csrf="test-csrf",action="reverse",batch_id=batch,stamp=stamp,confirm="yes")
+        # A dependent vehicle blocks the entire reversal, including the untouched customer.
+        vid=uuid.uuid4().hex
+        with connect() as db:
+            db.execute("INSERT INTO hq_vehicles VALUES(?,?,?,?,?,?,?)",
+                       (vid,rows[1]["id"],"Synthetic","Test","","","2026-01-01"))
+        self.assertEqual(self.client.post(url,data=reversal).status_code,409)
+        self.assertEqual(archive_status(rows[0]["id"]),(False,0))
+        with connect() as db:
+            db.execute("DELETE FROM hq_vehicles WHERE id=?",(vid,))
+        self.assertEqual(self.client.post(url,data=reversal).status_code,200)
+        self.assertEqual(self.client.post(url,data=reversal).status_code,200)
+        for row in rows:
+            self.assertEqual(archive_status(row["id"]),(True,1))
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_customers").fetchone()[0],3)
+            self.assertEqual(db.execute("SELECT count(*) FROM hq_historical_created_customers").fetchone()[0],2)
+        self.assertEqual((self.formula,self.computed),original)
+        self.assertRaises(ValueError,_rows,"5,6,7,8,9,10")
+
+
 if __name__=="__main__":
     unittest.main()

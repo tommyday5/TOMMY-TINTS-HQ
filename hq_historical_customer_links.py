@@ -178,6 +178,8 @@ def stage_customer_candidate(*, formula, computed, sheet_row, expected_source_st
             _schema(db)
             _schema_candidates(db)
             db.execute("BEGIN IMMEDIATE")
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_historical_created_customers'").fetchone() and db.execute("SELECT 1 FROM hq_historical_created_customers WHERE workbook_id=? AND sheet_id=? AND sheet_row=?", (WORKBOOK,CUSTOMERS_SHEET_ID,sheet_row)).fetchone():
+                raise ValueError("Source row already has historical creation provenance")
             native = _native_row(db, customer_id)
             if native is None:
                 raise ValueError("Native customer is unavailable or archived")
@@ -353,3 +355,7 @@ _register_field_review_routes(customer_migration)
 
 from hq_approved_customer_links import register_routes as _register_approved_link_routes
 _register_approved_link_routes(customer_migration)
+
+
+from hq_historical_customer_creation import register_routes as _register_customer_creation_routes
+_register_customer_creation_routes(customer_migration)
