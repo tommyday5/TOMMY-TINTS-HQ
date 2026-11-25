@@ -839,3 +839,42 @@ Customer portal routes are unchanged. Existing CI passed; direct owner
 and customer browser acceptance and independent off-volume recovery
 remain unverified. No authority cutover, production snapshot, live record
 change or workbook write in this iteration.
+
+
+## 25 November — historical job evidence deployed; remaining source statuses
+
+PR #285 passed Actions run 45619121694 (127 root + 653 integration Python
+tests, 9 JavaScript tests). Merged as 1c7fefde. Railway deployment
+c1c38412-4044-4b57-8168-ff8b603ad940 reported SUCCESS at 14:05:17 UTC;
+gunicorn startup and original 1024 MB /data volume
+540528d1-3953-4737-9d92-3c861575c5d4 verified. One running replica,
+no pending changes or service issues. No owner acceptance or production
+historical import executed.
+
+Fresh read-only workbook metadata confirms 48 tabs. Jobs status inventory
+still contains 76 J-shaped rows: Paid 27, Declined 14, Quoted 12, Booked 4,
+Completed 3, Enquiry 8, Awaiting Payment 8. Among the 22 Declined/Enquiry
+rows, four have missing quoted price and three missing vehicle information.
+These are source inventory counts, not import eligibility. Previously
+identified duplicate J0057 remains a separate review requirement.
+
+Proposed slice extends the same exact owner-approved historical creation
+workflow to Enquiry and Declined. Both become native quote review drafts
+with null native price, no appointments, payments, customer publication
+or active operational status, and separately preserved source status/price.
+Core status and financial promotion guards remain in force. All seven
+observed source statuses now have draft representation in code, subject
+to valid source, identity, vehicle, service, duplicate and snapshot checks.
+Synthetic integration scenario expanded to cover both statuses, replay,
+owner visibility, unchanged financial aggregates and guarded reversal.
+CI and deployment of this slice pending. No actual import or source
+mutation, recovery snapshot, customer publication or authority cutover.
+
+PR #285 CI independently confirms customer service browser submission to
+owner review, combined quote conversion, appointment acceptance/owner
+confirmation, maintenance pricing privacy and customer isolation.
+No public routes changed. Authenticated production browser acceptance
+not established. Next: independent off-volume recovery and first bounded
+owner-approved import, actual historical cost and status reconciliation,
+settlement/fee and creditor/affordability editing. Do not equate supported
+source statuses with migrated or reconciled records.

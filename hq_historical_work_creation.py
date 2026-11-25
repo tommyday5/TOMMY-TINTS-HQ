@@ -90,9 +90,9 @@ def _manifest(db, source, link_id, snapshot_id, operation, service):
     effective, _ = _ranges(source[1])
     raw, actual = jobs[row-4], effective[row-4]
     source_status = _cell(raw,17)
-    if (source_status not in ("Quoted", "Booked", "Completed", "Paid", "Awaiting Payment")
+    if (source_status not in ("Quoted", "Booked", "Completed", "Paid", "Awaiting Payment", "Enquiry", "Declined")
             or source_status != _cell(actual,17)):
-        raise ValueError("Choose an unchanged literal Quoted, Booked, Completed, Paid or Awaiting Payment row.")
+        raise ValueError("Choose an unchanged literal Quoted, Booked, Completed, Paid, Awaiting Payment, Enquiry or Declined row.")
     tier = {"Retail":"retail","Trader":"trade","Trade":"trade","Maintenance":"maintenance"}.get(_cell(raw,3))
     if not tier or _cell(raw,3) != _cell(actual,3):
         raise ValueError("Historical customer type is unknown or changed.")
@@ -189,11 +189,12 @@ def review(source, link_id, snapshot_id, operation, service, owner, approval=Non
         now=datetime.now(timezone.utc).isoformat()
         wid,cid=m["work_id"],m["candidate_id"]
         quote = m["source_status"] == "Quoted"
+        quote_kind = quote or m["source_status"] in ("Enquiry", "Declined")
         notes="Historical "+m["job_ref"]+" — original service descriptions: "+"; ".join(m["source_services"])
         db.execute("""INSERT INTO hq_work_records
             (id,source_request_id,customer_id,vehicle_id,kind,service,notes,preferred_date,preferred_time,status,price_pence,created_at)
             VALUES(?,?,?,?,?,?,?,'','','draft',?,?)""",
-            (wid,"HQ-"+wid,m["customer_id"],m["vehicle_id"],"quote" if quote else "job",
+            (wid,"HQ-"+wid,m["customer_id"],m["vehicle_id"],"quote" if quote_kind else "job",
              service,notes,m["price_pence"] if quote else None,now))
         db.execute("INSERT INTO hq_native_work_details VALUES(?,?,?)",(wid,m["tier"],now))
         db.execute("INSERT INTO hq_native_work_operations VALUES(?,?,?,?)",(operation,wid,expected,now))
