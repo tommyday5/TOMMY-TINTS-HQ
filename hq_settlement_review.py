@@ -1,0 +1,176 @@
+"""Private one-payment settlement matching evidence; never posts bank cash."""
+from contextlib import closing
+from datetime import datetime, timezone
+import json
+import re
+import secrets
+import sqlite3
+import uuid
+
+import requests
+from flask import abort, render_template, request, session, url_for
+from customer_request_store import connect, storage_ready
+from hq_auth import required
+from hq_receivables import HEX
+from hq_square_invoice_evidence import digest, load_allocation, observation, recheck_history, recheck_tables
+from hq_monzo_invoice_matches import (current_entry, source_digest, active_candidates,
+                                      reported_links, tables as match_tables)
+from hq_monzo_sheet_classifications import ID
+from hq_work_progress import _actor_fingerprint
+
+def tables(db):
+    recheck_tables(db)
+    match_tables(db)
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_square_settlement_reviews (
+        id INTEGER PRIMARY KEY, allocation_id TEXT NOT NULL,
+        source_id TEXT NOT NULL, manifest TEXT NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('proposed','withdrawn')),
+        evidence TEXT NOT NULL, actor TEXT NOT NULL,
+        created TEXT NOT NULL, operation TEXT NOT NULL UNIQUE)""")
+    db.execute("""CREATE INDEX IF NOT EXISTS hq_settlement_review_lookup
+        ON hq_square_settlement_reviews(allocation_id, id)""")
+
+def active(db):
+    return [dict(r) for r in db.execute("""SELECT e.* FROM hq_square_settlement_reviews e
+        WHERE state='proposed' AND NOT EXISTS (SELECT 1 FROM hq_square_settlement_reviews n
+            WHERE n.allocation_id=e.allocation_id AND n.id>e.id)""")]
+
+def preview(db, allocation_id, entry, fee_pence, reference):
+    if not HEX.fullmatch(allocation_id) or not ID.fullmatch(entry["ref"]):
+        raise ValueError("Choose exact allocation and source IDs.")
+    if type(fee_pence) is not int or fee_pence < 0:
+        raise ValueError("Enter a known non-negative fee in exact pennies.")
+    if not isinstance(reference,str) or not 1 <= len(reference.strip()) <= 160:
+        raise ValueError("Enter the independent settlement statement reference.")
+    row = load_allocation(db, allocation_id)
+    original = observation(db, allocation_id)
+    if not original or row["status"] != "reported" or row["method"] != "card_reported" or row["invoice_status"] != "issued" or row["invoice_archived"]:
+        raise ValueError("An active issued invoice with retained Square payment evidence is required.")
+    if (row["revision"] != original["allocation_revision"] or
+            row["invoice_revision"] != original["invoice_revision"]):
+        raise ValueError("Invoice or allocation changed after the original observation.")
+    checks = recheck_history(db, original["payment_id"])
+    latest = checks[0] if checks else None
+    evidence = latest["evidence"] if latest else json.loads(original["provider_snapshot"])
+    gross = row["amount_pence"]
+    if (evidence["id"] != original["payment_id"] or evidence["currency"] != "GBP" or
+            evidence["status"] != "COMPLETED" or type(evidence["refunded_minor"]) is not int or
+            evidence["refunded_minor"] != 0 or evidence["total_minor"] != gross):
+        raise ValueError("Only an unchanged completed GBP payment with explicit zero refunds is supported.")
+    if fee_pence >= gross or entry["pence"] != gross-fee_pence or entry["pence"] <= 0:
+        raise ValueError("Gross less the stated fee must exactly equal the positive worksheet deposit.")
+    if entry["day"] < datetime.fromisoformat(evidence["created_at"]).date().isoformat():
+        raise ValueError("Deposit predates the payment observation.")
+    if active_candidates(db, entry["ref"]) or reported_links(db, entry["ref"]):
+        raise ValueError("This source already has invoice match or reported allocation evidence.")
+    if any(r["allocation_id"] == allocation_id or r["source_id"] == entry["ref"] for r in active(db)):
+        raise ValueError("Withdraw the existing settlement proposal first.")
+    data = dict(allocation_id=allocation_id, invoice_ref=row["invoice_ref"],
+                allocation_revision=row["revision"], invoice_revision=row["invoice_revision"],
+                payment_id=original["payment_id"], observation_manifest=original["manifest"],
+                recheck_id=latest["id"] if latest else None, source_id=entry["ref"],
+                source_digest=source_digest(entry), source_date=entry["day"],
+                gross=gross, fee=fee_pence, net=entry["pence"], reference=reference.strip())
+    return data, digest(data)
+
+def save(db, allocation_id, entry, fee, reference, manifest, operation, actor):
+    old = db.execute("SELECT * FROM hq_square_settlement_reviews WHERE operation=?", (operation,)).fetchone()
+    if old:
+        previous = json.loads(old["evidence"])
+        if (old["allocation_id"] == allocation_id and old["manifest"] == manifest
+                and old["actor"] == actor and old["state"] == "proposed"
+                and previous.get("source_id") == entry["ref"]
+                and previous.get("source_digest") == source_digest(entry)
+                and previous.get("fee") == fee and previous.get("reference") == reference.strip()):
+            return
+        raise ValueError("Operation already used with different evidence.")
+    data, expected = preview(db, allocation_id, entry, fee, reference)
+    if not secrets.compare_digest(expected, manifest):
+        raise ValueError("Evidence changed; prepare a fresh preview.")
+    db.execute("""INSERT INTO hq_square_settlement_reviews
+        (allocation_id,source_id,manifest,state,evidence,actor,created,operation)
+        VALUES(?,?,?,'proposed',?,?,?,?)""",
+        (allocation_id, entry["ref"], manifest, json.dumps(data,sort_keys=True),
+         actor, datetime.now(timezone.utc).isoformat(), operation))
+
+def withdraw(db, allocation_id, event_id, operation, actor):
+    old = db.execute("SELECT * FROM hq_square_settlement_reviews WHERE operation=?", (operation,)).fetchone()
+    if old:
+        if (old["state"] == "withdrawn" and old["allocation_id"] == allocation_id
+                and old["actor"] == actor and json.loads(old["evidence"]).get("withdraws") == event_id):
+            return
+        raise ValueError("Operation already used.")
+    row = db.execute("SELECT * FROM hq_square_settlement_reviews WHERE allocation_id=? ORDER BY id DESC LIMIT 1",
+                     (allocation_id,)).fetchone()
+    if not row or row["id"] != event_id or row["state"] != "proposed":
+        raise ValueError("Proposal changed; reload before withdrawing.")
+    db.execute("""INSERT INTO hq_square_settlement_reviews
+        (allocation_id,source_id,manifest,state,evidence,actor,created,operation)
+        VALUES(?,?,?,'withdrawn',?,?,?,?)""",
+        (allocation_id,row["source_id"],row["manifest"],json.dumps({"withdraws":event_id}),
+         actor,datetime.now(timezone.utc).isoformat(),operation))
+
+def register(bp):
+    @bp.route("/hq/finance/settlement-review", methods=["GET","POST"])
+    @required
+    def settlement_review():
+        if not storage_ready():
+            return "Persistent storage required.", 503, {"Cache-Control":"no-store"}
+        error, proposed, code = None, None, 200
+        form = request.form if request.method == "POST" else request.args
+        allocation_id = form.get("allocation", "")
+        source = form.get("source", "")
+        fee_raw = form.get("fee", "")
+        reference = form.get("reference", "")
+        try:
+            if request.method == "POST":
+                if request.content_length is None or request.content_length > 8192:
+                    abort(413)
+                csrf = session.get("csrf")
+                if not csrf or not secrets.compare_digest(form.get("csrf",""),csrf):
+                    abort(403)
+                action, operation = form.get("action"), form.get("operation","")
+                if not HEX.fullmatch(allocation_id) or not HEX.fullmatch(operation):
+                    raise ValueError("Invalid allocation or operation ID.")
+                actor = _actor_fingerprint(session.get("google_sub"))
+                if action == "withdraw":
+                    if form.get("confirm") != "yes":
+                        raise ValueError("Confirm withdrawal.")
+                    with closing(connect()) as db, db:
+                        tables(db)
+                        db.execute("BEGIN IMMEDIATE")
+                        withdraw(db,allocation_id,int(form.get("event","")),operation,actor)
+                    return "",303,{"Location":url_for(".settlement_review"),"Cache-Control":"no-store"}
+                if action not in ("preview","save") or not ID.fullmatch(source):
+                    raise ValueError("Choose an exact worksheet transaction ID.")
+                if not re.fullmatch(r"[0-9]{1,8}(?:\.[0-9]{1,2})?",fee_raw):
+                    raise ValueError("Enter the known fee in pounds, including zero only if evidenced.")
+                whole, _, fraction = fee_raw.partition(".")
+                fee = int(whole)*100+int(fraction.ljust(2,"0"))
+                entry = current_entry(source)
+                with closing(connect()) as db, db:
+                    tables(db)
+                    if action == "preview":
+                        proposed = preview(db,allocation_id,entry,fee,reference)
+                    else:
+                        if form.get("confirm") != "yes" or not re.fullmatch(r"[0-9a-f]{64}",form.get("manifest","")):
+                            raise ValueError("Confirm the exact evidence preview first.")
+                        db.execute("BEGIN IMMEDIATE")
+                        save(db,allocation_id,entry,fee,reference,form["manifest"],operation,actor)
+                        return "",303,{"Location":url_for(".settlement_review"),"Cache-Control":"no-store"}
+        except ValueError as exc:
+            error, code = str(exc), 409
+        except (requests.RequestException, sqlite3.Error, OSError, RuntimeError, KeyError):
+            error, code = "Source or storage unavailable; no save confirmed.", 503
+        try:
+            with closing(connect()) as db, db:
+                tables(db)
+                rows = [dict(r) for r in db.execute("SELECT * FROM hq_square_settlement_reviews ORDER BY id DESC LIMIT 50")]
+                current = {r["id"] for r in active(db)}
+                for row in rows:
+                    row["details"] = json.loads(row["evidence"])
+        except (sqlite3.Error,OSError,RuntimeError):
+            return "Persistent storage unavailable.",503,{"Cache-Control":"no-store"}
+        return render_template("hq_settlement_review.html", error=error, proposed=proposed,
+            allocation=allocation_id, source=source, fee=fee_raw, reference=reference,
+            rows=rows,current=current,csrf=session.get("csrf",""),operation=uuid.uuid4().hex),code,{"Cache-Control":"no-store"}
