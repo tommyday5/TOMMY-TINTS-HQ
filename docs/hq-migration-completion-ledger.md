@@ -1758,3 +1758,10 @@ owner approvals; no live snapshot or import executed. Historical authority
 unchanged. Next: independent bank evidence, full formula parity (including
 premises subset and remaining settings), approved bounded migration, customer
 production acceptance and legal/operational workflow gaps.
+
+### 2026-11-26 — persistent job timer implementation (pending exact-head CI/deployment)
+
+- PR #310 advanced native funding/refund categories merged; Railway deployment db9930c3 succeeded. Workbook schema rechecked read-only (48 tabs).
+- Replace new device-only timing with durable canonical-job server sessions, explicit start/pause/resume/finish and reviewed whole-minute atomic ledger save. Preserve existing device-only recovery and raw elapsed seconds. Allowance and correction reason retained; synthetic multi-day and cross-device tests added. No live timer or job creation, no price acceptance. No historical cutover or authority change.
+- Owner production acceptance, persistent allowance editing, session history display and handling job closure with a running timer remain pending; no background alerts or independent bank verification claimed.
+- CV Motors black Kia matching workbook job not confirmed; owner search canonical HQ before creation. No J-series ID guessed.
