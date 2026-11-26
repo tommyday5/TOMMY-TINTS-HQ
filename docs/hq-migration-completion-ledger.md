@@ -1599,3 +1599,40 @@ application logic change in this correction; fresh full CI required.
 Main and Railway still at #305 at inspection, original /data volume
 attached; all 48 workbook titles read-only confirmed. No actual import,
 recovery operation or authority cutover.
+
+## 26 November — finance plan history deployed; Business Affordability subset
+
+PR #306 first failed the literal old client forecast assertion. After
+correction and an added authenticated HTTP save/reload test, exact final
+head ddf022d94a5e65caaac8c3af2b2ab5d7383d137b passed Actions 45825760512
+(127 root + 677 integration Python tests and 9 JS tests). Squash merged
+as 5766ea4f899442dfd5d5946690b6a85ee28218e7. Railway deployment
+27c263d9-e713-499d-b5f6-918d7cf5b8de SUCCESS at 13:06:41 UTC;
+original 1024 MB /data volume attached; no staged changes.
+Synthetic save/reload, exact forecast, old history capture and conflict
+tests passed. Authenticated owner production acceptance unverified.
+
+All 48 workbook tabs, Cash Engine A6:I12 and Business Affordability
+A1:I35 formula schema inspected read-only. New owner slice in existing
+Creditor affordability scenario: editable optional observed monthly
+director drawings and additional requested payment, with immutable
+revision history and old record compatibility. Reuse existing saved
+monthly inputs. Match Business Affordability H12/H18/H19/H25/H27/H29
+formula subset: trading excludes director support, outgoings always
+include growth and observed debt, net self-funded operating cash,
+reserve shortfall, shared modelled safe capacity and requested excess.
+The existing capacity model rounds down to whole pence. Missing optional
+values remain unknown. No bank-derived verification, SEND STATUS,
+creditor-specific statement readiness or full formula parity. No
+communications, payment, creditor balance or actual financial change.
+Synthetic calculation and owner save/reload/history tests submitted;
+new slice CI/deployment pending.
+
+PR #306 passing logs confirm public service request to HQ, canonical
+owner quote conversion, approved customer PDF parity, customer account
+isolation, combined-basket appointment handoff, product and maintenance
+privacy. Public /book HTTP probe from development environment still
+fails DNS; authenticated live acceptance outstanding. No public changes.
+Recovery PRs #258 and #295 merged and original volume preserved;
+actual encrypted off-volume recovery and exact reviewed 1–5 customer
+manifest remain owner approval gates. No historical cutover.
