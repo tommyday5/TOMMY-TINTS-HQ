@@ -1640,3 +1640,38 @@ manifest remain owner approval gates. No historical cutover.
 ### 26 November — affordability regression correction
 
 Actions 45826138401 failed the authenticated save/reload assertion: the saved £400 request and £360 capacity rendered an incorrect missing-request message despite correct stored inputs and formula outputs. Replaced template boolean-identity branching with explicit missing-value and integer-pence comparisons. Extended the same HTTP regression to cover exactly-at-capacity, known zero, clearing an optional input and preserved historical revisions. Fresh exact-head CI required; no merge until green. Railway inspection confirms #306 still deployed, original 1024 MB /data volume attached and no pending changes. All 48 workbook titles independently rechecked read-only. No owner acceptance, data import or financial posting performed.
+
+
+## 26 November — Business Affordability deployed; editable Cash Engine observation periods
+
+PR #307 exact head 3cfb1e4f967ae33a4a637a359683e4b485936485 passed
+Actions 45834594695 (127 root + 679 integration Python tests, 9 JS tests),
+including the corrected authenticated request comparison, exact-capacity,
+zero and blank cases. Squash merged as d8908e577e85dbf355af19a0de8fc47ea9bbe099.
+Railway deployment af356714-d344-4b7f-a86f-d8c0c85854d3 SUCCESS at
+14:01:21 UTC. Original 1024 MB /data volume attached; no staged changes.
+All 48 workbook tabs and Cash Engine B4:I12 / Business Affordability H12:H29
+formula schema rechecked read-only. Native owner production acceptance
+remains unverified; no domain cutover.
+
+New slice: existing editable affordability scenario gains an explicit choice
+of direct monthly inputs or owner-reviewed totals for an inclusive 1–366 day
+observation period, with the evidence date as period end. Cash Engine
+B7/E7/H7/B8/H8/B9 arithmetic subset uses period total × 30.4375 / days,
+rounded once to nearest penny at the native monthly-input boundary.
+Derived monthly fields and original period totals/dates persist together
+in the existing immutable revision history. Missing optional drawings
+remain unknown; explicit zero is known. Switching input basis preserves
+prior revisions. No automatic bank classification, lookback settings
+parity, independent verification, premise subset E8, or actual posting.
+Synthetic formula and authenticated save/reload, replay, stale revision,
+validation and history tests submitted; CI and deployment pending.
+
+PR #307 passing logs confirm canonical owner/customer quote PDF totals,
+combined-basket appointment handoff, customer isolation and native quote
+conversion with customer approval visibility. No customer route changed.
+Direct HTTP probe of /book and /hq/finance/creditor-capacity failed local
+DNS resolution; production browser acceptance remains unverified.
+Recovery export and isolated verification code deployed earlier; actual
+independent copy and exact bounded customer manifest remain separate owner
+approval gates. No live business records, workbook cells or payments changed.
