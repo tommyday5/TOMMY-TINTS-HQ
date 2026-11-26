@@ -30,6 +30,10 @@ MONEY = {
     "cash": "Reported cash available",
     "reserve_min": "Minimum unallocated creditor contingency",
 }
+OPTIONAL_MONEY = {
+    "director_drawings": "Observed monthly director remuneration / drawings",
+    "requested_monthly": "Additional monthly creditor payment requested",
+}
 RATES = {"reserve_rate": "Creditor contingency (%)", "safe_rate": "Safe capacity factor (%)",
          "max_rate": "Temporary maximum factor (%)"}
 
@@ -41,6 +45,12 @@ def _fields(form):
         if value is None:
             raise ValueError("All scenario amounts are required; enter zero only when known.")
         data[key] = value
+    # Blank is unknown, not zero. Omitting absent fields also preserves
+    # idempotency for saved scenarios from before this additive extension.
+    for key in OPTIONAL_MONEY:
+        value = _amount(form.get(key, ""))
+        if value is not None:
+            data[key] = value
     for key in RATES:
         value = _amount(form.get(key, ""))
         if value is None or not 0 <= value <= 10000:
@@ -74,6 +84,26 @@ def calculate(d):
                 reserve=floor(reserve), critical=critical,
                 safe=floor(Decimal(pool) * d["safe_rate"] / 10000),
                 maximum=floor(Decimal(pool) * d["max_rate"] / 10000))
+
+
+def business_affordability(d):
+    """Business Affordability H12/H18/H19/H25/H27/H29, planning inputs only.
+
+    H19 includes growth regardless of the selected capacity model's mode.
+    Drawings and director funding are disclosed separately; neither changes
+    assessable trading income. H27 uses the conservative rounded-down
+    existing safe-capacity calculation, not a live or verified bank value.
+    """
+    outgoings = d["opex"] + d["growth"] + d["observed_debt"]
+    safe = calculate(d)["safe"]
+    requested = d.get("requested_monthly")
+    return dict(trading=d["trading"], director_funding=d["director_funding"],
+                outgoings=outgoings, net_self_funded=d["trading"]-outgoings,
+                director_drawings=d.get("director_drawings"),
+                reserve_shortfall=max(d["reserve_target"]-d["cash"], 0),
+                safe_capacity=safe, requested_monthly=requested,
+                requested_excess=None if requested is None else max(requested-safe, 0),
+                request_within_capacity=None if requested is None else requested<=safe)
 
 
 def case_summary(records):
@@ -176,5 +206,6 @@ def register(bp):
                                   or summary["archived"]))
         return render_template("hq_creditor_capacity.html", money=MONEY, rates=RATES, data=data,
                                revision=latest["revision"] if latest else 0, history=history,
-                               result=result, summary=summary, warning=warning, error=error,
+                               result=result, affordability=business_affordability(data) if latest else None,
+                               optional_money=OPTIONAL_MONEY, summary=summary, warning=warning, error=error,
                                csrf=session.get("csrf", ""), operation=uuid.uuid4().hex), code, {"Cache-Control":"no-store"}
