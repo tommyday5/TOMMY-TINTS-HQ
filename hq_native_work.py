@@ -626,7 +626,8 @@ def change_job_timer(work_id):
         abort(400)
     try:
         timer_transition(work_id, request.form.get("action", ""), int(revision),
-                         request.form.get("operation_id", ""), request.form.get("timer_session", ""))
+                         request.form.get("operation_id", ""), request.form.get("timer_session", ""),
+                         request.form.get("allowance_minutes", ""), request.form.get("reason", ""))
     except StaleWorkRecordError:
         return redirect(url_for(".edit_work_time", work_id=work_id, conflict="1"), 303)
     except (ValueError, LookupError) as exc:
