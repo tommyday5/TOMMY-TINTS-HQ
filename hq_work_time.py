@@ -73,10 +73,17 @@ def _validate_payload(payload):
     rate = None if raw_rate == "" else int(raw_rate)
     if rate is not None and not 0 <= rate <= 1000000:
         raise ValueError("Hourly cost must be between 0 and 1000000 pence")
-    return {
+    correction = payload.get("timer_correction_reason", "")
+    if not isinstance(correction, str) or len(correction.strip()) > 160:
+        raise ValueError("Timer correction reason must be at most 160 characters")
+    fields = {
         "operation_id": operation_id, "minutes": minutes,
         "stage": stage, "note": note.strip(), "hourly_cost_pence": rate,
     }
+    # Preserve fingerprints of existing exact and manual entry submissions.
+    if correction.strip():
+        fields["timer_correction_reason"] = correction.strip()
+    return fields
 
 
 def _fingerprint(fields):
@@ -167,9 +174,17 @@ def append_work_time(work_id, payload, expected_revision, owner_identity):
         if not timer and db.execute("""SELECT 1 FROM hq_timer_sessions WHERE work_id=?
             AND state IN ('running','paused','review')""", (work_id,)).fetchone():
             raise ValueError("Finish or correct the persistent timer before entering manual time")
-        if timer and (timer["work_id"] != work_id or timer["state"] != "review"
-                      or timer["active_seconds"] // 60 != fields["minutes"]):
-            raise ValueError("Review the exact finished timer minutes before saving")
+        correction = fields.get("timer_correction_reason")
+        if correction and not timer:
+            raise ValueError("Timer correction requires a finished timer")
+        if timer:
+            original_minutes = timer["active_seconds"] // 60
+            if timer["work_id"] != work_id or timer["state"] != "review":
+                raise ValueError("Review the exact finished timer minutes before saving")
+            if fields["minutes"] > original_minutes or (fields["minutes"] != original_minutes and not correction):
+                raise ValueError("Review the exact finished timer minutes before saving, or reduce them with a correction reason")
+            if correction and fields["minutes"] == original_minutes:
+                raise ValueError("A correction reason requires a reduction in reviewed minutes")
         archived = db.execute("SELECT is_archived FROM hq_work_archive_state WHERE work_id=?", (work_id,)).fetchone()
         if work["kind"] != "job" or work["status"] not in _ALLOWED or (archived and archived["is_archived"]):
             raise ValueError("Actual time can be recorded only for active approved or in-progress jobs")
@@ -188,6 +203,12 @@ def append_work_time(work_id, payload, expected_revision, owner_identity):
              fields["minutes"], fields["stage"], fields["note"],
              fields["hourly_cost_pence"], actor, _now()))
         if timer:
+            if correction:
+                # Retain original measured seconds; only the reviewed ledger posting changes.
+                detail = f'{timer["active_seconds"]} measured seconds; {fields["minutes"]} approved minutes; reason: {correction}'
+                db.execute("INSERT INTO hq_timer_events VALUES (?,?,?,?,?,?,?)",
+                           (uuid.uuid4().hex, timer["id"], work_id, "review_correction",
+                            timer["revision"], int(datetime.now(timezone.utc).timestamp()), detail))
             db.execute("UPDATE hq_timer_sessions SET state='saved',entry_id=?,revision=revision+1 WHERE id=?",
                        (entry_id, timer["id"]))
         _audit_work(db, work_id, expected_revision + 1, "actual_time_added",
