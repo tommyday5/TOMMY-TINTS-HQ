@@ -1218,3 +1218,41 @@ workspace could not resolve DNS in the development environment.
 No public route changed. Authenticated browser acceptance, exact approved
 import, actual creditor reconciliation, verified receipts/fees and full
 financial formula parity remain outstanding. No domain authority change.
+
+
+## 26 November — creditor outflow proposals deployed; manual transaction edit history
+
+PR #296 final head 36af5a0909b560f7b97e125b807cbcc312004d2f passed
+Actions 45739558729 (127 root and 667 integration Python tests, 9 JS tests).
+The exact reviewed head was merged as 5bbfdb597ace29bfb0064b0d13694d425ed4f0d8.
+Railway deployment 460c027c-e008-4819-80b3-edfdf121110c reports SUCCESS at
+03:00:54 UTC. Creditor outflow evidence is now deployed; it remains
+non-posting, unverified and not owner-accepted. The existing source
+classification, independent evidence and case revision are required.
+All 48 Sheets tabs and original 1024 MB /data volume were rechecked
+read-only before merge. No actual creditor outflow or other record changed.
+
+New slice: owner Finance Command Centre > Transactions & reconciliation >
+Transaction edit history. The previously metadata-only manual transaction
+audit now retains observed date, signed pence, description, category and
+reviewed flag in additive persistent snapshots. A previously existing
+record's current state is captured immediately before its next edit,
+without inventing old values or claiming the capture timestamp was its
+original edit date. Repeated stale submissions remain conflicts and
+cannot duplicate history; split history remains separate and active
+splits still block parent changes. The latest 250 captured revisions are
+shown in the private interface. Earlier missing history is not recovered.
+No extra cash event, receipt, bank verification, source cutover or
+classification totals from old versions. Synthetic persistence, stale
+write, legacy capture, owner isolation and totals tests added; CI pending.
+Native transaction archive and full per-record history pagination remain
+outstanding. The 14 source customers and first 1–5 row bounded import
+approval described above remain a source inventory only, not eligibility
+or approval. No actual recovery snapshot or import executed.
+
+PR #296 CI includes customer service-to-HQ review, canonical quote
+conversion, accepted appointment handoff, owner confirmation and customer
+isolation. No public routes changed; production owner/customer acceptance
+still required. Next: actual approved recovery/import, provider-verified
+receipt/fee accounting, full formula parity and native transaction archive.
+No domain authority changes.
