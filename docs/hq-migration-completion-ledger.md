@@ -1813,3 +1813,32 @@ customer browser acceptance remains outstanding.
 
 PR #315 exact-head CI 45888450862 succeeded and merged as 6229be48c6b55e372e9982c289cbafb61f7e36d9. Railway deployment d9b5d676-36d0-457c-adca-ac6ca00c3365 was BUILDING on first inspection; deployment verification separate. Existing /data volume confirmed and 48 workbook tabs read-only verified.
 This proposal displays cumulative recorded labour plus current session, a separate live excluded break clock and allowance percentage in the persistent owner view. No ledger, customer price, timer state or authentication changes. Synthetic JS and authenticated route regression added. Exact-head CI and owner acceptance pending. No historical authority change, live import, external communications or customer booking changes.
+
+
+### 2026-11-26 — cumulative timer deployment and unfinished-session recovery
+
+PR #316 exact-head a37ef12abe2b6cb08bf88b2c1ef9155da4e1fa8d passed
+Actions 45895273720 (dependency, syntax, integration/regression and JS
+checks). Squash merged as e4257a1c3d9e9a2a128a740e7737efe502c8129c.
+Railway deployment 5344b506-a37f-4b19-aa5f-bf03dadc6a04 SUCCESS at
+22:03:34 UTC, original volume 540528d1-3953-4737-9d92-3c861575c5d4
+mounted at /data, 1024 MB, no pending infrastructure changes.
+Workbook schema rechecked read-only (48 tabs). Jobs A1:Z1000
+Kia search returned J0014 (other customer) and J0073 (CV Motors
+bonnet); current black Kia not identified. Native production job
+identity unverified. No record created or timer started.
+
+Next slice: authenticated /hq/timer lists unfinished canonical
+sessions independent of job search, prioritizing running then
+review then paused, with explicit recovery links and bounded
+display. Merely viewing never resumes or starts a timer.
+Synthetic regression exercises search exclusion, owner authentication,
+running/paused/review ordering and removal after reviewed labour save.
+Exact-head CI and deployment pending. No changes to authentication,
+job prices, timer transitions, payment or public booking routes.
+Existing customer service quote conversion, approval visibility,
+account isolation and product quote regressions passed in #316.
+Authenticated production browser acceptance remains outstanding.
+Historical migration, formula reconciliation and authority unchanged;
+actual off-volume recovery and bounded import still require owner
+approval. No production database row contents inspected or changed.
