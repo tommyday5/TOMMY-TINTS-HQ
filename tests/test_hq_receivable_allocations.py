@@ -199,6 +199,77 @@ class AllocationTests(unittest.TestCase):
         self.assertFalse(after["outstanding_verified"])
         self.assertIsNone(after["collected_income"])
 
+    def test_provider_receipt_recognition_approval_stale_refund_and_withdrawal(self):
+        import re
+        url = "/hq/finance/provider-confirmed-receipts"
+        evidence_url = "/hq/finance/square-invoice-evidence"
+        self.assertEqual(self.client.get(url).status_code, 302)
+        self.login()
+        payload = self.payload(method="card_reported", evidence_ref="square-recognition-test")
+        self.assertEqual(self.post(payload).status_code, 200)
+        form = dict(allocation=payload["id"], csrf="test", action="review")
+        evidence = dict(id="square-recognition-test", status="COMPLETED", total_minor=20000,
+                        refunded_minor=0, currency="GBP",
+                        created_at="2026-11-22T10:00:00+00:00",
+                        updated_at="2026-11-22T10:01:00+00:00")
+        with patch.dict(os.environ, {"HQ_SQUARE_READ_TOKEN":"test", "HQ_SQUARE_LOCATION_ID":"test-loc"}), \
+                patch("hq_square_invoice_evidence.storage_ready", return_value=True), \
+                patch("hq_provider_receipts.storage_ready", return_value=True), \
+                patch("hq_square_invoice_evidence.inspect_exact_payment", return_value=evidence) as provider, \
+                patch("requests.post") as external_post:
+            page = self.client.post(evidence_url, data=form)
+            original = re.search(rb'name="manifest" value="([0-9a-f]{64})"', page.data)[1].decode()
+            self.assertEqual(self.client.post(evidence_url, data=dict(form, action="save",
+                manifest=original, confirm="yes")).status_code, 200)
+            provider.reset_mock()
+            self.assertEqual(self.client.get(url).status_code, 200)
+            provider.assert_not_called()
+            preview = dict(form, action="preview")
+            self.assertEqual(self.client.post(url, data=dict(preview, csrf="bad")).status_code, 403)
+            provider.assert_not_called()
+            page = self.client.post(url, data=preview)
+            self.assertEqual(page.status_code, 200, page.get_data(as_text=True))
+            manifest = re.search(rb'name="manifest" value="([0-9a-f]{64})"', page.data)[1].decode()
+            approval = dict(preview, action="save", manifest=manifest, confirm="yes")
+            self.assertEqual(self.client.post(url, data=dict(approval, confirm="")).status_code, 400)
+            provider.return_value = dict(evidence, refunded_minor=None)
+            self.assertEqual(self.client.post(url, data=approval).status_code, 400)
+            provider.return_value = dict(evidence, updated_at="2026-11-22T10:02:00+00:00")
+            self.assertEqual(self.client.post(url, data=approval).status_code, 409)
+            provider.return_value = evidence
+            self.assertEqual(self.client.post(url, data=approval).status_code, 303)
+            self.assertEqual(self.client.post(url, data=approval).status_code, 409)
+            provider.reset_mock()
+            again = app.test_client()
+            with again.session_transaction() as sess, auth_db() as db:
+                sess.update(hq_sid=issue_session(db,"synthetic-owner"),google_sub="synthetic-owner",csrf="test")
+            page = again.get(url)
+            self.assertEqual(page.status_code, 200)
+            self.assertEqual(page.headers["Cache-Control"], "no-store")
+            self.assertIn(b"Provider-confirmed at recorded time", page.data)
+            self.assertIn(b"200.00", page.data)
+            provider.assert_not_called()
+            provider.return_value = dict(evidence, refunded_minor=5000,
+                                         updated_at="2026-11-22T10:03:00+00:00")
+            self.assertEqual(self.client.post(evidence_url, data=dict(form, action="recheck",
+                confirm="yes")).status_code, 200)
+            self.assertIn(b"Review required", again.get(url).data)
+            withdrawal = dict(form, action="withdraw", revision="1", reason="Synthetic refund",
+                              confirm="yes")
+            self.assertEqual(again.post(url, data=dict(withdrawal, revision="0")).status_code, 409)
+            self.assertEqual(again.post(url, data=withdrawal).status_code, 303)
+            self.assertIn(b"Withdrawn", again.get(url).data)
+            self.assertEqual(again.post(url, data=withdrawal).status_code, 409)
+            external_post.assert_not_called()
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_square_receipt_recognition").fetchone()[0], 2)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_receivable_allocations").fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT amount_pence FROM hq_receivable_allocations").fetchone()[0], 20000)
+        after = self.client.get("/api/hq/finance/receipt-allocations").json
+        self.assertFalse(after["receipts_verified"])
+        self.assertIsNone(after["collected_income"])
+        self.assertNotIn(b"square-recognition-test", app.test_client().get("/book").data)
+
     def test_square_evidence_rejects_duplicate_reference_wrong_amount_and_noncard(self):
         self.login()
         url = "/hq/finance/square-invoice-evidence"

@@ -180,3 +180,8 @@ register_creditor_transaction_matches(finance)
 # Explicit monthly planned commitment creation, never automatic payment.
 from hq_monthly_commitments import register as register_monthly_commitments
 register_monthly_commitments(finance)
+
+
+# Explicit provider-confirmed allocation classification; never bank cash.
+from hq_provider_receipts import register as register_provider_receipts
+register_provider_receipts(finance)
