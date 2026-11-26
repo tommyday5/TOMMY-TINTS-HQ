@@ -66,6 +66,8 @@ def require_source_not_settled(db, ref):
     additive settlement schema remain compatible. Caller holds the same
     transaction used for candidate review/save or reported allocation.
     """
+    from hq_creditor_transaction_matches import require_no_match
+    require_no_match(db, ref)
     for table, identity in (("hq_square_settlement_reviews", "allocation_id"),
                             ("hq_square_batch_reviews", "source_id"),
                             ("hq_dna_payout_reviews", "payout_id")):

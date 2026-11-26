@@ -135,3 +135,7 @@ register_creditor_capacity(finance)
 # Non-binding settlement evidence; never records a second receipt.
 from hq_settlement_review import register as register_settlement_review
 register_settlement_review(finance)
+
+# Private creditor outflow proposals, not payments or bank entries.
+from hq_creditor_transaction_matches import register as register_creditor_transaction_matches
+register_creditor_transaction_matches(finance)
