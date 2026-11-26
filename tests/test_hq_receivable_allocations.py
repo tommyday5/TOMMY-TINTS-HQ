@@ -313,6 +313,10 @@ class AllocationTests(unittest.TestCase):
             self.assertEqual(self.client.post(url, data=dict(form, action="save",
                 manifest=receipt, confirm="yes")).status_code, 303)
             self.assertEqual(self.client.get(url).status_code, 200)
+            no_fees = self.client.get("/hq/finance/provider-receipt-month?month=2026-11")
+            self.assertIn("Recognised receipts subtotal: <strong>£200.00".encode(), no_fees.data)
+            self.assertIn(b"Known processing fees subtotal: <strong>Unknown", no_fees.data)
+            self.assertIn(b"1 with unknown fees", no_fees.data)
             self.assertEqual(self.client.post(url, data=dict(f, csrf="bad")).status_code, 403)
             get.assert_not_called()
             for invalid in (None, [], [fee("INITIAL", True)], [fee("INITIAL", 500, "USD")],
@@ -341,6 +345,25 @@ class AllocationTests(unittest.TestCase):
             self.assertIn(b"Provider fee evidence recorded at review time", page.data)
             self.assertIn("£4.00".encode(), page.data)
             get.assert_not_called()
+
+            month_url = "/hq/finance/provider-receipt-month"
+            self.assertEqual(app.test_client().get(month_url).status_code, 302)
+            report = again.get(month_url+"?month=2026-11")
+            self.assertEqual(report.status_code, 200)
+            self.assertEqual(report.headers["Cache-Control"], "no-store")
+            self.assertIn("Recognised receipts subtotal: <strong>£200.00".encode(), report.data)
+            self.assertIn("Known processing fees subtotal: <strong>£4.00".encode(), report.data)
+            self.assertIn("<strong>£196.00".encode(), report.data)
+            self.assertIn(b"1 included", report.data)
+            self.assertIn(b"0 with unknown fees", report.data)
+            self.assertIn(b"No retained classifications", again.get(month_url+"?month=2026-10").data)
+            self.assertEqual(again.get(month_url+"?month=2026-13").status_code, 409)
+            with connect() as db:
+                from hq_provider_receipts import monthly_receipt_report
+                snapshot = monthly_receipt_report(db, "2026-11")
+                self.assertEqual((snapshot["gross"], snapshot["known_fees"], snapshot["net"]), (20000, 400, 19600))
+            get.assert_not_called()
+
             settlement = "/hq/finance/settlement-review"
             entry = dict(ref="tx-fee-crosscheck", pence=19600, day="2026-11-23",
                          evidence="a"*64, legacy_evidence="b"*64)
@@ -378,6 +401,9 @@ class AllocationTests(unittest.TestCase):
             self.assertEqual(self.client.post(evidence_url, data=dict(form, action="recheck",
                 confirm="yes")).status_code, 200)
             self.assertIn(b"Fee review required", again.get(url).data)
+            stale_report = again.get(month_url+"?month=2026-11")
+            self.assertIn(b"Recognised receipts subtotal: <strong>Unknown", stale_report.data)
+            self.assertIn(b"1 withdrawn or require review", stale_report.data)
             with connect() as db:
                 from hq_settlement_review import provider_fee_comparison
                 with self.assertRaises(ValueError):
