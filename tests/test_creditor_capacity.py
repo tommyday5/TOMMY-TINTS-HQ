@@ -196,3 +196,75 @@ class PeriodObservationTests(unittest.TestCase):
             self.assertEqual(history[1]["state"]["period"]["totals"]["trading"],300000)
             self.assertIn(b"original period total",client.get(url).data)
             self.assertEqual(app.test_client().get(url).status_code,302)
+
+
+class NativePeriodReviewTests(unittest.TestCase):
+    def test_preview_save_stale_and_replay_with_split_and_unknowns(self):
+        from customer_request_store import connect
+        from hq_native_finance import schema
+        from hq_finance_splits import tables, save as split_save
+        from hq_creditor_capacity import preview_native_period
+        from contextlib import closing
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
+            "HQ_DATA_DIR":tmp, "HQ_SESSION_SECRET":"synthetic",
+            "GOOGLE_CLIENT_ID":"test", "GOOGLE_CLIENT_SECRET":"test",
+            "HQ_ALLOWED_GOOGLE_EMAIL":"owner@example.invalid",
+        }), patch("hq_creditor_capacity.storage_ready", return_value=True), patch(
+            "hq_finance_splits.storage_ready", return_value=True):
+            client=app.test_client()
+            url="/hq/finance/creditor-capacity"
+            with client.session_transaction() as sess, auth_db() as db:
+                sess["hq_sid"]=issue_session(db,"synthetic-owner")
+                sess["google_sub"]="synthetic-owner"
+                sess["csrf"]="test"
+            with closing(connect()) as db, db:
+                schema(db)
+                tables(db)
+                entries=[
+                    ("1"*32,"2026-01-01","synthetic income",300000,"customer_income",1,0),
+                    ("2"*32,"2026-01-02","synthetic split",-120000,"materials",1,0),
+                    ("3"*32,"2026-01-03","synthetic transfer",99000,"internal_transfer",1,0),
+                    ("4"*32,"2026-01-04","synthetic unreviewed",70000,"customer_income",0,0),
+                    ("5"*32,"2026-01-05","synthetic reversed",5000,"insurance",1,0),
+                    ("6"*32,"2026-02-01","outside",50000,"customer_income",1,0),
+                    ("7"*32,"2026-01-07","archived",20000,"customer_income",1,0),
+                ]
+                db.executemany("INSERT INTO finance_transactions VALUES(?,?,?,?,?,?,?)",entries)
+                db.execute("INSERT INTO finance_transaction_archive VALUES(?,?,?,?,?)",
+                           ("7"*32,1,1,"synthetic","2026-01-08"))
+            with app.app_context():
+                split_save("2"*32,0,"save",[dict(category="fuel",pence=-100000),
+                           dict(category="materials",pence=-20000)],"synthetic-owner")
+            preview=preview_native_period("2026-01-01","2026-01-30")
+            self.assertEqual(preview["mapped"],dict(trading=300000,opex=100000,growth=20000))
+            self.assertEqual(preview["archived"],1)
+            self.assertEqual(preview["rows"],5)
+            self.assertEqual(preview["excluded"]["unreviewed"]["incoming"],70000)
+            self.assertEqual(preview["excluded"]["internal_transfer"]["incoming"],99000)
+            self.assertEqual(preview["excluded"]["insurance"]["incoming"],5000)
+            self.assertFalse(preview["bank_verified"])
+            query="?review_start=2026-01-01&review_end=2026-01-30"
+            page=client.get(url+query)
+            self.assertEqual(page.status_code,200)
+            self.assertIn(preview["digest"].encode(),page.data)
+            self.assertIn(b'Partial native evidence',page.data)
+            self.assertIn(b'Unknown',page.data)
+            self.assertEqual(app.test_client().get(url+query).status_code,302)
+            form=PeriodObservationTests().form()
+            form.update(native_review_digest=preview["digest"],native_review_confirm="yes",
+                        period_trading="3100.00")
+            self.assertEqual(client.post(url,data=dict(form,native_review_confirm="")).status_code,409)
+            with closing(connect()) as db, db:
+                db.execute("UPDATE finance_transactions SET revision=1 WHERE id=?",("1"*32,))
+            self.assertEqual(client.post(url,data=form).status_code,409)
+            self.assertEqual(snapshot()[0],[])
+            form["native_review_digest"]=preview_native_period("2026-01-01","2026-01-30")["digest"]
+            self.assertEqual(client.post(url,data=form).status_code,303)
+            with closing(connect()) as db, db:
+                db.execute("UPDATE finance_transactions SET revision=2 WHERE id=?",("1"*32,))
+            self.assertEqual(client.post(url,data=form).status_code,303)
+            state=snapshot()[0][0]["state"]
+            self.assertEqual(state["period"]["totals"]["trading"],310000)
+            self.assertEqual(state["native_review"]["mapped"]["trading"],300000)
+            self.assertEqual(len(snapshot()[0]),1)
+            self.assertIn(b"Saved native observation provenance",client.get(url).data)
