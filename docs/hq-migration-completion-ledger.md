@@ -1323,3 +1323,47 @@ isolation. Public routes unchanged. Owner/customer production acceptance,
 exact approved historical import after independently verified off-volume
 recovery, verified receipt and fee posting, and full worksheet formula
 parity remain outstanding. No domain authority changes.
+
+
+## 26 November — recurring commitments deployed; month-wide atomic generation
+
+PR #299 final head 78c034a894f606acf3fdd09121c4aa227946c6ee
+passed Actions run 45759351864 (127 root + 671 integration Python tests,
+9 JS tests). Squash merged as c1a94e4241c5928f46635f8f6614b6859d1fffc5.
+Railway deployment 5fd09e93-a299-4014-bce0-38ff609e4c64 reports SUCCESS
+at 05:58:10 UTC, one running replica, no issues or pending work. Original
+1024 MB /data volume 540528d1-3953-4737-9d92-3c861575c5d4 was checked
+before merge. Read-only workbook metadata confirms all 48 tab names.
+Recurring native schedule edits and approved individual planned bills
+are deployed, not owner-tested, historically migrated or reconciled.
+No historical source authority changes.
+
+New proposed slice: Finance Command Centre > Edit finances > Manage
+monthly commitments > Preview monthly batch. An owner reviews a selected
+month's exact eligible rows, total and separately listed blocked rows
+(up to 25 active schedules), explicitly approves the manifest, then all
+eligible planned bills are generated atomically. Existing same-name
+native bills and previously generated occurrences are excluded; other
+duplicate naming still needs owner review. Changed schedules, newly
+blocked rows, changed eligibility and replay reject stale confirmation.
+The immutable approved manifest and resulting bill IDs are retained,
+even after later edits, and shown in batch history. Synthetic test covers
+CSRF, owner isolation, stale approvals, leap date, blocked row,
+injected second-item failure and rollback, replay, and reopened
+persistent native records. CI and deployment of this slice pending.
+No automatic generation, payment, bank verification, source write or
+real financial record was performed by development. Verified receipt
+and fee posting and full formula parity remain outstanding.
+
+PR #299 CI logs explicitly show customer service-to-HQ requests,
+native quote conversion and approved customer status, appointment
+acceptance/owner confirmation, combined quotes and customer isolation,
+maintenance and product account isolation. Direct HTTP probes of /book
+and monthly commitments failed DNS resolution from the development
+environment. Owner/customer production browser acceptance unverified.
+No public route modified. First 1–5 customer import remains subject to
+exact production directory collision review, independently verified
+off-volume recovery and explicit manifest approval; no import executed.
+Next: verified receipt and fee accounting with provider evidence,
+approved historical migration, remaining operational domains and
+independent owner/customer UI acceptance.
