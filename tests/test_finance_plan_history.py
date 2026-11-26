@@ -76,3 +76,34 @@ class FinancePlanHistoryTests(unittest.TestCase):
         self.assertIsNone(planning_forecast(dict(plan,balance_date="2026-11-27"),bills,today)["estimate_pence"])
         self.assertIsNone(planning_forecast(plan,bills+[bill("2026-11-25",1,"reported_paid",status_date="2026-11-25")],today)["estimate_pence"])
         self.assertEqual(planning_forecast(plan,bills+[bill("2026-11-24",1,"reported_paid",status_date="2026-11-24")],today)["estimate_pence"],50000)
+
+    def test_owner_forecast_response_is_recomputed_after_save_and_reload(self):
+        url = "/api/hq/finance/native"
+        with self.client.session_transaction() as sess, auth_db() as db:
+            sess["hq_sid"] = issue_session(db, "synthetic-owner")
+            sess["google_sub"] = "synthetic-owner"
+            sess["csrf"] = "test"
+        headers = {"X-HQ-CSRF": "test"}
+        with patch("hq_native_finance.datetime", wraps=__import__("datetime").datetime) as clock:
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+            clock.now.return_value = datetime(2026, 11, 26, 12, tzinfo=ZoneInfo("Europe/London"))
+            def save(**data):
+                return self.client.post(url, json=data, headers=headers)
+            self.assertEqual(save(kind="plan", revision=0, balance=100000,
+                                  balance_date="2026-11-25", target=200000).status_code, 200)
+            self.assertIsNone(self.client.get(url).json["forecast"]["estimate_pence"])
+            bill = dict(kind="bill", id="a"*32, revision=0, name="Synthetic rent",
+                        due="2026-11-24", amount=30000, status="planned")
+            self.assertEqual(save(**bill).status_code, 200)
+            forecast = self.client.get(url).json["forecast"]
+            self.assertEqual(forecast["estimate_pence"], 70000)
+            self.assertFalse(forecast["bank_verified"])
+            self.assertEqual(save(**dict(bill, revision=1, status="reported_paid",
+                                         status_date="2026-11-25")).status_code, 200)
+            forecast = self.client.get(url).json["forecast"]
+            self.assertIsNone(forecast["estimate_pence"])
+            self.assertIn("reported payment", forecast["reason"])
+            self.assertEqual(save(kind="plan", revision=1, balance=70000,
+                                  balance_date="2026-11-26", target=200000).status_code, 200)
+            self.assertEqual(self.client.get(url).json["forecast"]["estimate_pence"], 70000)
