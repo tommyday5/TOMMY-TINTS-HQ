@@ -8,7 +8,8 @@ from app import app
 from customer_request_store import connect
 from hq_auth import issue_session
 from hq_auth_store import auth_db
-from hq_core_records import create_test_job
+from hq_core_records import create_test_job, change_work_status
+from hq_work_archive import set_work_archived
 from hq_work_timer import snapshot, transition
 from hq_work_time import time_ledger_snapshot, append_work_time
 
@@ -102,3 +103,25 @@ class PersistentTimerTests(unittest.TestCase):
             row=db.execute("SELECT state,active_seconds FROM hq_timer_sessions WHERE id=?",(sid,)).fetchone()
             self.assertEqual(tuple(row),("discarded",15))
         self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"],0)
+
+    def test_open_timer_prevents_closure_and_archive_until_reviewed(self):
+        change_work_status(self.job, "in_progress", 0)
+        self.command("start")
+        sid = snapshot(self.job)["id"]
+        for action in ("completed", "cancelled"):
+            with self.assertRaisesRegex(ValueError, "open job timer"):
+                change_work_status(self.job, action, 1)
+        with self.assertRaisesRegex(ValueError, "open job timer"):
+            set_work_archived(self.job, "archive", 1, uuid.uuid4().hex)
+        self.now.return_value += 120
+        self.command("pause", 0, sid)
+        with self.assertRaisesRegex(ValueError, "open job timer"):
+            change_work_status(self.job, "completed", 1)
+        self.command("finish", 1, sid)
+        with self.assertRaisesRegex(ValueError, "open job timer"):
+            change_work_status(self.job, "completed", 1)
+        append_work_time(self.job, {"operation_id":sid, "minutes":"2", "stage":"repair",
+                                    "hourly_cost_pence":"", "note":""}, 1, "owner")
+        self.assertEqual(change_work_status(self.job, "completed", 2), "completed")
+        self.assertEqual(set_work_archived(self.job, "archive", 3, uuid.uuid4().hex), 4)
+        self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"], 2)
