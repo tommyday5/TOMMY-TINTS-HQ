@@ -1168,3 +1168,53 @@ Customer service-to-HQ, canonical quote conversion, vehicle requests,
 product approval and account isolation passed PR #294 CI. Public routes
 unchanged. Next: bounded owner-approved historical import, actual
 verified receipt/fee accounting and independent customer UI acceptance.
+
+
+## 26 November — independent recovery verifier deployed; creditor outflow evidence
+
+PR #295 final head 1dff2907fccb6eb95d3c9d7137bc2ef4c605c11f passed
+Actions 45733655132 (127 root + 666 integration Python tests and 9 JS
+tests, including authenticated offline recovery and tamper rejection).
+Merged as 4030f2de; Railway deployment 0178c0ac-50f7-46cf-a260-9e6a9b2bf85e
+reports SUCCESS at 01:59:11 UTC, original 1024 MB /data volume
+540528d1-3953-4737-9d92-3c861575c5d4 attached, no pending work.
+No real recovery copy, independent key custody or restore drill established.
+Owner acceptance remains outstanding.
+
+Fresh read-only Customers A4:C1000 inventory: 14 named rows, 14 distinct
+normalized names, no repeated normalized name groups in this source range,
+six missing postcodes, no missing type. All 48 tabs and Monzo A7:I7
+headings verified. These are not live canonical match or conflict counts.
+First bounded approval: select 1–5 independently identity-reviewed rows in
+Historical Customer Migration > Create missing historical customers
+(reviewed batch); leave postcode option off initially, select a current
+verified private snapshot, prepare exact review. Exact preview must
+confirm proposed IDs, source rows, names, no unresolved native/alias
+collisions, before/after fields and unchanged other data. Reversal archives
+only untouched newly created identities; dependency or later edit blocks
+reversal. Keep an independently verified encrypted copy off-volume.
+No production import is authorised by this inventory or development.
+Exact eligible row IDs and counts depend on authenticated production
+directory review; do not invent eligibility or request blanket approval.
+
+New proposed owner workspace: Creditor cases > select case > Review Monzo
+outflows and saved creditor payment proposals, or Monzo classification
+review > negative source > Review creditor outflow / saved history.
+Require existing current whole-transaction creditor payment classification,
+non-archived native case, independent evidence reference and exact owner
+approval. Source and legacy evidence, classification/case revisions and
+history are bound to the preview. Durable append-only proposal and
+withdrawal, replay protection, source conflicts across invoice and
+settlement routes, and owner auth/CSRF/no-store. No balance reduction,
+payment, bank verification, cash event, change to case, or source write.
+No split creditor outflow or independently verified actual financial
+posting. New synthetic route test submitted; CI/deployment pending.
+
+PR #295 CI logs explicitly confirm customer service-to-HQ review,
+canonical quote conversion, combined appointment handoff, owner booking
+confirmation, maintenance pricing isolation, portal vehicle request and
+customer isolation. Production HTTP probes to /book and owner creditor
+workspace could not resolve DNS in the development environment.
+No public route changed. Authenticated browser acceptance, exact approved
+import, actual creditor reconciliation, verified receipts/fees and full
+financial formula parity remain outstanding. No domain authority change.
