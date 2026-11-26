@@ -21,7 +21,7 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 </style><link rel="stylesheet" href="/static/job-timer.css"><script defer src="/static/job-timer.js"></script></head><body><main>
 <p><a href="/hq/work/{{ work.id }}/progress">← Workshop progress</a> · <a href="/?page=jobs">HQ job cards</a> · <a href="/hq/work/{{ work.id }}/materials">Record material usage</a> · <a href="/hq/work/{{ work.id }}/expenses">Expenses / overhead</a> · <a href="/hq/work/{{ work.id }}/costs">Combined job costs</a></p>
 <header class="timer-brand"><img src="/static/company-logo-header.webp" alt="Tommy Tints"><strong>TOMMY TINTS <em>HQ</em></strong></header><h1 class="timer-title">Job Timer</h1>
-<section class="panel" id="serverTimer" data-has-session="{{ 'yes' if timer else 'no' }}" data-seconds="{{ timer.display_seconds if timer else 0 }}" data-running="{{ 'yes' if timer and timer.state == 'running' else 'no' }}">
+<section class="panel" id="serverTimer" data-has-session="{{ 'yes' if timer else 'no' }}" data-seconds="{{ timer.display_seconds if timer else 0 }}" data-running="{{ 'yes' if timer and timer.state == 'running' else 'no' }}" data-allowance="{{ timer.allowance_minutes if timer and timer.allowance_minutes else 0 }}" data-recorded="{{ work.minutes_total }}">
 <h2>Persistent job timer</h2>
 <p>Server-recorded time survives reload, device lock, logout and another device. Pause before taking a break or leaving work; locking the phone does not pause the timer.</p>
 <p><strong id="serverClock" aria-live="off">{{ timer.display_seconds if timer else 0 }} seconds</strong> · {{ timer.state if timer else 'standby' }}</p>
@@ -32,11 +32,22 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 <input type="hidden" name="timer_revision" value="{{ timer.revision if timer else -1 }}">
 <input type="hidden" name="timer_session" value="{{ timer.id if timer else '' }}">
 <input type="hidden" name="operation_id" value="{{ timer_operation }}">
-{% if not timer %}<button name="action" value="start">Start job</button>
+{% if not timer %}<label>Estimated total job minutes (optional)<input name="allowance_minutes" type="number" min="1" max="30000" step="1" placeholder="e.g. 390"></label><button name="action" value="start">Start job</button>
 {% elif timer.state == 'running' %}<button name="action" value="pause">Pause / break</button> <button name="action" value="finish">Finish &amp; review</button>
 {% elif timer.state == 'paused' %}<button name="action" value="resume">Resume</button> <button name="action" value="finish">Finish &amp; review</button>{% endif %}
 </form>
 {% elif timer and timer.state == 'review' %}<p class="notice">Review {{ timer.active_seconds // 60 }} whole minutes below and select the activity. Remaining seconds are retained in the session but not billed or posted. Save actual time to finish; the job status and price do not change.</p>{% endif %}
+{% if timer and timer.state == 'review' and work.can_edit_time %}
+<form method="post" action="/hq/work/{{ work.id }}/timer">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="timer_revision" value="{{ timer.revision }}">
+<input type="hidden" name="timer_session" value="{{ timer.id }}">
+<input type="hidden" name="operation_id" value="{{ timer_operation }}">
+<label>Correction reason (only if discarding this timer without posting labour)<input name="reason" maxlength="160" required></label>
+<button class="secondary" name="action" value="discard">Retain timer as corrected, do not post labour</button>
+</form>
+{% if timer.active_seconds // 60 < 1 or timer.active_seconds // 60 > 1440 %}<p class="notice">Outside the 1–1440 minute ledger limit. Retain the session with a correction reason, then record reviewed manual entries as appropriate.</p>{% endif %}
+{% endif %}
 <p id="serverAllowanceNotice"></p>
 </section>
 <details id="legacyTimer"><summary>Previous device-only timer (recovery only)</summary><p>Only use this to recover previously recorded local work. Do not run both timers or save overlapping time.</p>
@@ -69,7 +80,7 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 {% if request.args.get("saved") == "1" %}<p class="success" role="status">Time entry saved to HQ. Reload to inspect its history.</p>{% endif %}
 {% if request.args.get("voided") == "1" %}<p class="success" role="status">Time entry reversed and retained in the audit history.</p>{% endif %}
 {% if request.args.get("conflict") == "1" %}<p class="error" role="alert">This job changed. Review the latest revision before reversing an entry.</p>{% endif %}
-{% if work.can_edit_time %}
+{% if work.can_edit_time and (not timer or (timer.state == "review" and 1 <= timer.active_seconds // 60 <= 1440)) %}
 <form id="timeEntryForm" class="panel" method="post" action="/hq/work/{{ work.id }}/time">
 <h2>Record actual time</h2>
 <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -92,7 +103,7 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 <button type="submit">Save actual time</button>
 </form>
 {% else %}
-<div class="panel"><p>New time entries and corrections are available only for approved or in-progress jobs. Existing records remain visible and cannot be silently erased.</p></div>
+<div class="panel"><p>Finish and review an active timer before saving its minutes. New time entries require approved or in-progress jobs. Existing records remain visible.</p></div>
 {% endif %}
 <section class="panel" id="timeHistory"><h2>Time entry history</h2>
 {% if work.entries %}
