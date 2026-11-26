@@ -262,3 +262,43 @@ class PersistentTimerTests(unittest.TestCase):
                                   "hourly_cost_pence":"", "note":""}, 0, "owner")
         self.assertEqual([r["id"] for r in open_timer_jobs()["records"]],[other])
         self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"],2)
+
+    def test_review_correction_is_atomic_audited_and_replay_safe(self):
+        self.command("start")
+        sid = snapshot(self.job)["id"]
+        self.now.return_value += 600
+        self.command("finish", 0, sid)
+        payload = {"operation_id":sid, "minutes":"8", "stage":"repair",
+                   "hourly_cost_pence":"", "note":""}
+        with self.assertRaises(ValueError):
+            append_work_time(self.job, payload, 0, "owner")
+        payload["timer_correction_reason"] = "Synthetic missed two-minute break"
+        with self.assertRaises(ValueError):
+            append_work_time(self.job, dict(payload, minutes="11"), 0, "owner")
+        with self.assertRaises(ValueError):
+            append_work_time(self.job, dict(payload, minutes="10"), 0, "owner")
+        c = app.test_client()
+        with c.session_transaction() as s, auth_db() as db:
+            s["hq_sid"] = issue_session(db,"owner")
+            s["csrf"] = "test"
+        url = "/hq/work/" + self.job + "/time"
+        page = c.get(url)
+        self.assertIn(b'name="timer_correction_reason"', page.data)
+        self.assertIn(b'Measured 10 whole minutes', page.data)
+        data = dict(payload, csrf="test", revision="0")
+        self.assertEqual(c.post(url, data=data).status_code,303)
+        self.assertEqual(c.post(url, data=data).status_code,303)
+        self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"],8)
+        self.assertIsNone(time_ledger_snapshot(self.job)["actual_labour_cost_pence"])
+        evidence = history(self.job)
+        self.assertEqual(evidence["sessions"][0]["active_seconds"],600)
+        self.assertEqual(evidence["sessions"][0]["state"],"saved")
+        corrections = [e for e in evidence["events"] if e["action"] == "review_correction"]
+        self.assertEqual(len(corrections),1)
+        self.assertIn("600 measured seconds; 8 approved minutes",corrections[0]["detail"])
+        self.assertIn(payload["timer_correction_reason"],corrections[0]["detail"])
+        self.assertIn(b'Synthetic missed two-minute break',c.get(url).data)
+        with self.assertRaises(StaleWorkRecordError):
+            append_work_time(self.job,dict(payload,minutes="7"),0,"owner")
+        with self.assertRaises(ValueError):
+            append_work_time(self.job,dict(payload,operation_id=uuid.uuid4().hex),1,"owner")
