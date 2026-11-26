@@ -112,4 +112,21 @@ class BusinessAffordabilityHttpTests(unittest.TestCase):
             self.assertEqual(history[0]["state"]["requested_monthly"],40000)
             self.assertEqual(history[0]["state"]["director_drawings"],0)
             self.assertNotIn("director_drawings",history[1]["state"])
+            # Zero is a known request, not an omitted amount; exact capacity
+            # is permitted in the planning model, and a later blank clears
+            # only the new revision, preserving the historical evidence.
+            for revision, operation, requested in [(2, "d"*32, "360.00"),
+                                                   (3, "e"*32, "0.00"),
+                                                   (4, "f"*32, "")]:
+                self.assertEqual(client.post(url, data=dict(update, revision=str(revision),
+                    operation=operation, requested_monthly=requested)).status_code, 303)
+                page=client.get(url).data
+                if requested:
+                    self.assertIn(b"Request is within modelled shared capacity", page)
+                    self.assertNotIn(b"No requested amount entered;", page)
+                else:
+                    self.assertIn(b"No requested amount entered;", page)
+                    self.assertNotIn("requested_monthly", snapshot()[0][0]["state"])
+            self.assertEqual(snapshot()[0][2]["state"]["requested_monthly"],36000)
+            self.assertEqual(snapshot()[0][3]["state"]["requested_monthly"],40000)
             self.assertEqual(app.test_client().get(url).status_code,302)
