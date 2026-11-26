@@ -24,7 +24,7 @@
 <div><dt>Modelled safe additional monthly capacity (shared)</dt><dd>{{ gbp(affordability.safe_capacity) }}</dd></div>
 <div><dt>Additional payment requested</dt><dd>{% if affordability.requested_monthly is none %}Not entered{% else %}{{ gbp(affordability.requested_monthly) }}{% endif %}</dd></div>
 </dl>
-{% if affordability.requested_within_capacity is sameas false %}<p class="notice">Request exceeds modelled safe capacity by {{ gbp(affordability.requested_excess) }} per month.</p>{% elif affordability.requested_within_capacity is sameas true %}<p>Request is within modelled shared capacity on these inputs only. Not an approval or payment instruction.</p>{% elif affordability.safe_capacity == 0 %}<p>No modelled safe additional payment capacity.</p>{% else %}<p>No requested amount entered; modelled capacity is shared across creditors.</p>{% endif %}
+{% if affordability.requested_monthly is none %}{% if affordability.safe_capacity == 0 %}<p>No modelled safe additional payment capacity.</p>{% else %}<p>No requested amount entered; modelled capacity is shared across creditors.</p>{% endif %}{% elif affordability.requested_monthly > affordability.safe_capacity %}<p class="notice">Request exceeds modelled safe capacity by {{ gbp(affordability.requested_excess) }} per month.</p>{% else %}<p>Request is within modelled shared capacity on these inputs only. Not an approval or payment instruction.</p>{% endif %}
 </section>{% endif %}
 <section><h2>Edit monthly planning inputs</h2><form method="post" action="{{ url_for('.creditor_capacity') }}">
 <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="revision" value="{{ revision }}"><input type="hidden" name="operation" value="{{ operation }}">
