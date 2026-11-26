@@ -5,7 +5,7 @@ Inputs are monthly GBP observations, not reconciled bank-derived amounts.
 """
 from contextlib import closing
 from datetime import date, datetime, timezone
-from decimal import Decimal, ROUND_FLOOR
+from decimal import Decimal, ROUND_FLOOR, ROUND_HALF_UP
 import json
 import re
 import secrets
@@ -37,10 +37,62 @@ OPTIONAL_MONEY = {
 RATES = {"reserve_rate": "Creditor contingency (%)", "safe_rate": "Safe capacity factor (%)",
          "max_rate": "Temporary maximum factor (%)"}
 
+PERIOD_MONEY = {
+    "trading": "Trading receipts",
+    "opex": "Essential operating expenditure",
+    "growth": "Growth / stock / capex",
+    "observed_debt": "Observed debt outflow",
+    "director_funding": "Director funding received",
+}
+PERIOD_OPTIONAL = {"director_drawings": "Director remuneration / drawings"}
+
+
+def _evidence_date(raw):
+    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", raw):
+        raise ValueError("Enter a valid evidence date.")
+    value = date.fromisoformat(raw)
+    if value > date.today():
+        raise ValueError("Evidence dates cannot be in the future.")
+    return value
+
+
+def _period_fields(form, end):
+    """Cash Engine B7/E7/H7/B8/H8/B9: explicit inclusive observation window.
+
+    Inputs are owner-reviewed totals, not an automatically complete bank
+    transaction feed. Round monthly estimates once to the nearest penny;
+    the existing shared affordability model still floors capacity.
+    """
+    start = _evidence_date(form.get("period_start", ""))
+    days = (end - start).days + 1
+    if not 1 <= days <= 366:
+        raise ValueError("Observation period must contain 1 to 366 inclusive days.")
+    totals, monthly = {}, {}
+    for key in (*PERIOD_MONEY, *PERIOD_OPTIONAL):
+        value = _amount(form.get("period_" + key, ""))
+        if value is None:
+            if key in PERIOD_MONEY:
+                raise ValueError("All required period totals must be entered; use zero only when known.")
+            continue
+        totals[key] = value
+        monthly[key] = int((Decimal(value) * Decimal("30.4375") / days).quantize(
+            Decimal("1"), rounding=ROUND_HALF_UP))
+    return dict(start=start.isoformat(), end=end.isoformat(), days=days, totals=totals), monthly
+
 
 def _fields(form):
     data = {}
+    raw = form.get("as_of", "")
+    end = _evidence_date(raw)
+    basis = form.get("input_basis", "monthly")
+    if basis not in ("monthly", "period"):
+        raise ValueError("Choose monthly observations or period totals.")
+    if basis == "period":
+        data["period"], monthly = _period_fields(form, end)
+        data.update(monthly)
     for key in MONEY:
+        if basis == "period" and key in PERIOD_MONEY:
+            continue
         value = _amount(form.get(key, ""))
         if value is None:
             raise ValueError("All scenario amounts are required; enter zero only when known.")
@@ -48,6 +100,8 @@ def _fields(form):
     # Blank is unknown, not zero. Omitting absent fields also preserves
     # idempotency for saved scenarios from before this additive extension.
     for key in OPTIONAL_MONEY:
+        if basis == "period" and key in PERIOD_OPTIONAL:
+            continue
         value = _amount(form.get(key, ""))
         if value is not None:
             data[key] = value
@@ -61,9 +115,6 @@ def _fields(form):
     data["mode"] = form.get("mode", "")
     if data["mode"] not in ("conservative", "exclude_growth"):
         raise ValueError("Choose the growth treatment.")
-    raw = form.get("as_of", "")
-    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", raw) or date.fromisoformat(raw) > date.today():
-        raise ValueError("Enter a valid non-future evidence date.")
     data["as_of"] = raw
     return data
 
@@ -207,5 +258,6 @@ def register(bp):
         return render_template("hq_creditor_capacity.html", money=MONEY, rates=RATES, data=data,
                                revision=latest["revision"] if latest else 0, history=history,
                                result=result, affordability=business_affordability(data) if latest else None,
-                               optional_money=OPTIONAL_MONEY, summary=summary, warning=warning, error=error,
+                               optional_money=OPTIONAL_MONEY, period_money=PERIOD_MONEY, period_optional=PERIOD_OPTIONAL,
+                               summary=summary, warning=warning, error=error,
                                csrf=session.get("csrf", ""), operation=uuid.uuid4().hex), code, {"Cache-Control":"no-store"}
