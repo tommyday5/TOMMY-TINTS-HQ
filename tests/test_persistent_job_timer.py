@@ -105,6 +105,9 @@ class PersistentTimerTests(unittest.TestCase):
         self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"],0)
 
     def test_open_timer_prevents_closure_and_archive_until_reviewed(self):
+        # Use the native owner-created source marker in this disposable database.
+        with connect() as db:
+            db.execute("UPDATE hq_work_records SET source_request_id=? WHERE id=?", ("HQ-" + self.job, self.job))
         change_work_status(self.job, "in_progress", 0)
         self.command("start")
         sid = snapshot(self.job)["id"]
