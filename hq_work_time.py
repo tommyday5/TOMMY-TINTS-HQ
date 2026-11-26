@@ -164,6 +164,9 @@ def append_work_time(work_id, payload, expected_revision, owner_identity):
         from hq_work_timer import tables as timer_tables
         timer_tables(db)
         timer = db.execute("SELECT * FROM hq_timer_sessions WHERE id=?", (fields["operation_id"],)).fetchone()
+        if not timer and db.execute("""SELECT 1 FROM hq_timer_sessions WHERE work_id=?
+            AND state IN ('running','paused','review')""", (work_id,)).fetchone():
+            raise ValueError("Finish or correct the persistent timer before entering manual time")
         if timer and (timer["work_id"] != work_id or timer["state"] != "review"
                       or timer["active_seconds"] // 60 != fields["minutes"]):
             raise ValueError("Review the exact finished timer minutes before saving")
