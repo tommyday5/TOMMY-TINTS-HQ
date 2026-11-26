@@ -1256,3 +1256,35 @@ isolation. No public routes changed; production owner/customer acceptance
 still required. Next: actual approved recovery/import, provider-verified
 receipt/fee accounting, full formula parity and native transaction archive.
 No domain authority changes.
+
+
+## 26 November — native transaction edit history deployed; reversible archive
+
+PR #297 exact head 162f658739be8ffab9f07d5ef803c2f567be0014
+passed Actions 45746251386 (127 root + 668 integration Python tests,
+9 JS tests). Squash merged as 270b7e95d1a95663cfb5522932ccfb27f6129db8.
+Railway deployment 0c7e7a4b-7dec-4d79-bc61-4d0503b5b851 reports SUCCESS
+at 03:58:02 UTC. Original 1024 MB /data volume verified before merge.
+All 48 workbook tab names confirmed with read-only metadata.
+Transaction edit history deployed; owner acceptance remains unverified.
+
+New proposed slice: Finance Command Centre > Transactions & reconciliation >
+Archive / history; select Archived entries / restore to reopen.
+Owner-only exact current revision, explicit reason and CSRF-protected
+archive/restore form, append-only lifecycle history, unchanged original
+manual transaction values, and native monthly report exclusion with a
+visible count. Restore re-includes the original amount exactly once.
+Active split blocks lifecycle changes; archived parent blocks ordinary
+edits and new splits. Stale/replayed requests do not create duplicate
+events. Existing transaction table schema retained. Separate from
+read-only Monzo, verified receipts, payments, balances and Sheets.
+Synthetic HTTP, isolation, persistence and totals test added; CI pending.
+No real transaction archived or restored.
+
+PR #297 CI includes service requests to HQ, canonical approved quote
+conversion, customer appointment acceptance and owner confirmation,
+maintenance pricing isolation, product approval and account isolation.
+Public routes unchanged. Production authenticated UI acceptance still
+unverified. Next: verified receipt/fee accounting, exact approved
+historical import after independent recovery, formula parity and
+remaining operational domains. No domain authority changes.
