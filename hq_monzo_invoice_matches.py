@@ -67,7 +67,8 @@ def require_source_not_settled(db, ref):
     transaction used for candidate review/save or reported allocation.
     """
     for table, identity in (("hq_square_settlement_reviews", "allocation_id"),
-                            ("hq_square_batch_reviews", "source_id")):
+                            ("hq_square_batch_reviews", "source_id"),
+                            ("hq_dna_payout_reviews", "payout_id")):
         if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
                           (table,)).fetchone():
             continue
@@ -77,7 +78,8 @@ def require_source_not_settled(db, ref):
             AND NOT EXISTS (SELECT 1 FROM {table} n
                 WHERE n.{identity}=e.{identity} AND n.id>e.id) LIMIT 1""",
                 (ref,)).fetchone():
-            raise Conflict("This bank deposit has an active Square settlement proposal. "
+            provider = "DNA" if table == "hq_dna_payout_reviews" else "Square"
+            raise Conflict(f"This bank deposit has an active {provider} settlement proposal. "
                            "Withdraw it in Settlement and fee review before allocating this deposit directly.")
 
 
