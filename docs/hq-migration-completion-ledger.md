@@ -1787,3 +1787,23 @@ preferred to a production authentication bypass. No production record or
 workbook writes, migration approval, external messages, bookings or payments.
 No historical authority change. Public booking routes unchanged; production
 customer-browser acceptance remains outstanding.
+
+
+### 2026-11-26 — timer allowance and next-session context
+
+PR #314 exact-head regression run 45881173227 succeeded (dependency, syntax,
+integration/regression and app update checks); merged as
+243e81e56cb7ba71d1d58fcc76af1e5c84dedd79. Railway deployment
+2824c8b4-0af1-4258-b29c-33c5712d1ed7 SUCCESS at 20:05:02 UTC.
+Prior production health confirmed attached volume, 1/1 replica, no staged
+changes. All 48 workbook tabs confirmed by read-only metadata. No data
+cutover or historical authority change.
+
+Next-session context: show canonical customer/vehicle/service and saved
+labour alongside the persistent controls; offer the most recent saved
+session allowance as an editable suggestion, never a discarded session.
+No automatic start or price/time changes. Synthetic regression covers
+saved/discarded sessions and authenticated form rendering. Exact-head CI
+and deployment pending. Owner browser acceptance and current Kia identity
+remain outstanding; passkeys unchanged. Public Bookings routes unchanged;
+customer browser acceptance remains outstanding.

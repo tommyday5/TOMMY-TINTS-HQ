@@ -55,7 +55,11 @@ def history(work_id):
                    datetime(occurred_at,'unixepoch') AS occurred_utc
             FROM hq_timer_events WHERE work_id=?
             ORDER BY occurred_at DESC,expected_revision DESC,operation_id DESC LIMIT 101""", (work_id,))]
-    return {"sessions": sessions[:100], "events": events[:100],
+        previous = db.execute("""SELECT allowance_minutes FROM hq_timer_sessions
+            WHERE work_id=? AND state='saved' ORDER BY changed_at DESC,id DESC LIMIT 1""",
+            (work_id,)).fetchone()
+    return {"previous_saved_allowance": previous["allowance_minutes"] if previous else None,
+            "sessions": sessions[:100], "events": events[:100],
             "truncated": len(sessions)>100 or len(events)>100}
 
 
