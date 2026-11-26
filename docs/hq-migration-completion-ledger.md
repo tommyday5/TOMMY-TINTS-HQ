@@ -1807,3 +1807,9 @@ saved/discarded sessions and authenticated form rendering. Exact-head CI
 and deployment pending. Owner browser acceptance and current Kia identity
 remain outstanding; passkeys unchanged. Public Bookings routes unchanged;
 customer browser acceptance remains outstanding.
+
+
+### 2026-11-26 — persistent cumulative timer presentation
+
+PR #315 exact-head CI 45888450862 succeeded and merged as 6229be48c6b55e372e9982c289cbafb61f7e36d9. Railway deployment d9b5d676-36d0-457c-adca-ac6ca00c3365 was BUILDING on first inspection; deployment verification separate. Existing /data volume confirmed and 48 workbook tabs read-only verified.
+This proposal displays cumulative recorded labour plus current session, a separate live excluded break clock and allowance percentage in the persistent owner view. No ledger, customer price, timer state or authentication changes. Synthetic JS and authenticated route regression added. Exact-head CI and owner acceptance pending. No historical authority change, live import, external communications or customer booking changes.
