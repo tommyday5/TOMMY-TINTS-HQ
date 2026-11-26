@@ -55,6 +55,9 @@ def cost_overview_snapshot(work_id):
             FROM hq_work_expense_entries WHERE work_id=? AND voided_at IS NULL""",
             (work_id,)).fetchone()
 
+        from hq_historical_actual_costs import baseline_snapshot
+        baseline = baseline_snapshot(db, work_id)
+
     labour_count, material_count = time["entries"], materials["entries"]
     expense_count = expenses["entries"]
     unknown_labour, unknown_materials = time["unknown"], materials["unknown"]
@@ -109,6 +112,7 @@ def cost_overview_snapshot(work_id):
         "margin_percent": None,
         "payment_verified": False,
         "historical_costs_reconciled": False,
+        "historical_cost_baseline": baseline,
         "missing_sources": [
             "Expenses and overhead not yet captured or verified against supplier evidence",
             "Supplier invoices, stock movements and subcontractor matching",

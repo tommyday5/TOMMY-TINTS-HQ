@@ -135,6 +135,9 @@ def withdraw(db, work_id, operation, stamp, owner):
                 and hmac.compare_digest(prior["stamp"], stamp)):
             return
         raise ValueError("Operation already used.")
+    baseline = baseline_latest(db, work_id)
+    if baseline and baseline["state"] == "adopted":
+        raise ValueError("Withdraw the adopted cost baseline first.")
     last = latest(db, work_id)
     if not last or last["state"] != "observed" or not hmac.compare_digest(last["stamp"],stamp):
         raise ValueError("Observation changed; reload before withdrawal.")
@@ -144,12 +147,121 @@ def withdraw(db, work_id, operation, stamp, owner):
         (work_id,operation,stamp,last["manifest"],actor,datetime.now(timezone.utc).isoformat()))
 
 
+
+# An aggregate baseline is a native cost record, not fictitious detailed
+# material quantities or timed stages. It never enters the detailed subtotal.
+def baseline_tables(db):
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_historical_cost_baselines(
+        id INTEGER PRIMARY KEY, work_id TEXT NOT NULL REFERENCES hq_work_records(id),
+        operation TEXT NOT NULL UNIQUE, stamp TEXT NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('adopted','withdrawn')),
+        manifest TEXT NOT NULL, actor TEXT NOT NULL, created_at TEXT NOT NULL)""")
+    db.execute("""CREATE INDEX IF NOT EXISTS hq_cost_baseline_work
+        ON hq_historical_cost_baselines(work_id,id)""")
+
+
+def _exists(db, table):
+    return db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                      (table,)).fetchone() is not None
+
+
+def baseline_latest(db, work_id):
+    if not _exists(db, "hq_historical_cost_baselines"):
+        return None
+    return db.execute("""SELECT * FROM hq_historical_cost_baselines
+        WHERE work_id=? ORDER BY id DESC LIMIT 1""", (work_id,)).fetchone()
+
+
+def _detail_overlap(db, work_id):
+    # Any active detail (even unknown or zero) requires manual reconciliation.
+    for table in ("hq_work_time_entries", "hq_work_material_entries", "hq_work_expense_entries"):
+        if _exists(db, table) and db.execute(
+                "SELECT 1 FROM " + table + " WHERE work_id=? AND voided_at IS NULL LIMIT 1",
+                (work_id,)).fetchone():
+            return True
+    return False
+
+
+def baseline_snapshot(db, work_id):
+    """Read in the caller's transaction; no creation or modification here."""
+    row = baseline_latest(db, work_id)
+    if not row or row["state"] != "adopted":
+        return None
+    manifest = json.loads(row["manifest"])
+    try:
+        link = linked(db, work_id)
+        observation = latest(db, work_id)
+        valid = (observation and observation["state"] == "observed"
+                 and observation["id"] == manifest["observation_id"]
+                 and link["current_revision"] == manifest["work_revision"]
+                 and not _detail_overlap(db, work_id))
+    except LookupError:
+        valid = False
+    costs = manifest["costs"]
+    money = [costs[k] for k in ("materials", "consumables", "extra")]
+    return dict(manifest, current=bool(valid),
+                nonlabour_pence=sum(money) if all(v is not None for v in money) else None,
+                known_nonlabour_pence=sum(v for v in money if v is not None)
+                if any(v is not None for v in money) else None)
+
+
+def baseline_process(db, work_id, operation, owner, approval=None, revoke=False):
+    if not HEX.fullmatch(operation):
+        raise ValueError("Invalid baseline operation.")
+    actor = _actor_fingerprint(owner)
+    link = linked(db, work_id)
+    last = baseline_latest(db, work_id)
+    prior = db.execute("SELECT * FROM hq_historical_cost_baselines WHERE operation=?",
+                       (operation,)).fetchone()
+    if prior:
+        if (approval and last and last["id"] == prior["id"]
+                and prior["work_id"] == work_id and prior["actor"] == actor
+                and prior["state"] == ("withdrawn" if revoke else "adopted")
+                and hmac.compare_digest(approval, prior["stamp"])):
+            return None
+        raise ValueError("Baseline operation already used.")
+    if revoke:
+        if (not last or last["state"] != "adopted" or not approval
+                or not hmac.compare_digest(approval, last["stamp"])):
+            raise ValueError("Baseline changed; reload before withdrawal.")
+        manifest, stamp, state = json.loads(last["manifest"]), last["stamp"], "withdrawn"
+    else:
+        if last and last["state"] == "adopted":
+            raise ValueError("Withdraw the existing baseline before replacing it.")
+        observation = latest(db, work_id)
+        if not observation or observation["state"] != "observed":
+            raise ValueError("Save historical cost evidence first.")
+        evidence = json.loads(observation["manifest"])
+        if link["current_revision"] != evidence["work_revision"]:
+            raise ValueError("HQ work changed since observation; review fresh evidence.")
+        if _detail_overlap(db, work_id):
+            raise ValueError("Existing active cost details overlap; reconcile manually.")
+        manifest = dict(work_id=work_id, job_ref=link["job_ref"],
+                        sheet_row=link["sheet_row"], work_revision=link["current_revision"],
+                        observation_id=observation["id"], observation_stamp=observation["stamp"],
+                        source_stamp=evidence["source_stamp"], costs=evidence["costs"],
+                        prior_event=last["id"] if last else None, operation=operation)
+        stamp = source_helpers()._stamp(["historical-cost-baseline-v1", manifest, actor])
+        if approval is None:
+            return manifest, stamp
+        if not hmac.compare_digest(stamp, approval):
+            raise ValueError("Baseline evidence or HQ work changed; prepare a fresh approval.")
+        state = "adopted"
+    db.execute("""INSERT INTO hq_historical_cost_baselines
+        (work_id,operation,stamp,state,manifest,actor,created_at)
+        VALUES(?,?,?,?,?,?,?)""", (work_id,operation,stamp,state,
+        json.dumps(manifest,sort_keys=True),actor,datetime.now(timezone.utc).isoformat()))
+    return None
+
+
 def register_routes(bp):
     @bp.route("/hq/migration/work/<work_id>/actual-costs", methods=["GET","POST"])
     @required
     def historical_actual_costs(work_id):
         preview=stamp=error=notice=None
         history=[]
+        baselines=[]
+        baseline_preview=baseline_stamp=baseline_view=None
         status=200
         operation=uuid.uuid4().hex
         try:
@@ -165,20 +277,28 @@ def register_routes(bp):
                 action=request.form.get("action")
                 operation=request.form.get("operation","")
                 stamp=request.form.get("stamp","")
-                if action in ("save","withdraw") and (request.form.get("confirm")!="yes" or not STAMP.fullmatch(stamp)):
+                if action in ("save","withdraw","baseline_save","baseline_withdraw") and (request.form.get("confirm")!="yes" or not STAMP.fullmatch(stamp)):
                     raise ValueError("Explicit confirmation required.")
                 if action in ("prepare","save"):
                     provider=current_app.extensions["hq_sheets_connection"]()
                     if not provider or provider[1]<=time.time():
                         raise ValueError("Connect read-only Sheets access first.")
                     source=source_helpers()._read_live(provider[0])
-                elif action!="withdraw":
+                elif action not in ("withdraw","baseline_prepare","baseline_save","baseline_withdraw"):
                     abort(400)
             with closing(connect()) as db, db:
                 linked(db,work_id)
                 tables(db)
+                baseline_tables(db)
                 db.execute("BEGIN IMMEDIATE")
-                if action=="withdraw":
+                if action in ("baseline_prepare","baseline_save","baseline_withdraw"):
+                    result=baseline_process(db,work_id,operation,session.get("google_sub"),
+                        stamp if action!="baseline_prepare" else None,action=="baseline_withdraw")
+                    if result:
+                        baseline_preview,baseline_stamp=result
+                    else:
+                        notice="Historical cost baseline withdrawn; history retained." if action=="baseline_withdraw" else "Historical aggregate cost baseline saved; no detailed costs or payments posted."
+                elif action=="withdraw":
                     withdraw(db,work_id,operation,stamp,session.get("google_sub"))
                     notice="Observation withdrawn; history retained."
                 elif action in ("prepare","save"):
@@ -189,7 +309,10 @@ def register_routes(bp):
                         notice="Historical observation saved; no live cost or payment posted."
                 history=[dict(r) for r in db.execute("""SELECT * FROM hq_historical_cost_observations
                     WHERE work_id=? ORDER BY id DESC LIMIT 100""",(work_id,))]
-            if action in ("save","withdraw"):
+                baselines=[dict(r) for r in db.execute("""SELECT * FROM hq_historical_cost_baselines
+                    WHERE work_id=? ORDER BY id DESC LIMIT 100""",(work_id,))]
+                baseline_view=baseline_snapshot(db,work_id)
+            if action in ("save","withdraw","baseline_save","baseline_withdraw"):
                 operation=uuid.uuid4().hex
         except LookupError:
             abort(404)
@@ -197,10 +320,12 @@ def register_routes(bp):
             error,status=str(exc),409
         except (sqlite3.Error,OSError,RuntimeError):
             error,status="Storage or source unavailable.",503
-        for item in history:
+        for item in history+baselines:
             item["details"]=json.loads(item["manifest"])
         response=make_response(render_template("hq_historical_actual_costs.html",work_id=work_id,
             preview=preview,stamp=stamp,history=history,error=error,notice=notice,
-            operation=operation,fields=FIELDS,csrf=session.get("csrf","")),status)
+            operation=operation,fields=FIELDS,csrf=session.get("csrf",""),
+            baselines=baselines,baseline_preview=baseline_preview,baseline_stamp=baseline_stamp,
+            baseline_view=baseline_view),status)
         response.headers["Cache-Control"]="no-store"
         return response
