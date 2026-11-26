@@ -1288,3 +1288,38 @@ Public routes unchanged. Production authenticated UI acceptance still
 unverified. Next: verified receipt/fee accounting, exact approved
 historical import after independent recovery, formula parity and
 remaining operational domains. No domain authority changes.
+
+
+## 26 November — manual transaction archive deployed; monthly commitment schedules
+
+PR #298 final head 3de6f94fe84963e35bda75895fe570060a4854a3 passed
+Actions 45752313849 (127 root + 669 integration Python tests and 9 JS
+tests), squash merged as f2fb1bdaffd0f91ce33491033ae7dc21f0e57f0c.
+Railway deployment 86e4702f-4a7d-4c8a-9c5c-86b2b5b9d443 SUCCESS at
+05:04:41 UTC, startup and original 1024 MB /data mount confirmed;
+no pending infrastructure changes. All 48 workbook tabs confirmed by
+read-only metadata. Manual transaction archiving and restoration now
+deployed; owner acceptance unverified. No real transaction archived.
+
+New proposed owner workflow: Finance Command Centre > Edit finances >
+Manage monthly commitments and generate planned bills. Create/edit/archive
+or restore a monthly schedule with amount and due day, retaining every
+revision. Preview one month, clamp the due day to month end where
+necessary, explicitly approve the exact amount/date and create one native
+planned bill, with its normal editable bill history and original schedule
+provenance. Schedule changes never rewrite generated commitments.
+SQLite write transaction, current revision and unique schedule/month
+prevent duplicate generation; same-name native bills in that month block
+generation even when cancelled or archived. Different-name aliases
+require owner review. No automatic generation, bank action, payment,
+expense posting or Sheets changes. Synthetic HTTP tests include owner
+isolation, CSRF, stale writes, duplicate conflicts, month-end dates,
+archive/restore and save/reload. CI and deployment of this slice pending.
+
+PR #298 regression confirms native archive totals and restore, customer
+service-to-HQ review, native quote conversion, appointment acceptance
+and owner confirmation, maintenance pricing privacy and customer
+isolation. Public routes unchanged. Owner/customer production acceptance,
+exact approved historical import after independently verified off-volume
+recovery, verified receipt and fee posting, and full worksheet formula
+parity remain outstanding. No domain authority changes.
