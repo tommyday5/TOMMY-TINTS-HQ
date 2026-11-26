@@ -1675,3 +1675,46 @@ DNS resolution; production browser acceptance remains unverified.
 Recovery export and isolated verification code deployed earlier; actual
 independent copy and exact bounded customer manifest remain separate owner
 approval gates. No live business records, workbook cells or payments changed.
+
+
+## 26 November — period observations deployed; native transaction evidence review
+
+PR #308 exact head d4c0dbf4f10ff94e6cfceac50ed440dd5b612194 passed
+Actions 45835022791 (127 root + 681 integration Python tests, 9 JS tests).
+Squash merged as a835b9b2f5cd8e72af3ccc6a8ccbb65219365eb6; Railway
+deployment 88c861f9-1299-4b94-90be-df31d6ff1e65 SUCCESS at 15:07:30 UTC.
+Original 1024 MB /data volume checked attached before merge; startup
+logs confirm mount, gunicorn worker, and status 1/1 running with no issues.
+Read-only metadata enumerated all 48 tabs, Monzo A7:U7 and Cash Engine
+A4:I12 / A14:P15 formula schema. No live database contents inspected.
+
+New proposed slice: Finance Command Centre > Affordability calculator >
+Prepare native transaction observation. Choose inclusive 1–366 day range;
+reuses exact native split classification engine on a bounded 5000-row
+snapshot. Only reviewed manual transactions with explicit supported
+categories and sign enter partial suggested period totals. Splits replace
+parents, archived excluded; transfers, loans, refunds, unsupported
+categories, unreviewed and wrong-sign lines disclosed separately.
+Missing categories unknown, including director funding (no explicit
+native category). Owner edits or supplies all required totals, confirms
+partial evidence, then saves the existing scenario. Under the same SQLite
+write transaction, re-read source and compare digest covering IDs,
+revisions, dates, classifications, amounts and exclusions; reject stale
+preview. Retain original mapped subtotals and digest alongside owner
+inputs in immutable history. Exact replay does not duplicate revision.
+No automatic posting, provider verification, complete feed claim,
+cash balance inference or historical cutover. Synthetic HTTP tests
+submitted for preview/save/reload, split conservation, exclusions,
+stale source and replay. CI and deployment of this new slice pending.
+
+PR #308 passing logs confirm customer request to canonical owner-approved
+portal, combined quote/appointment handoff, owner confirmation and
+customer-visible status, owner/customer PDF parity, maintenance pricing
+privacy and account isolation. No public route changed. Direct HTTP probe
+of /book and /hq/finance/creditor-capacity failed DNS; authenticated live
+UI acceptance still unverified. Actual independent off-volume recovery
+and exact bounded historical import remain separate owner approvals.
+Next: direct independent bank evidence and richer classification mappings
+after explicit review, remaining formula parity, bounded migration and
+customer production acceptance. No actual data, payments, bookings or
+workbook cells modified.
