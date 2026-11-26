@@ -1544,3 +1544,58 @@ changed. Authenticated production UI acceptance not established. First
 historical import and independent recovery remain separate owner approvals.
 Next: independent bank settlement verification, native finance formula
 parity and approved historical import; continue owner/customer workflows.
+
+
+## 26 November — effective-date fees deployed; native finance plan history
+
+PR #305 exact head 2f7f85821ffaca1fe06a13e24b8a3e9a8f900f93
+passed Actions 45806996399 and was squash merged as
+81e0d688006b43dfabcdeff673597282f926768d. Railway deployment
+9a9bffee-641b-41c1-b7c9-c5f0ae1441b3 reported SUCCESS at 12:01:24 UTC.
+The original 1024 MB /data volume was attached before merge and there
+were no staged infrastructure changes. All 48 workbook tabs and Cash
+Engine A6:I12 formula schema were rechecked read-only. No live records
+or workbook cells modified; no new historical authority.
+
+New proposed owner slice: Finance Command Centre > Edit finances >
+Finance input history. Saving a balance snapshot or monthly target now
+retains the previous observed values and new revision in the same native
+SQLite transaction. Earlier unavailable revisions are not fabricated.
+Concurrent/repeated stale submissions are rejected by existing revision
+checks, with no duplicate history. The overview's next-30-day estimate
+is now calculated server-side in integer pence, using the UK calendar,
+including overdue planned commitments, excluding cancelled/archived
+commitments, and withholding the estimate when the balance is missing,
+future-dated or a reported bill payment on or after its snapshot date
+makes the snapshot ambiguous. This is a planning estimate of recorded
+commitments, not a verified bank balance or a reproduction of the Cash
+Engine's expected receipts or full cash forecast. No payment or external
+action. Synthetic owner route tests cover legacy record capture, reload,
+revision conflict, CSRF, privacy, and exact forecast boundaries. CI and
+deployment for this slice pending.
+
+PR #305 successful regression logs cover public service submissions,
+itemised quote privacy, native quote conversion, customer approval
+status, maintenance pricing privacy, vehicle linking, and product
+order/deposit visibility. No public routes changed. Authenticated live
+UI acceptance remains unverified. Recovery snapshot and exact bounded
+historical import approvals remain outstanding; no owner approval
+inferred. Next: direct bank verification requires a supported independent
+source; existing worksheet and owner-reported statements are not direct
+bank verification. Continue native financial formula parity and editable
+owner/customer workflows while migration approval remains outstanding.
+
+### 26 November — finance plan regression correction
+
+Actions 45815984881 failed exactly one source-continuity test (the old
+client-side expression was asserted literally after forecast computation
+moved to the server). The connected Sheets endpoint, source labels,
+stale indicators and separate accounting remain unchanged. Replaced
+that assertion with checks of server forecast rendering, missing-value
+display and reasons; retained all source continuity assertions. Added
+synthetic authenticated save/reload test for overdue commitments,
+ambiguous reported payment date and fresh balance recovery. No
+application logic change in this correction; fresh full CI required.
+Main and Railway still at #305 at inspection, original /data volume
+attached; all 48 workbook titles read-only confirmed. No actual import,
+recovery operation or authority cutover.
