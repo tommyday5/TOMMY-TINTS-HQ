@@ -39,6 +39,26 @@ def snapshot(work_id):
         row["display_break"] = row["break_seconds"] + (elapsed if row["state"] == "paused" else 0)
     return row
 
+def history(work_id):
+    """Bounded, owner-facing audit evidence; never modifies timer state."""
+    _validate_id(work_id)
+    with connect() as db:
+        _schema(db)
+        tables(db)
+        sessions = [dict(r) for r in db.execute("""
+            SELECT id,state,active_seconds,break_seconds,allowance_minutes,entry_id,
+                   datetime(changed_at,'unixepoch') AS changed_utc
+            FROM hq_timer_sessions WHERE work_id=?
+            ORDER BY changed_at DESC,id DESC LIMIT 101""", (work_id,))]
+        events = [dict(r) for r in db.execute("""
+            SELECT session_id,action,detail,expected_revision,
+                   datetime(occurred_at,'unixepoch') AS occurred_utc
+            FROM hq_timer_events WHERE work_id=?
+            ORDER BY occurred_at DESC,expected_revision DESC,operation_id DESC LIMIT 101""", (work_id,))]
+    return {"sessions": sessions[:100], "events": events[:100],
+            "truncated": len(sessions)>100 or len(events)>100}
+
+
 def transition(work_id, action, revision, operation_id, session_id='', allowance='', reason=''):
     _validate_id(work_id)
     _validate_id(operation_id)
@@ -46,15 +66,15 @@ def transition(work_id, action, revision, operation_id, session_id='', allowance
         _validate_id(session_id)
     elif session_id:
         raise ValueError("Start must not identify an existing timer")
-    if type(revision) is not int or revision < -1 or action not in ("start","pause","resume","finish","discard"):
+    if type(revision) is not int or revision < -1 or action not in ("start","pause","resume","finish","discard","allowance"):
         raise ValueError("Invalid timer operation")
     with connect() as db:
         _schema(db)
         tables(db)
         db.execute("BEGIN IMMEDIATE")
         detail = ""
-        if action == "start":
-            if allowance and (not re.fullmatch(r"[0-9]{1,5}", allowance) or not 1 <= int(allowance) <= 30000):
+        if action in ("start", "allowance"):
+            if (action == "allowance" or allowance) and (not re.fullmatch(r"[0-9]{1,5}", allowance) or not 1 <= int(allowance) <= 30000):
                 raise ValueError("Allowance must be 1–30000 whole minutes")
             detail = allowance
         elif action == "discard":
@@ -92,6 +112,15 @@ def transition(work_id, action, revision, operation_id, session_id='', allowance
             if not row or row["id"] != session_id or row["revision"] != revision:
                 raise StaleWorkRecordError("Timer changed; reload")
             sid = row["id"]
+            if action == "allowance":
+                if row["state"] not in ("running", "paused"):
+                    raise ValueError("Edit the allowance before finishing the timer")
+                # Do not reset changed_at or accumulated active/break time.
+                db.execute("UPDATE hq_timer_sessions SET allowance_minutes=?,revision=revision+1 WHERE id=?",
+                           (int(allowance), sid))
+                db.execute("INSERT INTO hq_timer_events VALUES (?,?,?,?,?,?,?)",
+                           (operation_id,sid,work_id,action,revision,t,detail))
+                return
             elapsed = t - row["changed_at"]
             if elapsed < 0:
                 raise ValueError("Server clock moved backwards; retry later")
