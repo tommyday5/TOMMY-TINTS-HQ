@@ -341,16 +341,56 @@ class AllocationTests(unittest.TestCase):
             self.assertIn(b"Provider fee evidence recorded at review time", page.data)
             self.assertIn("£4.00".encode(), page.data)
             get.assert_not_called()
+            settlement = "/hq/finance/settlement-review"
+            entry = dict(ref="tx-fee-crosscheck", pence=19600, day="2026-11-23",
+                         evidence="a"*64, legacy_evidence="b"*64)
+            settle = dict(allocation=payload["id"], csrf="test", action="preview",
+                          source=entry["ref"], fee="4.00", reference="Synthetic statement",
+                          operation=uuid.uuid4().hex)
+            with patch("hq_settlement_review.storage_ready", return_value=True), \
+                    patch("hq_settlement_review.current_entry", return_value=entry) as source:
+                source.return_value = dict(entry, pence=19500)
+                mismatch = again.post(settlement, data=dict(settle, fee="5.00"))
+                self.assertEqual(mismatch.status_code, 409)
+                self.assertIn(b"differs from retained provider fees", mismatch.data)
+                source.return_value = entry
+                compared = again.post(settlement, data=settle)
+                stamp = manifest(compared)
+                self.assertIn(b"All retained provider fees agree", compared.data)
+                self.assertEqual(again.post(settlement, data=dict(settle, action="save",
+                    confirm="yes", manifest=stamp)).status_code, 303)
+                self.assertIn(b"All retained provider fees agree", again.get(settlement).data)
+                with connect() as db:
+                    from hq_settlement_review import provider_fee_comparison
+                    members = [dict(allocation_id=payload["id"], payment_id=evidence["id"], gross=20000),
+                               dict(allocation_id="f"*32, payment_id="other", gross=10000)]
+                    compared = provider_fee_comparison(db, members, 700)
+                    self.assertEqual(compared["missing"], 1)
+                    self.assertEqual(compared["total_pence"], 400)
+                    self.assertEqual(len(compared["known"]), 1)
+                    import json
+                    saved = json.loads(db.execute("SELECT evidence FROM hq_square_settlement_reviews").fetchone()[0])
+                    self.assertEqual(saved["provider_fees"]["total_pence"], 400)
+                    self.assertEqual(saved["provider_fees"]["known"][0]["revision"], 1)
+            get.assert_not_called()
             provider.return_value = dict(evidence, refunded_minor=5000,
                                          updated_at="2026-11-22T10:03:00+00:00")
             self.assertEqual(self.client.post(evidence_url, data=dict(form, action="recheck",
                 confirm="yes")).status_code, 200)
             self.assertIn(b"Fee review required", again.get(url).data)
+            with connect() as db:
+                from hq_settlement_review import provider_fee_comparison
+                with self.assertRaises(ValueError):
+                    provider_fee_comparison(db, members[:1], 400)
             undo = dict(f, action="fee-withdraw", revision="1", reason="Synthetic correction",confirm="yes")
             self.assertEqual(again.post(url, data=dict(undo, revision="0")).status_code, 409)
             self.assertEqual(again.post(url, data=undo).status_code, 303)
             self.assertEqual(again.post(url, data=undo).status_code, 409)
             self.assertIn(b"Fee review withdrawn", again.get(url).data)
+            with connect() as db:
+                unknown = provider_fee_comparison(db, members[:1], 400)
+                self.assertEqual(unknown["missing"], 1)
+                self.assertIsNone(unknown["total_pence"])
             external_post.assert_not_called()
         with connect() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_square_fee_reviews").fetchone()[0], 2)
