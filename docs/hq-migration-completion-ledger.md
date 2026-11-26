@@ -1103,3 +1103,33 @@ confirmation, product deposit and maintenance account isolation passed
 PR #292 integration tests. No public route changed. Next: DNA Payments
 evidence, owner-approved bounded import and off-volume recovery, full
 financial parity and customer production acceptance.
+
+
+## 26 November — native historical cost baseline deployed; DNA payout evidence
+
+PR #293 final head fb290e9842ffa3c5dc06232ad83bc8aa066a4e92 passed Actions
+45717973273 (127 root + 664 integration Python, 9 JS tests). Merged as
+bfa95cc6; Railway deployment 0210c88e-ff15-4d8d-ad02-5d9ec9ac0399
+SUCCESS at 00:07:01 UTC, one running replica, no issues. Original 1024 MB
+/data volume 540528d1-3953-4737-9d92-3c861575c5d4 attached. Read-only
+metadata confirms 48 tabs; Monzo Live Feed A7:I7 exact headings retained.
+Historical aggregate baseline implemented and deployed, not owner-tested,
+migrated, reconciled or authoritative. No historical costs adopted here.
+
+Proposed DNA Payments workspace: Finance Command Centre > DNA payout
+evidence. Exact owner-entered provider payout ID, documented gross and fee,
+statement reference and original Monzo transaction ID; exact positive net
+pence, fresh worksheet fingerprint, explicit preview/approval, persistent
+append-only evidence and withdrawal. Duplicate payout IDs (including case
+variants), source conflicts with Square single/batch and direct Monzo
+invoice matching blocked under SQLite write transaction. Manual statement
+evidence only: no DNA API, no customer payment identification, refunds,
+chargebacks, verified settlement, receipt, fee expense or bank balance posting.
+No live data or provider writes. CI and deployment of DNA slice pending.
+
+PR #293 CI confirms customer service-to-HQ review, combined quote/appointment
+handoff, owner approval and customer isolation, linked vehicle requests,
+product withdrawal/approval and maintenance price isolation. No public
+route change. Production authenticated UI acceptance remains unverified.
+Next: independent off-volume recovery and bounded approved import, provider
+payment evidence and fee accounting, financial parity and customer acceptance.

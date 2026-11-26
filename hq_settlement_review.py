@@ -81,6 +81,8 @@ def payment_member(db, allocation_id, entry):
                 recheck_id=latest["id"] if latest else None, gross=gross)
 
 def check_source(db, entry, allocations):
+    if dna_active(db, source=entry["ref"]):
+        raise ValueError("Withdraw the existing DNA payout proposal first.")
     if active_candidates(db, entry["ref"]) or reported_links(db, entry["ref"]):
         raise ValueError("This source already has invoice match or reported allocation evidence.")
     if any(r["allocation_id"] in allocations or r["source_id"] == entry["ref"] for r in active(db)):
@@ -323,3 +325,154 @@ def register(bp):
         return render_template("hq_settlement_batches.html",error=error,proposed=proposed,
             allocations=raw,source=source,fee=fee_raw,reference=reference,rows=rows,
             current=current,csrf=session.get("csrf",""),operation=uuid.uuid4().hex),code,{"Cache-Control":"no-store"}
+
+
+    @bp.route("/hq/finance/dna-payout-review", methods=["GET", "POST"])
+    @required
+    def dna_payout_review():
+        if not storage_ready():
+            return "Persistent storage required.", 503, {"Cache-Control": "no-store"}
+        form = request.form if request.method == "POST" else request.args
+        values = {k: form.get(k, "") for k in ("source", "payout", "gross", "fee", "reference")}
+        proposed, error, status = None, None, 200
+        operation = uuid.uuid4().hex
+        try:
+            if request.method == "POST":
+                if request.content_length is None or request.content_length > 8192:
+                    abort(413)
+                csrf = session.get("csrf")
+                if not csrf or not secrets.compare_digest(form.get("csrf", ""), csrf):
+                    abort(403)
+                operation = form.get("operation", "")
+                action = form.get("action")
+                if not HEX.fullmatch(operation):
+                    raise ValueError("Invalid operation.")
+                actor = _actor_fingerprint(session.get("google_sub"))
+                if action == "withdraw":
+                    if form.get("confirm") != "yes":
+                        raise ValueError("Confirm withdrawal.")
+                    with closing(connect()) as db, db:
+                        dna_tables(db)
+                        db.execute("BEGIN IMMEDIATE")
+                        dna_withdraw(db, int(form.get("event", "")), operation, actor)
+                elif action in ("preview", "save"):
+                    if not ID.fullmatch(values["source"]):
+                        raise ValueError("Choose the exact Monzo transaction ID.")
+                    entry = current_entry(values["source"])
+                    if entry["ref"] != values["source"]:
+                        raise ValueError("Source ID mismatch.")
+                    gross, fee = (dna_money(values[k]) for k in ("gross", "fee"))
+                    with closing(connect()) as db, db:
+                        tables(db)
+                        dna_tables(db)
+                        db.execute("BEGIN IMMEDIATE")
+                        if action == "preview":
+                            proposed = dna_preview(db, entry, values["payout"], gross, fee, values["reference"])
+                        else:
+                            stamp = form.get("manifest", "")
+                            if form.get("confirm") != "yes" or not re.fullmatch(r"[0-9a-f]{64}", stamp):
+                                raise ValueError("Confirm the exact evidence preview first.")
+                            dna_save(db, entry, values["payout"], gross, fee, values["reference"], stamp, operation, actor)
+                else:
+                    abort(400)
+                if action != "preview":
+                    return "", 303, {"Location": url_for(".dna_payout_review"), "Cache-Control": "no-store"}
+        except ValueError as exc:
+            error, status = str(exc), 409
+        except (requests.RequestException, sqlite3.Error, OSError, RuntimeError, KeyError):
+            error, status = "Source or storage unavailable; no save confirmed.", 503
+        try:
+            with closing(connect()) as db, db:
+                dna_tables(db)
+                rows = [dict(r) for r in db.execute("SELECT * FROM hq_dna_payout_reviews ORDER BY id DESC LIMIT 50")]
+                current = {r["id"] for r in dna_active(db)}
+                for row in rows:
+                    row["details"] = json.loads(row["evidence"])
+                    row["undo_operation"] = uuid.uuid4().hex
+        except (sqlite3.Error, OSError, RuntimeError):
+            return "Persistent storage unavailable.", 503, {"Cache-Control": "no-store"}
+        return render_template("hq_dna_payout_review.html", values=values, proposed=proposed,
+            error=error, rows=rows, current=current, operation=operation, csrf=session.get("csrf", "")), status, {"Cache-Control": "no-store"}
+
+
+def dna_tables(db):
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_dna_payout_reviews (
+        id INTEGER PRIMARY KEY, source_id TEXT NOT NULL, payout_id TEXT NOT NULL,
+        manifest TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('proposed','withdrawn')),
+        evidence TEXT NOT NULL, actor TEXT NOT NULL, created TEXT NOT NULL,
+        operation TEXT NOT NULL UNIQUE)""")
+    db.execute("""CREATE INDEX IF NOT EXISTS hq_dna_payout_lookup
+        ON hq_dna_payout_reviews(payout_id,id)""")
+
+
+def dna_active(db, source=None):
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_dna_payout_reviews'").fetchone():
+        return []
+    return [dict(r) for r in db.execute("""SELECT e.* FROM hq_dna_payout_reviews e
+        WHERE e.state='proposed' AND (? IS NULL OR e.source_id=?)
+        AND NOT EXISTS (SELECT 1 FROM hq_dna_payout_reviews n
+            WHERE n.payout_id=e.payout_id AND n.id>e.id)""", (source, source))]
+
+
+def dna_money(raw):
+    if not re.fullmatch(r"[0-9]{1,8}(?:\.[0-9]{1,2})?", raw):
+        raise ValueError("Enter a documented amount in pounds, including zero only if evidenced.")
+    whole, _, fraction = raw.partition(".")
+    result = int(whole)*100 + int(fraction.ljust(2, "0"))
+    if result > 1000000000:
+        raise ValueError("Amount outside supported bounds.")
+    return result
+
+
+def dna_evidence(entry, payout, gross, fee, reference):
+    # Exact provider statement ID; no inference from a bank merchant label.
+    payout = payout.strip()
+    if not ID.fullmatch(payout) or not ID.fullmatch(entry["ref"]):
+        raise ValueError("Enter the exact DNA payout and bank transaction IDs.")
+    if type(gross) is not int or not 0 < gross <= 1000000000:
+        raise ValueError("Enter a positive documented gross payout.")
+    data = amount_evidence(entry, gross, fee, reference)
+    return dict(data, provider="DNA Payments", payout_id=payout)
+
+
+def dna_preview(db, entry, payout, gross, fee, reference):
+    data = dna_evidence(entry, payout, gross, fee, reference)
+    check_source(db, entry, [])
+    if any(r["payout_id"].casefold() == data["payout_id"].casefold() for r in dna_active(db)):
+        raise ValueError("Withdraw the existing DNA payout proposal first.")
+    return data, digest(data)
+
+
+def dna_save(db, entry, payout, gross, fee, reference, stamp, operation, actor):
+    data = dna_evidence(entry, payout, gross, fee, reference)
+    old = db.execute("SELECT * FROM hq_dna_payout_reviews WHERE operation=?", (operation,)).fetchone()
+    if old:
+        if (old["state"] == "proposed" and old["actor"] == actor
+                and old["manifest"] == stamp == digest(data)
+                and any(r["id"] == old["id"] for r in dna_active(db))):
+            return
+        raise ValueError("Operation already used or proposal withdrawn.")
+    data, expected = dna_preview(db, entry, payout, gross, fee, reference)
+    if not secrets.compare_digest(expected, stamp):
+        raise ValueError("Evidence changed; prepare a fresh preview.")
+    db.execute("""INSERT INTO hq_dna_payout_reviews
+        (source_id,payout_id,manifest,state,evidence,actor,created,operation)
+        VALUES(?,?,?,'proposed',?,?,?,?)""",
+        (data["source_id"],data["payout_id"],stamp,json.dumps(data,sort_keys=True),
+         actor,datetime.now(timezone.utc).isoformat(),operation))
+
+
+def dna_withdraw(db, event, operation, actor):
+    old = db.execute("SELECT * FROM hq_dna_payout_reviews WHERE operation=?", (operation,)).fetchone()
+    if old:
+        if old["state"] == "withdrawn" and old["actor"] == actor and json.loads(old["evidence"]).get("withdraws") == event:
+            return
+        raise ValueError("Operation already used.")
+    row = next((r for r in dna_active(db) if r["id"] == event), None)
+    if not row:
+        raise ValueError("Proposal changed; reload before withdrawing.")
+    db.execute("""INSERT INTO hq_dna_payout_reviews
+        (source_id,payout_id,manifest,state,evidence,actor,created,operation)
+        VALUES(?,?,?,'withdrawn',?,?,?,?)""",
+        (row["source_id"],row["payout_id"],row["manifest"],json.dumps({"withdraws":event}),
+         actor,datetime.now(timezone.utc).isoformat(),operation))

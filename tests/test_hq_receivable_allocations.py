@@ -418,6 +418,74 @@ class AllocationTests(unittest.TestCase):
 
 
 
+
+    def test_dna_payout_owner_preview_save_replay_and_conflicts(self):
+        import re
+        from hq_monzo_invoice_matches import require_source_not_settled, Conflict
+        from hq_settlement_review import check_source
+        url = "/hq/finance/dna-payout-review"
+        self.assertEqual(self.client.get(url).status_code, 302)
+        self.login()
+        entry = dict(ref="tx-dna-synthetic", pence=19500, day="2026-11-23",
+                     evidence="a"*64, legacy_evidence="b"*64)
+        form = dict(source=entry["ref"], payout="DNA-Test-001", gross="200.00",
+                    fee="5.00", reference="Synthetic independent payout statement",
+                    operation=uuid.uuid4().hex, action="preview", csrf="test")
+        with patch("hq_settlement_review.storage_ready", return_value=True), \
+                patch("hq_settlement_review.current_entry", return_value=entry) as source, \
+                patch("requests.post") as external_post:
+            self.assertEqual(self.client.get(url).status_code, 200)
+            source.assert_not_called()
+            self.assertEqual(self.client.post(url, data=dict(form, csrf="bad")).status_code, 403)
+            self.assertEqual(self.client.post(url, data=dict(form, fee="4")).status_code, 409)
+            self.assertEqual(self.client.post(url, data=dict(form, fee="")).status_code, 409)
+            page = self.client.post(url, data=form)
+            self.assertEqual(page.status_code, 200, page.data)
+            self.assertIn("£195.00".encode(), page.data)
+            stamp = re.search(rb'name="manifest" value="([0-9a-f]{64})"', page.data)[1].decode()
+            approval = dict(form, action="save", confirm="yes", manifest=stamp)
+            self.assertEqual(self.client.post(url, data=dict(approval, confirm="")).status_code, 409)
+            source.return_value = dict(entry, evidence="c"*64)
+            self.assertEqual(self.client.post(url, data=approval).status_code, 409)
+            source.return_value = entry
+            self.assertEqual(self.client.post(url, data=approval).status_code, 303)
+            self.assertEqual(self.client.post(url, data=approval).status_code, 303)
+            self.assertEqual(self.client.post(url, data=dict(approval, reference="Other")).status_code, 409)
+            self.assertEqual(self.client.post(url, data=form).status_code, 409)
+            self.assertIn(b"DNA-Test-001", self.client.get(url).data)
+            with connect() as db:
+                with self.assertRaisesRegex(Conflict, "active DNA settlement"):
+                    require_source_not_settled(db, entry["ref"])
+                with self.assertRaisesRegex(ValueError, "DNA payout"):
+                    check_source(db, entry, [])
+                require_source_not_settled(db, "unrelated")
+                event = db.execute("SELECT id FROM hq_dna_payout_reviews").fetchone()[0]
+            other = dict(entry, ref="tx-dna-other")
+            source.return_value = other
+            self.assertEqual(self.client.post(url, data=dict(form, source=other["ref"],
+                payout="dna-test-001")).status_code, 409)
+            source.return_value = entry
+            undo = dict(csrf="test", action="withdraw", confirm="yes",
+                        event=str(event), operation=uuid.uuid4().hex)
+            self.assertEqual(self.client.post(url, data=undo).status_code, 303)
+            self.assertEqual(self.client.post(url, data=undo).status_code, 303)
+            self.assertEqual(self.client.post(url, data=approval).status_code, 409)
+            with connect() as db:
+                require_source_not_settled(db, entry["ref"])
+                db.execute("""INSERT INTO hq_square_batch_reviews
+                    (source_id,manifest,state,evidence,actor,created,operation)
+                    VALUES(?,?,'proposed',?,?,?,?)""",
+                    (entry["ref"],"a"*64,'{"members":[]}',"synthetic","2026-11-23",uuid.uuid4().hex))
+            self.assertEqual(self.client.post(url, data=form).status_code, 409)
+            external_post.assert_not_called()
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_dna_payout_reviews").fetchone()[0], 2)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_receivable_allocations").fetchone()[0], 0)
+        after = self.client.get("/api/hq/finance/receipt-allocations").json
+        self.assertFalse(after["receipts_verified"])
+        self.assertIsNone(after["collected_income"])
+
+
     def test_single_settlement_proposal_is_private_exact_and_reversible(self):
         import re
         url = "/hq/finance/settlement-review"
