@@ -62,7 +62,7 @@ def validate_lines(lines, amount):
 
 
 def save(ref, revision, action, lines, actor):
-    from hq_native_finance import schema, audit
+    from hq_native_finance import schema, audit, transaction_archived
     from hq_work_progress import _actor_fingerprint
     if not storage_ready():
         raise ValueError("Persistent HQ storage is required.")
@@ -84,6 +84,8 @@ def save(ref, revision, action, lines, actor):
         parent = db.execute("SELECT * FROM finance_transactions WHERE id=?", (ref,)).fetchone()
         if not parent:
             raise LookupError("Transaction not found.")
+        if transaction_archived(db,ref):
+            raise StaleSplit("Restore this archived transaction before splitting.")
         if parent["revision"] != revision:
             raise StaleSplit("Transaction changed elsewhere. Reload before editing.")
         if action == "save":
@@ -105,7 +107,7 @@ class StaleSplit(ValueError):
 
 
 def read(ref):
-    from hq_native_finance import schema
+    from hq_native_finance import schema, transaction_archived
     with closing(connect()) as db, db:
         schema(db)
         tables(db)
@@ -116,7 +118,7 @@ def read(ref):
                         **json.loads(r["payload"])) for r in db.execute(
             """SELECT * FROM finance_split_events WHERE transaction_id=?
                ORDER BY revision DESC LIMIT 100""", (ref,))]
-        return dict(parent),history
+        return dict(parent, archived=transaction_archived(db,ref)),history
 
 
 def parse_form(form):
@@ -135,7 +137,7 @@ def parse_form(form):
 
 def classification_report(month):
     """One bounded month of manual entries; effective split replaces parent, never adds cash."""
-    from hq_native_finance import schema
+    from hq_native_finance import schema, ACTIVE_TRANSACTION_SQL
     if not isinstance(month, str) or not re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", month) or month[:4] == "0000":
         raise ValueError("Select a valid month.")
     with closing(connect()) as db, db:
@@ -147,10 +149,11 @@ def classification_report(month):
             FROM finance_transactions t LEFT JOIN finance_split_events e
             ON e.transaction_id=t.id AND e.revision=(
                 SELECT MAX(s.revision) FROM finance_split_events s WHERE s.transaction_id=t.id)
-            WHERE t.day BETWEEN ? AND ? ORDER BY t.day DESC,t.id LIMIT 5001""",
+            WHERE t.day BETWEEN ? AND ? AND """+ACTIVE_TRANSACTION_SQL+""" ORDER BY t.day DESC,t.id LIMIT 5001""",
             (month+"-01",month+"-31")).fetchall()
         if len(rows)>5000:
             raise ValueError("This month exceeds the report limit; no partial totals are shown.")
+        archived_count = db.execute("SELECT COUNT(*) FROM finance_transactions t WHERE t.day BETWEEN ? AND ? AND NOT ("+ACTIVE_TRANSACTION_SQL+")",(month+"-01",month+"-31")).fetchone()[0]
         totals = {}
         entries = []
         incoming = outgoing = unclassified = split_count = 0
@@ -185,7 +188,7 @@ def classification_report(month):
         if sum(x["incoming"] for x in totals.values()) != incoming or sum(x["outgoing"] for x in totals.values()) != outgoing:
             raise ValueError("Classification totals do not conserve parent amounts.")
         return dict(entries=entries, totals=sorted(totals.items()), incoming=incoming,
-                    outgoing=outgoing, unclassified=unclassified, split_count=split_count)
+                    outgoing=outgoing, unclassified=unclassified, split_count=split_count, archived_count=archived_count)
 
 
 def register(bp):
