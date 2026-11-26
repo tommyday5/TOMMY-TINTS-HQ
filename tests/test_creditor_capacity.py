@@ -130,3 +130,69 @@ class BusinessAffordabilityHttpTests(unittest.TestCase):
             self.assertEqual(snapshot()[0][2]["state"]["requested_monthly"],36000)
             self.assertEqual(snapshot()[0][3]["state"]["requested_monthly"],40000)
             self.assertEqual(app.test_client().get(url).status_code,302)
+
+
+class PeriodObservationTests(unittest.TestCase):
+    def form(self):
+        amounts=CapacityFormulaTests().fixture()
+        form={k:str(v/100) for k,v in amounts.items() if k!="mode"}
+        form.update(mode="conservative", as_of="2026-01-30", input_basis="period",
+                    period_start="2026-01-01", period_trading="3000.00",
+                    period_opex="1000.00", period_growth="200.00",
+                    period_observed_debt="400.00", period_director_funding="0.00",
+                    period_director_drawings="", trading="9999.00",
+                    director_drawings="99.00", csrf="test", revision="0",
+                    operation="a"*32, confirm="yes")
+        return form
+
+    def test_inclusive_period_normalization_and_unknowns(self):
+        form=self.form()
+        d=_fields(form)
+        self.assertEqual(d["period"]["days"],30)
+        self.assertEqual(d["period"]["totals"]["trading"],300000)
+        self.assertEqual(d["trading"],304375)
+        self.assertEqual(d["opex"],101458)
+        self.assertEqual(d["growth"],20292)
+        self.assertEqual(d["observed_debt"],40583)
+        self.assertEqual(d["director_funding"],0)
+        self.assertNotIn("director_drawings",d)
+        for changes in (dict(period_start="2026-01-31"),dict(period_start="2024-01-01"),
+                        dict(period_trading=""),dict(period_growth="-1"),dict(input_basis="other")):
+            with self.assertRaises(ValueError):
+                _fields(dict(form,**changes))
+        known_zero=_fields(dict(form,period_director_drawings="0"))
+        self.assertEqual(known_zero["director_drawings"],0)
+        self.assertEqual(known_zero["period"]["totals"]["director_drawings"],0)
+        direct=_fields(dict(form,input_basis="monthly"))
+        self.assertNotIn("period",direct)
+        self.assertEqual(direct["trading"],999900)
+
+    def test_owner_period_save_reload_replay_and_switch_to_monthly(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
+            "HQ_DATA_DIR":tmp, "HQ_SESSION_SECRET":"synthetic",
+            "GOOGLE_CLIENT_ID":"test", "GOOGLE_CLIENT_SECRET":"test",
+            "HQ_ALLOWED_GOOGLE_EMAIL":"owner@example.invalid",
+        }), patch("hq_creditor_capacity.storage_ready", return_value=True):
+            client=app.test_client()
+            url="/hq/finance/creditor-capacity"
+            with client.session_transaction() as sess, auth_db() as db:
+                sess["hq_sid"]=issue_session(db,"synthetic-owner")
+                sess["google_sub"]="synthetic-owner"
+                sess["csrf"]="test"
+            form=self.form()
+            self.assertEqual(client.post(url,data=dict(form,csrf="bad")).status_code,403)
+            self.assertEqual(client.post(url,data=form).status_code,303)
+            self.assertEqual(client.post(url,data=form).status_code,303)
+            html=client.get(url).data
+            self.assertIn(b"Saved observation period",html)
+            self.assertIn(b"30 inclusive days",html)
+            self.assertIn("£3043.75".encode(),html)
+            self.assertEqual(len(snapshot()[0]),1)
+            self.assertEqual(client.post(url,data=dict(form,operation="b"*32)).status_code,409)
+            self.assertEqual(client.post(url,data=dict(form,revision="1",operation="c"*32,
+                input_basis="monthly")).status_code,303)
+            history=snapshot()[0]
+            self.assertNotIn("period",history[0]["state"])
+            self.assertEqual(history[1]["state"]["period"]["totals"]["trading"],300000)
+            self.assertIn(b"original period total",client.get(url).data)
+            self.assertEqual(app.test_client().get(url).status_code,302)
