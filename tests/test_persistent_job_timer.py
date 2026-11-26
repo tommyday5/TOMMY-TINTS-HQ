@@ -81,6 +81,9 @@ class PersistentTimerTests(unittest.TestCase):
         self.assertEqual(page.status_code,200)
         self.assertIn(b'Pause / break',page.data)
         self.assertIn(b'data-seconds="60"',page.data)
+        self.assertIn(b'id="serverTotalClock"',page.data)
+        self.assertIn(b'id="serverBreakClock"',page.data)
+        self.assertIn(b'data-break="0" data-paused="no"',page.data)
         self.assertIn(b'data-allowance="390"',page.data)
         other=app.test_client()
         with other.session_transaction() as s, auth_db() as db:
