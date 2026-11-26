@@ -1509,3 +1509,38 @@ source writes, financial posting, or historical authority changes.
 Next: independent bank settlement verification and fee effective-date
 accounting, workbook formula parity, approved bounded imports and
 owner/customer production acceptance.
+
+
+## 26 November — monthly receipt evidence deployed; fee effective-date separation
+
+PR #304 exact head fb6679458a56e6e13f3ea67e1cb3228de327c8fe passed
+Actions 45798184862 (674 integration Python tests, nine JS tests;
+dependency and syntax checks passed). Squash merged as
+d4b68bafe9c8ad33bc35739d4d94bbd705cbffeb. Railway deployment
+620d0d7f-378f-4c53-af09-dda7896322ab reports SUCCESS at 11:02:21 UTC;
+original 1024 MB /data volume 540528d1-3953-4737-9d92-3c861575c5d4
+remains attached and no pending infrastructure work. All 48 worksheet
+tabs read-only reverified; Cash Engine formulas inspected. No live
+database rows inspected or changed, no actual recovery or import
+approved, no historical authority changes.
+
+New proposed slice: monthly card evidence now separately reports signed
+fee lines by provider effective month (UTC), including credits relating
+to earlier payment months. Reuses persistent exact receipt and fee
+approvals and checks the entire bounded register, validates retained fee
+lines and total, rejects duplicate evidence and excludes stale or withdrawn
+approvals. Missing/unknown effective dates are counted separately across
+all retained classifications; no empty subtotal assumed zero. Payment-month
+fee totals remain separate and must not be added to this view. No bank
+settlement, verified expense posting, cash balance or business profit
+inference. Existing approval/withdrawal paths remain editable. Synthetic
+HTTP test changes an October payment to have a November fee credit and
+checks both reports and stale-evidence exclusion. CI and deployment pending.
+
+PR #304 successful logs explicitly cover customer-to-HQ browser request
+review, itemised quote privacy, owner native quote conversion and customer
+approval status, vehicle linkage and shop customer auth. No public routes
+changed. Authenticated production UI acceptance not established. First
+historical import and independent recovery remain separate owner approvals.
+Next: independent bank settlement verification, native finance formula
+parity and approved historical import; continue owner/customer workflows.

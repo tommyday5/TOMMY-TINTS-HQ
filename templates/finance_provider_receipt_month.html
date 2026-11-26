@@ -2,7 +2,7 @@
 <header><a href="/hq/finance/command">Finance Command Centre</a> · <a href="{{ url_for('.provider_confirmed_receipts') }}">Edit receipt and fee approvals</a></header>
 <h1>Monthly card receipt evidence</h1>
 <p>Existing owner-approved Square payments grouped by original payment month (UTC), not invoice, bank settlement or fee expense date. This is a subset of business income only. Later provider changes may not be known until rechecked. No cash, expense or profit posting.</p>
-<form method="get"><label>Payment month<input type="month" name="month" value="{{ month }}" required></label><button>Show month</button></form>
+<form method="get"><label>Report month (UTC)<input type="month" name="month" value="{{ month }}" required></label><button>Show month</button></form>
 {% if error %}<p role="alert">{{ error }}</p>{% endif %}
 {% macro money(v) %}{% if v is none %}Unknown{% else %}£{{ '%.2f'|format(v/100) }}{% endif %}{% endmacro %}
 {% if report %}<article><h2>{{ report.month }} · retained evidence subtotals</h2>
@@ -11,4 +11,10 @@
 <p>Recognised gross less fees (only with full included fee coverage): <strong>{{ money(report.net) }}</strong></p>
 <p>{{ report.included }} included · {{ report.missing }} with unknown fees · {{ report.excluded }} withdrawn or require review. Other provider receipts, refunds and unrecognised payments are not included. Known fee subtotal is not total monthly processing expenditure.</p></article>
 {% for r in report.rows %}<article><h3>{{ r.invoice_ref }} · {{ r.day }}</h3><p>{{ r.payment_id }} · {{ r.state }}</p><p>Gross: {{ money(r.gross) }} · Fee: {{ money(r.fee) }}</p><a href="{{ url_for('.provider_confirmed_receipts') }}">Review or correct retained approvals</a></article>{% else %}<p>No retained classifications in this month; amounts are unknown, not zero.</p>{% endfor %}
+<article><h2>{{ report.month }} · fees by provider effective date</h2>
+<p>Signed known fee subtotal: <strong>{{ money(report.effective_total) }}</strong></p>
+<p>Positive amounts are fees; negative amounts are fee credits. This separate view includes fee adjustments for earlier payments. Do not add it to the payment-month fees above: both describe the same evidence on different dates.</p>
+<p>{{ report.unknown_fee_dates }} retained payment classifications across all months have missing, withdrawn or stale fee evidence; their effective dates cannot be allocated safely. Even with complete retained evidence this is not total business fees or verified bank expenditure.</p>
+{% for r in report.effective_rows %}<p>{{ r.day }} · {{ r.kind }} · {{ money(r.amount) }} · {{ r.invoice_ref }} · Payment {{ r.payment_day }} · {{ r.payment_id }}</p>{% else %}<p>No eligible fee lines for this effective month; subtotal unknown, not zero.</p>{% endfor %}
+<a href="{{ url_for('.provider_confirmed_receipts') }}">Review or correct retained approvals</a></article>
 {% endif %}</main></body></html>
