@@ -18,7 +18,7 @@ from hq_auth import required
 from hq_core_records import _audit_work, _schema, StaleWorkRecordError
 from hq_work_progress import WORK_STAGES, work_progress_snapshot, record_work_progress
 from hq_work_time import time_ledger_snapshot, append_work_time, void_work_time
-from hq_work_timer import snapshot as timer_snapshot, transition as timer_transition
+from hq_work_timer import snapshot as timer_snapshot, transition as timer_transition, history as timer_history
 from hq_work_materials import material_ledger_snapshot, append_work_material, void_work_material, UNITS
 from hq_work_expenses import expense_ledger_snapshot, append_work_expense, void_work_expense, EXPENSE_TYPES
 from hq_work_archive import archived_work_snapshot, set_work_archived, list_archived_work
@@ -601,7 +601,8 @@ def edit_work_time(work_id):
             return render_template("hq_work_time.html", work=latest, stages=WORK_STAGES,
                 csrf=session["csrf"], operation_id=request.form.get("operation_id", ""),
                 values=request.form, error=str(exc), timer=timer_snapshot(work_id),
-                timer_operation=uuid.uuid4().hex), status
+                timer_operation=uuid.uuid4().hex, allowance_operation=uuid.uuid4().hex,
+                 timer_history=timer_history(work_id)), status
         except (OSError, sqlite3.Error, RuntimeError):
             current_app.logger.exception("Work time write unavailable")
             abort(503)
@@ -611,7 +612,8 @@ def edit_work_time(work_id):
     return render_template("hq_work_time.html", work=current, stages=WORK_STAGES,
         csrf=session["csrf"], operation_id=timer["id"] if review else uuid.uuid4().hex,
         values={"minutes": str(timer["active_seconds"] // 60)} if review else {},
-        error=None, timer=timer, timer_operation=uuid.uuid4().hex)
+        error=None, timer=timer, timer_operation=uuid.uuid4().hex, allowance_operation=uuid.uuid4().hex,
+                 timer_history=timer_history(work_id))
 
 
 @native_work.post("/hq/work/<work_id>/timer")
@@ -637,7 +639,8 @@ def change_job_timer(work_id):
         return render_template("hq_work_time.html", work=current, stages=WORK_STAGES,
             csrf=session["csrf"], operation_id=timer["id"] if review else uuid.uuid4().hex,
             values={"minutes": str(timer["active_seconds"] // 60)} if review else {},
-            error=str(exc), timer=timer, timer_operation=uuid.uuid4().hex), 400
+            error=str(exc), timer=timer, timer_operation=uuid.uuid4().hex, allowance_operation=uuid.uuid4().hex,
+                 timer_history=timer_history(work_id)), 400
     except (OSError, sqlite3.Error):
         abort(503)
     return redirect(url_for(".edit_work_time", work_id=work_id), 303)
