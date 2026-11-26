@@ -35,6 +35,9 @@ def tables(db):
         schedule_id TEXT NOT NULL, month TEXT NOT NULL, schedule_revision INTEGER NOT NULL,
         bill_id TEXT NOT NULL UNIQUE, snapshot TEXT NOT NULL, created_at TEXT NOT NULL,
         PRIMARY KEY(schedule_id,month))""")
+    db.execute("""CREATE TABLE IF NOT EXISTS finance_monthly_batches (
+        digest TEXT PRIMARY KEY, month TEXT NOT NULL, manifest TEXT NOT NULL,
+        bill_ids TEXT NOT NULL, created_at TEXT NOT NULL)""")
 
 
 def stamp():
@@ -146,6 +149,7 @@ def generate(db,form):
         (proposal["schedule_id"],proposal["month"],proposal["schedule_revision"],ref,
          json.dumps(proposal,sort_keys=True),stamp()))
     audit(db,"bill",ref,1)
+    return ref
 
 
 
@@ -181,10 +185,14 @@ def generate_batch(db, form):
         raise Conflict("No eligible monthly commitments remain.")
     # Caller holds BEGIN IMMEDIATE; all bills and provenance commit or roll
     # back together. Reuse the single-item duplicate and revision checks.
+    bill_ids = []
     for p in manifest["eligible"]:
-        generate(db, dict(id=p["schedule_id"], revision=str(p["schedule_revision"]),
+        bill_ids.append(generate(db, dict(id=p["schedule_id"], revision=str(p["schedule_revision"]),
             month=p["month"], due=p["due"], amount_pence=str(p["amount"]),
-            approved="yes"))
+            approved="yes")))
+    db.execute("INSERT INTO finance_monthly_batches VALUES(?,?,?,?,?)",
+        (manifest["digest"], manifest["month"], json.dumps(manifest, sort_keys=True),
+         json.dumps(bill_ids), stamp()))
 
 
 def register(bp):
@@ -233,8 +241,13 @@ def register(bp):
                     b.amount AS current_amount,b.due AS current_due,b.status AS current_status,
                     b.archived AS current_archived FROM finance_monthly_occurrences o
                     LEFT JOIN finance_bills b ON b.id=o.bill_id ORDER BY o.month DESC,o.created_at DESC LIMIT 200""")]
+                batches=[dict(r) for r in db.execute("""SELECT * FROM finance_monthly_batches
+                    ORDER BY created_at DESC,digest LIMIT 100""")]
                 history=[dict(r) for r in db.execute("""SELECT * FROM finance_monthly_schedule_events
                     ORDER BY created_at DESC,schedule_id,revision DESC LIMIT 200""")]
+            for item in batches:
+                item["values"] = json.loads(item["manifest"])
+                item["ids"] = json.loads(item["bill_ids"])
             for event in history:
                 event["values"]=json.loads(event["snapshot"])
             for event in occurrences:
@@ -244,4 +257,4 @@ def register(bp):
         return render_template("finance_monthly_commitments.html",schedules=schedules,
             occurrences=occurrences,history=history,new_id=uuid.uuid4().hex,
             month=datetime.now(timezone.utc).strftime("%Y-%m"),proposal=proposal,
-            batch=batch,error=error,csrf=session.get("csrf","")),status,{"Cache-Control":"no-store"}
+            batch=batch,batches=batches,error=error,csrf=session.get("csrf","")),status,{"Cache-Control":"no-store"}
