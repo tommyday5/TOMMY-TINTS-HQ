@@ -137,6 +137,7 @@ class MonthlyCommitmentTests(unittest.TestCase):
             self.assertEqual(len(client.get(API).get_json()["bills"]),1)
             with connect() as db:
                 self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_monthly_occurrences").fetchone()[0],0)
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_monthly_batches").fetchone()[0],0)
             self.assertEqual(client.post(URL,data=confirm).status_code,303)
             self.assertEqual(client.post(URL,data=confirm).status_code,409)
             again=app.test_client()
@@ -149,4 +150,13 @@ class MonthlyCommitmentTests(unittest.TestCase):
             self.assertIsNone(snapshot["received_income"])
             with connect() as db:
                 self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_monthly_occurrences").fetchone()[0],2)
+                batch=db.execute("SELECT * FROM finance_monthly_batches").fetchone()
+                import json
+                self.assertEqual(batch["digest"],confirm["digest"])
+                self.assertEqual(len(json.loads(batch["bill_ids"])),2)
+                self.assertEqual(json.loads(batch["manifest"])["total"],7012)
+            page=again.get(URL)
+            self.assertEqual(page.status_code,200)
+            self.assertIn(b"Original approved total",page.data)
+            self.assertIn(b"70.12",page.data)
             self.assertNotIn(b"Synthetic A",app.test_client().get("/book").data)
