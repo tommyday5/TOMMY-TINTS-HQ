@@ -20,7 +20,7 @@ from hq_square_invoice_evidence import (
     recheck_tables, configured, EvidenceConflict,
 )
 from hq_work_progress import _actor_fingerprint
-from hq_square_payments import inspect_exact_payment
+from hq_square_payments import inspect_exact_payment, _processing_fees
 
 
 def tables(db):
@@ -249,7 +249,11 @@ def fee_listing(db):
 
 
 def monthly_receipt_report(db, month):
-    """Payment-month evidence subtotal, not accrual expenses or bank cash."""
+    """Payment-month receipts and separate signed fee-effective-month evidence.
+
+    The entire bounded register is examined: an adjustment may be effective
+    in a month after its original payment. Neither view posts bank cash.
+    """
     parsed = datetime.strptime(month, "%Y-%m")
     if parsed.strftime("%Y-%m") != month:
         raise ValueError("Choose a valid payment month.")
@@ -260,19 +264,22 @@ def monthly_receipt_report(db, month):
     if len(records) > 5000:
         raise ValueError("Evidence register exceeds the safe report limit; no partial totals shown.")
     items, seen = [], set()
+    effective_rows = []
+    unknown_fee_dates = 0
     for raw in records:
         row = dict(raw)
         snap = json.loads(row["snapshot"])
         created = datetime.fromisoformat(snap["evidence"]["created_at"])
         if created.tzinfo is None:
             raise ValueError("Stored payment date has no timezone; report withheld.")
-        if created.astimezone(timezone.utc).strftime("%Y-%m") != month:
-            continue
+        payment_in_month = created.astimezone(timezone.utc).strftime("%Y-%m") == month
         item = dict(invoice_ref=snap["invoice_ref"], payment_id=row["payment_id"],
                     allocation_id=row["allocation_id"], day=created.astimezone(timezone.utc).date().isoformat(),
                     gross=None, fee=None, state="withdrawn" if row["state"] == "withdrawn" else "review required")
-        items.append(item)
+        if payment_in_month:
+            items.append(item)
         if row["state"] != "recognised":
+            unknown_fee_dates += 1
             continue
         try:
             ctx, recognition = fee_context(db, row["allocation_id"])
@@ -280,8 +287,10 @@ def monthly_receipt_report(db, month):
                     or digest(["square-receipt-recognition-v1", digest(ctx), row["revision"]]) != recognition
                     or row["payment_id"] != ctx["payment_id"]
                     or type(ctx["amount_pence"]) is not int or ctx["amount_pence"] <= 0):
+                unknown_fee_dates += 1
                 continue
         except ValueError:
+            unknown_fee_dates += 1
             continue
         key = ctx["payment_id"].casefold()
         if key in seen:
@@ -298,7 +307,28 @@ def monthly_receipt_report(db, month):
                     and data.get("provider_evidence") == ctx["evidence"]
                     and type(amount) is int and 0 <= amount <= item["gross"]
                     and digest(["square-processing-fee-v1", recognition, fee["revision"], data]) == fee["manifest"]):
+                # Revalidate every retained fee line before using its effective date.
+                lines = data.get("fees")
+                if not isinstance(lines, list):
+                    raise ValueError("Missing fee lines; report withheld.")
+                validated = _processing_fees([
+                    dict(type=line["type"], effective_at=line["effective_at"],
+                         amount_money=dict(currency="GBP", amount=line["amount_pence"]))
+                    for line in lines
+                ], "GBP", ctx["evidence"]["created_at"], item["gross"])
+                if validated != lines or sum(line["amount_pence"] for line in validated) != amount:
+                    raise ValueError("Inconsistent fee detail; report withheld.")
                 item["fee"] = amount
+                for line in validated:
+                    stamp = datetime.fromisoformat(line["effective_at"]).astimezone(timezone.utc)
+                    if stamp.strftime("%Y-%m") == month:
+                        effective_rows.append(dict(
+                            invoice_ref=item["invoice_ref"], payment_id=item["payment_id"],
+                            allocation_id=item["allocation_id"], payment_day=item["day"],
+                            day=stamp.date().isoformat(), kind=line["type"],
+                            amount=line["amount_pence"]))
+        if item["fee"] is None:
+            unknown_fee_dates += 1
     included = [i for i in items if i["state"] == "recognised"]
     covered = [i for i in included if i["fee"] is not None]
     gross = sum(i["gross"] for i in included) if included else None
@@ -307,7 +337,10 @@ def monthly_receipt_report(db, month):
     return dict(month=month, rows=sorted(items, key=lambda i: (i["day"], i["allocation_id"])),
                 gross=gross, known_fees=known_fees,
                 net=gross-known_fees if complete else None, included=len(included),
-                missing=len(included)-len(covered), excluded=len(items)-len(included))
+                missing=len(included)-len(covered), excluded=len(items)-len(included),
+                effective_rows=sorted(effective_rows, key=lambda r: (r["day"], r["allocation_id"], r["kind"])),
+                effective_total=sum(r["amount"] for r in effective_rows) if effective_rows else None,
+                unknown_fee_dates=unknown_fee_dates)
 
 def register(bp):
 
