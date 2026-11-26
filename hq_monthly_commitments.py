@@ -3,6 +3,7 @@ import calendar
 from contextlib import closing
 from datetime import datetime, timezone
 import json
+import hashlib
 import re
 import secrets
 import sqlite3
@@ -147,13 +148,52 @@ def generate(db,form):
     audit(db,"bill",ref,1)
 
 
+
+def batch_preview(db, month):
+    # Validate even when there are no schedules.
+    due_date(month, 1)
+    rows = db.execute("""SELECT * FROM finance_monthly_schedules
+        WHERE archived=0 ORDER BY id LIMIT 26""").fetchall()
+    if len(rows) > 25:
+        raise ValueError("More than 25 active schedules; use individual previews.")
+    eligible, blocked = [], []
+    for row in rows:
+        try:
+            eligible.append(preview(db, dict(id=row["id"],
+                revision=str(row["revision"]), month=month)))
+        except Conflict as exc:
+            blocked.append(dict(schedule_id=row["id"], revision=row["revision"],
+                name=row["name"], reason=str(exc)))
+    manifest = dict(month=month, eligible=eligible, blocked=blocked,
+                    total=sum(p["amount"] for p in eligible))
+    manifest["digest"] = hashlib.sha256(json.dumps(manifest,
+        sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return manifest
+
+
+def generate_batch(db, form):
+    manifest = batch_preview(db, form.get("month"))
+    if form.get("approved") != "yes":
+        raise ValueError("Confirm the exact batch first.")
+    if not secrets.compare_digest(form.get("digest", ""), manifest["digest"]):
+        raise Conflict("Monthly batch changed. Preview again before approving.")
+    if not manifest["eligible"]:
+        raise Conflict("No eligible monthly commitments remain.")
+    # Caller holds BEGIN IMMEDIATE; all bills and provenance commit or roll
+    # back together. Reuse the single-item duplicate and revision checks.
+    for p in manifest["eligible"]:
+        generate(db, dict(id=p["schedule_id"], revision=str(p["schedule_revision"]),
+            month=p["month"], due=p["due"], amount_pence=str(p["amount"]),
+            approved="yes"))
+
+
 def register(bp):
     @bp.route("/hq/finance/monthly-commitments",methods=["GET","POST"])
     @required
     def monthly_commitments():
         if not storage_ready():
             abort(503)
-        error, status, proposal = None, 200, None
+        error, status, proposal, batch = None, 200, None, None
         if request.method == "POST":
             request.max_content_length = 4096
             token = session.get("csrf")
@@ -170,9 +210,13 @@ def register(bp):
                         proposal = preview(db,request.form)
                     elif action == "generate":
                         generate(db,request.form)
+                    elif action == "batch_preview":
+                        batch = batch_preview(db, request.form.get("month"))
+                    elif action == "batch_generate":
+                        generate_batch(db, request.form)
                     else:
                         raise ValueError("Choose a valid action.")
-                if action != "preview":
+                if action not in ("preview", "batch_preview"):
                     return redirect(url_for("native_finance.monthly_commitments"),code=303)
             except Conflict as exc:
                 error,status=str(exc),409
@@ -200,4 +244,4 @@ def register(bp):
         return render_template("finance_monthly_commitments.html",schedules=schedules,
             occurrences=occurrences,history=history,new_id=uuid.uuid4().hex,
             month=datetime.now(timezone.utc).strftime("%Y-%m"),proposal=proposal,
-            error=error,csrf=session.get("csrf","")),status,{"Cache-Control":"no-store"}
+            batch=batch,error=error,csrf=session.get("csrf","")),status,{"Cache-Control":"no-store"}
