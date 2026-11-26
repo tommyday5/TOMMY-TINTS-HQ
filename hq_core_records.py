@@ -307,6 +307,11 @@ def change_work_status(record_id, new_status, expected_revision=None):
         if old != new_status and new_status == "approved" and row["price_pence"] is None:
             raise ValueError("Set and review a draft price before approval")
         if not unchanged:
+            if new_status in ("completed", "cancelled"):
+                from hq_work_timer import tables as timer_tables, _open as open_timer
+                timer_tables(db)
+                if open_timer(db, record_id):
+                    raise ValueError("Finish and save or correct the open job timer before closing this job")
             changed = db.execute("""UPDATE hq_work_records SET status=?,kind=?,
                 revision=revision+1 WHERE id=? AND revision=?""",
                 (new_status, kind, record_id, row["revision"]))

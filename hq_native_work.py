@@ -18,6 +18,7 @@ from hq_auth import required
 from hq_core_records import _audit_work, _schema, StaleWorkRecordError
 from hq_work_progress import WORK_STAGES, work_progress_snapshot, record_work_progress
 from hq_work_time import time_ledger_snapshot, append_work_time, void_work_time
+from hq_work_timer import snapshot as timer_snapshot, transition as timer_transition
 from hq_work_materials import material_ledger_snapshot, append_work_material, void_work_material, UNITS
 from hq_work_expenses import expense_ledger_snapshot, append_work_expense, void_work_expense, EXPENSE_TYPES
 from hq_work_archive import archived_work_snapshot, set_work_archived, list_archived_work
@@ -599,13 +600,47 @@ def edit_work_time(work_id):
             status = 409 if isinstance(exc, StaleWorkRecordError) else 400
             return render_template("hq_work_time.html", work=latest, stages=WORK_STAGES,
                 csrf=session["csrf"], operation_id=request.form.get("operation_id", ""),
-                values=request.form, error=str(exc)), status
+                values=request.form, error=str(exc), timer=timer_snapshot(work_id),
+                timer_operation=uuid.uuid4().hex), status
         except (OSError, sqlite3.Error, RuntimeError):
             current_app.logger.exception("Work time write unavailable")
             abort(503)
         return redirect(url_for(".edit_work_time", work_id=work_id, saved="1"), 303)
+    timer = timer_snapshot(work_id)
+    review = timer and timer["state"] == "review"
     return render_template("hq_work_time.html", work=current, stages=WORK_STAGES,
-        csrf=session["csrf"], operation_id=uuid.uuid4().hex, values={}, error=None)
+        csrf=session["csrf"], operation_id=timer["id"] if review else uuid.uuid4().hex,
+        values={"minutes": str(timer["active_seconds"] // 60)} if review else {},
+        error=None, timer=timer, timer_operation=uuid.uuid4().hex)
+
+
+@native_work.post("/hq/work/<work_id>/timer")
+@required
+def change_job_timer(work_id):
+    if request.content_length is None or request.content_length > 2048:
+        abort(413)
+    if not secrets.compare_digest(request.form.get("csrf", ""), session.get("csrf", "not-set")):
+        abort(403)
+    revision = request.form.get("timer_revision", "")
+    if not re.fullmatch(r"-1|[0-9]{1,18}", revision):
+        abort(400)
+    try:
+        timer_transition(work_id, request.form.get("action", ""), int(revision),
+                         request.form.get("operation_id", ""), request.form.get("timer_session", ""),
+                         request.form.get("allowance_minutes", ""), request.form.get("reason", ""))
+    except StaleWorkRecordError:
+        return redirect(url_for(".edit_work_time", work_id=work_id, conflict="1"), 303)
+    except (ValueError, LookupError) as exc:
+        current = time_ledger_snapshot(work_id)
+        timer = timer_snapshot(work_id)
+        review = timer and timer["state"] == "review"
+        return render_template("hq_work_time.html", work=current, stages=WORK_STAGES,
+            csrf=session["csrf"], operation_id=timer["id"] if review else uuid.uuid4().hex,
+            values={"minutes": str(timer["active_seconds"] // 60)} if review else {},
+            error=str(exc), timer=timer, timer_operation=uuid.uuid4().hex), 400
+    except (OSError, sqlite3.Error):
+        abort(503)
+    return redirect(url_for(".edit_work_time", work_id=work_id), 303)
 
 
 @native_work.route("/hq/work/<work_id>/time/<entry_id>/void", methods=["POST"])
