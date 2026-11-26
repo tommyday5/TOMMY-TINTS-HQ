@@ -1636,3 +1636,7 @@ fails DNS; authenticated live acceptance outstanding. No public changes.
 Recovery PRs #258 and #295 merged and original volume preserved;
 actual encrypted off-volume recovery and exact reviewed 1–5 customer
 manifest remain owner approval gates. No historical cutover.
+
+### 26 November — affordability regression correction
+
+Actions 45826138401 failed the authenticated save/reload assertion: the saved £400 request and £360 capacity rendered an incorrect missing-request message despite correct stored inputs and formula outputs. Replaced template boolean-identity branching with explicit missing-value and integer-pence comparisons. Extended the same HTTP regression to cover exactly-at-capacity, known zero, clearing an optional input and preserved historical revisions. Fresh exact-head CI required; no merge until green. Railway inspection confirms #306 still deployed, original 1024 MB /data volume attached and no pending changes. All 48 workbook titles independently rechecked read-only. No owner acceptance, data import or financial posting performed.
