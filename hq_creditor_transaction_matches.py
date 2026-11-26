@@ -82,13 +82,14 @@ def register(bp):
         from hq_monzo_invoice_matches import current_entry, tables as invoice_tables
         if not storage_ready():
             abort(503)
+        if request.method == "POST":
+            request.max_content_length = 4096
         form = request.form if request.method == "POST" else request.args
         ref, case_id = form.get("ref",""), form.get("case","")
         error = notice = preview = stamp = None
         status = 200
         evidence_ref = ""
         if request.method == "POST":
-            request.max_content_length = 4096
             csrf = session.get("csrf")
             if not csrf or not secrets.compare_digest(form.get("csrf",""),csrf):
                 abort(403)
