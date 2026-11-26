@@ -89,6 +89,10 @@ def set_work_archived(work_id, action, expected_revision, operation_id):
         if row["revision"] != expected_revision:
             raise StaleWorkRecordError("Work changed since this screen loaded. Refresh and review.")
         if action == "archive":
+            from hq_work_timer import tables as timer_tables, _open as open_timer
+            timer_tables(db)
+            if open_timer(db, work_id):
+                raise ValueError("Finish and save or correct the open job timer before archiving this job")
             if is_archived:
                 raise ValueError("This record is already archived")
             if row["status"] not in _ALLOWED_ARCHIVE_STATUSES:
