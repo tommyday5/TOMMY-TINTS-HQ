@@ -8,9 +8,9 @@ from app import app
 from customer_request_store import connect
 from hq_auth import issue_session
 from hq_auth_store import auth_db
-from hq_core_records import create_test_job, change_work_status
+from hq_core_records import create_test_job, change_work_status, StaleWorkRecordError
 from hq_work_archive import set_work_archived
-from hq_work_timer import snapshot, transition
+from hq_work_timer import snapshot, transition, history
 from hq_work_time import time_ledger_snapshot, append_work_time
 
 class PersistentTimerTests(unittest.TestCase):
@@ -146,3 +146,58 @@ class PersistentTimerTests(unittest.TestCase):
         transition(other, "pause", 0, uuid.uuid4().hex, other_sid)
         self.command("resume", 1, sid)
         self.assertEqual(snapshot(self.job)["state"], "running")
+
+    def test_edit_allowance_preserves_elapsed_breaks_and_replay_history(self):
+        self.command("start", allowance="390")
+        sid = snapshot(self.job)["id"]
+        self.now.return_value += 75
+        op = uuid.uuid4().hex
+        self.command("allowance", 0, sid, operation=op, allowance="420")
+        self.command("allowance", 0, sid, operation=op, allowance="420")
+        with self.assertRaises(StaleWorkRecordError) as exc:
+            self.command("allowance", 0, sid, operation=op, allowance="421")
+        self.assertIn("details changed", str(exc.exception))
+        row = snapshot(self.job)
+        self.assertEqual((row["revision"], row["display_seconds"], row["allowance_minutes"]), (1,75,420))
+        self.command("pause", 1, sid)
+        self.now.return_value += 120
+        self.command("allowance", 2, sid, allowance="450")
+        self.now.return_value += 60
+        row = snapshot(self.job)
+        self.assertEqual((row["display_seconds"],row["display_break"]), (75,180))
+        with self.assertRaises(ValueError):
+            self.command("allowance", 3, sid, allowance="")
+        self.command("resume", 3, sid)
+        self.now.return_value += 45
+        self.command("finish", 4, sid)
+        with self.assertRaises(ValueError):
+            self.command("allowance", 5, sid, allowance="500")
+        self.command("discard", 5, sid, reason="Synthetic correction")
+        evidence = history(self.job)
+        self.assertEqual(evidence["sessions"][0]["state"], "discarded")
+        self.assertEqual(evidence["sessions"][0]["active_seconds"], 120)
+        self.assertEqual(evidence["sessions"][0]["break_seconds"], 180)
+        self.assertEqual([e["detail"] for e in evidence["events"] if e["action"]=="allowance"], ["450","420"])
+        self.assertEqual(evidence["events"][0]["detail"], "Synthetic correction")
+        self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"], 0)
+
+    def test_owner_allowance_form_and_history(self):
+        c=app.test_client()
+        with c.session_transaction() as s, auth_db() as db:
+            s["hq_sid"]=issue_session(db,"owner")
+            s["csrf"]="test"
+        self.command("start", allowance="390")
+        sid=snapshot(self.job)["id"]
+        url="/hq/work/"+self.job+"/timer"
+        data={"action":"allowance","timer_revision":"0","timer_session":sid,
+              "operation_id":uuid.uuid4().hex,"allowance_minutes":"415"}
+        self.assertEqual(c.post(url,data=data).status_code,403)
+        data["csrf"]="test"
+        self.assertEqual(c.post(url,data=data).status_code,303)
+        page=c.get("/hq/work/"+self.job+"/time")
+        self.assertIn(b'Save estimated allowance',page.data)
+        self.assertIn(b'data-allowance="415"',page.data)
+        self.assertIn(b'Persistent timer audit history',page.data)
+        self.assertIn(b'415 min allowance',page.data)
+        anonymous=app.test_client()
+        self.assertEqual(anonymous.get("/hq/work/"+self.job+"/time").status_code,302)

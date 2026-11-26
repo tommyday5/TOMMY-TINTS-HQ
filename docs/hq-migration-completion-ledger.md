@@ -1767,3 +1767,23 @@ production acceptance and legal/operational workflow gaps.
 - CV Motors black Kia matching workbook job not confirmed; owner search canonical HQ before creation. No J-series ID guessed.
 
 - Follow-up: restored the closed-work correction lock explanation after the existing regression detected its omission. Added transaction-bound guards to block closing/cancelling or archiving jobs with running, paused or review-pending timers, and a synthetic native-job regression proving that saving reviewed time unlocks closure. Exact-head CI and deployment are still required before claiming production availability.
+
+### 2026-11-26 — timer follow-up
+
+PR #311 merged; #312 sleep-display recovery and 90% warning and #313
+cross-job running-session exclusion are included in production commit
+328d26dcd310dfa1f682f485d4ff8f5e48ecada3. Railway deployment
+cda4d4d9-de02-48e0-b1c9-ac1e9df9a5af SUCCESS at 18:27:08 UTC, same
+1024 MB /data volume attached; no staged changes. #313 exact-head CI
+45875802494 succeeded. Workbook metadata confirms all 48 tabs read-only.
+
+Proposed follow-up: edit active or paused timer allowance with exact session,
+revision and operation binding, without changing elapsed work, breaks, job
+price or actual ledger. Show bounded session and action/correction history to
+owner only. Synthetic regressions added; exact-head CI/deployment pending.
+Owner browser acceptance, actual Kia job identity and reviewed intervals
+remain unverified. Keep owner passkey active; isolated synthetic testing is
+preferred to a production authentication bypass. No production record or
+workbook writes, migration approval, external messages, bookings or payments.
+No historical authority change. Public booking routes unchanged; production
+customer-browser acceptance remains outstanding.
