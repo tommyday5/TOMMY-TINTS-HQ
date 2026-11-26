@@ -89,3 +89,74 @@ class MonthlyCommitmentTests(unittest.TestCase):
                 self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_monthly_occurrences").fetchone()[0],1)
                 self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_monthly_schedule_events").fetchone()[0],4)
             self.assertNotIn(b"Synthetic rent",app.test_client().get("/book").data)
+
+
+    def test_month_batch_exact_approval_exclusions_and_atomicity(self):
+        import re
+        from hq_monthly_commitments import generate
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1]) as tmp, patch.dict(os.environ,{
+            "HQ_DATA_DIR":tmp,"HQ_SESSION_SECRET":"synthetic-month-batch",
+            "GOOGLE_CLIENT_ID":"synthetic","GOOGLE_CLIENT_SECRET":"synthetic",
+            "HQ_ALLOWED_GOOGLE_EMAIL":"owner@example.invalid"}), app.app_context():
+            client=app.test_client()
+            self.assertEqual(client.post(URL,data={"action":"batch_preview"}).status_code,302)
+            with client.session_transaction() as sess, auth_db() as db:
+                sess.update(hq_sid=issue_session(db,"synthetic-owner"),google_sub="synthetic-owner",csrf="batch-csrf")
+            base=dict(csrf="batch-csrf",revision="0",due_day="31",action="save")
+            for ref,name,amount in (("a","Synthetic A","12.34"),("b","Synthetic B","56.78"),("c","Synthetic C","9.00")):
+                self.assertEqual(client.post(URL,data=dict(base,id=ref*32,name=name,amount=amount)).status_code,303)
+            headers={"X-HQ-CSRF":"batch-csrf"}
+            self.assertEqual(client.post(API,json=dict(kind="bill",id="d"*32,revision=0,
+                name="Synthetic C",amount=900,due="2028-02-10"),headers=headers).status_code,200)
+            query=dict(csrf="batch-csrf",month="2028-02",action="batch_preview")
+            def get_digest():
+                page=client.post(URL,data=query)
+                self.assertEqual(page.status_code,200)
+                self.assertIn(b"2 eligible planned bills",page.data)
+                self.assertIn(b"1 blocked",page.data)
+                self.assertIn(b"2028-02-29",page.data)
+                return re.search(rb'name="digest" value="([0-9a-f]{64})"',page.data).group(1).decode()
+            confirm=dict(query,action="batch_generate",approved="yes",digest=get_digest())
+            self.assertEqual(client.post(URL,data=dict(confirm,csrf="wrong")).status_code,403)
+            self.assertEqual(client.post(URL,data=dict(confirm,approved="no")).status_code,400)
+            self.assertEqual(len(client.get(API).get_json()["bills"]),1)
+            self.assertEqual(client.post(URL,data=dict(base,id="a"*32,name="Synthetic A",
+                amount="13.34",revision="1")).status_code,303)
+            self.assertEqual(client.post(URL,data=confirm).status_code,409)
+            self.assertEqual(len(client.get(API).get_json()["bills"]),1)
+            confirm["digest"]=get_digest()
+            calls=[]
+            def fail_second(db,form):
+                calls.append(form["id"])
+                if len(calls)==2:
+                    raise ValueError("Synthetic second-row failure")
+                return generate(db,form)
+            with patch("hq_monthly_commitments.generate",side_effect=fail_second):
+                self.assertEqual(client.post(URL,data=confirm).status_code,400)
+            self.assertEqual(len(calls),2)
+            self.assertEqual(len(client.get(API).get_json()["bills"]),1)
+            with connect() as db:
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_monthly_occurrences").fetchone()[0],0)
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_monthly_batches").fetchone()[0],0)
+            self.assertEqual(client.post(URL,data=confirm).status_code,303)
+            self.assertEqual(client.post(URL,data=confirm).status_code,409)
+            again=app.test_client()
+            with again.session_transaction() as sess, auth_db() as db:
+                sess.update(hq_sid=issue_session(db,"synthetic-owner"),google_sub="synthetic-owner",csrf="batch-csrf")
+            snapshot=again.get(API).get_json()
+            self.assertEqual(sorted(b["amount"] for b in snapshot["bills"]),[900,1334,5678])
+            self.assertTrue(all(b["status"]=="planned" for b in snapshot["bills"]))
+            self.assertFalse(snapshot["bank_verified"])
+            self.assertIsNone(snapshot["received_income"])
+            with connect() as db:
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_monthly_occurrences").fetchone()[0],2)
+                batch=db.execute("SELECT * FROM finance_monthly_batches").fetchone()
+                import json
+                self.assertEqual(batch["digest"],confirm["digest"])
+                self.assertEqual(len(json.loads(batch["bill_ids"])),2)
+                self.assertEqual(json.loads(batch["manifest"])["total"],7012)
+            page=again.get(URL)
+            self.assertEqual(page.status_code,200)
+            self.assertIn(b"Original approved total",page.data)
+            self.assertIn(b"70.12",page.data)
+            self.assertNotIn(b"Synthetic A",app.test_client().get("/book").data)

@@ -3,6 +3,7 @@ import calendar
 from contextlib import closing
 from datetime import datetime, timezone
 import json
+import hashlib
 import re
 import secrets
 import sqlite3
@@ -34,6 +35,9 @@ def tables(db):
         schedule_id TEXT NOT NULL, month TEXT NOT NULL, schedule_revision INTEGER NOT NULL,
         bill_id TEXT NOT NULL UNIQUE, snapshot TEXT NOT NULL, created_at TEXT NOT NULL,
         PRIMARY KEY(schedule_id,month))""")
+    db.execute("""CREATE TABLE IF NOT EXISTS finance_monthly_batches (
+        digest TEXT PRIMARY KEY, month TEXT NOT NULL, manifest TEXT NOT NULL,
+        bill_ids TEXT NOT NULL, created_at TEXT NOT NULL)""")
 
 
 def stamp():
@@ -145,6 +149,50 @@ def generate(db,form):
         (proposal["schedule_id"],proposal["month"],proposal["schedule_revision"],ref,
          json.dumps(proposal,sort_keys=True),stamp()))
     audit(db,"bill",ref,1)
+    return ref
+
+
+
+def batch_preview(db, month):
+    # Validate even when there are no schedules.
+    due_date(month, 1)
+    rows = db.execute("""SELECT * FROM finance_monthly_schedules
+        WHERE archived=0 ORDER BY id LIMIT 26""").fetchall()
+    if len(rows) > 25:
+        raise ValueError("More than 25 active schedules; use individual previews.")
+    eligible, blocked = [], []
+    for row in rows:
+        try:
+            eligible.append(preview(db, dict(id=row["id"],
+                revision=str(row["revision"]), month=month)))
+        except Conflict as exc:
+            blocked.append(dict(schedule_id=row["id"], revision=row["revision"],
+                name=row["name"], reason=str(exc)))
+    manifest = dict(month=month, eligible=eligible, blocked=blocked,
+                    total=sum(p["amount"] for p in eligible))
+    manifest["digest"] = hashlib.sha256(json.dumps(manifest,
+        sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return manifest
+
+
+def generate_batch(db, form):
+    manifest = batch_preview(db, form.get("month"))
+    if form.get("approved") != "yes":
+        raise ValueError("Confirm the exact batch first.")
+    if not secrets.compare_digest(form.get("digest", ""), manifest["digest"]):
+        raise Conflict("Monthly batch changed. Preview again before approving.")
+    if not manifest["eligible"]:
+        raise Conflict("No eligible monthly commitments remain.")
+    # Caller holds BEGIN IMMEDIATE; all bills and provenance commit or roll
+    # back together. Reuse the single-item duplicate and revision checks.
+    bill_ids = []
+    for p in manifest["eligible"]:
+        bill_ids.append(generate(db, dict(id=p["schedule_id"], revision=str(p["schedule_revision"]),
+            month=p["month"], due=p["due"], amount_pence=str(p["amount"]),
+            approved="yes")))
+    db.execute("INSERT INTO finance_monthly_batches VALUES(?,?,?,?,?)",
+        (manifest["digest"], manifest["month"], json.dumps(manifest, sort_keys=True),
+         json.dumps(bill_ids), stamp()))
 
 
 def register(bp):
@@ -153,7 +201,7 @@ def register(bp):
     def monthly_commitments():
         if not storage_ready():
             abort(503)
-        error, status, proposal = None, 200, None
+        error, status, proposal, batch = None, 200, None, None
         if request.method == "POST":
             request.max_content_length = 4096
             token = session.get("csrf")
@@ -170,9 +218,13 @@ def register(bp):
                         proposal = preview(db,request.form)
                     elif action == "generate":
                         generate(db,request.form)
+                    elif action == "batch_preview":
+                        batch = batch_preview(db, request.form.get("month"))
+                    elif action == "batch_generate":
+                        generate_batch(db, request.form)
                     else:
                         raise ValueError("Choose a valid action.")
-                if action != "preview":
+                if action not in ("preview", "batch_preview"):
                     return redirect(url_for("native_finance.monthly_commitments"),code=303)
             except Conflict as exc:
                 error,status=str(exc),409
@@ -189,8 +241,13 @@ def register(bp):
                     b.amount AS current_amount,b.due AS current_due,b.status AS current_status,
                     b.archived AS current_archived FROM finance_monthly_occurrences o
                     LEFT JOIN finance_bills b ON b.id=o.bill_id ORDER BY o.month DESC,o.created_at DESC LIMIT 200""")]
+                batches=[dict(r) for r in db.execute("""SELECT * FROM finance_monthly_batches
+                    ORDER BY created_at DESC,digest LIMIT 100""")]
                 history=[dict(r) for r in db.execute("""SELECT * FROM finance_monthly_schedule_events
                     ORDER BY created_at DESC,schedule_id,revision DESC LIMIT 200""")]
+            for item in batches:
+                item["values"] = json.loads(item["manifest"])
+                item["ids"] = json.loads(item["bill_ids"])
             for event in history:
                 event["values"]=json.loads(event["snapshot"])
             for event in occurrences:
@@ -200,4 +257,4 @@ def register(bp):
         return render_template("finance_monthly_commitments.html",schedules=schedules,
             occurrences=occurrences,history=history,new_id=uuid.uuid4().hex,
             month=datetime.now(timezone.utc).strftime("%Y-%m"),proposal=proposal,
-            error=error,csrf=session.get("csrf","")),status,{"Cache-Control":"no-store"}
+            batch=batch,batches=batches,error=error,csrf=session.get("csrf","")),status,{"Cache-Control":"no-store"}
