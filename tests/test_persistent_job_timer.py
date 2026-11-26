@@ -10,7 +10,7 @@ from hq_auth import issue_session
 from hq_auth_store import auth_db
 from hq_core_records import create_test_job, change_work_status, StaleWorkRecordError
 from hq_work_archive import set_work_archived
-from hq_work_timer import snapshot, transition, history
+from hq_work_timer import snapshot, transition, history, open_timer_jobs
 from hq_work_time import time_ledger_snapshot, append_work_time
 
 class PersistentTimerTests(unittest.TestCase):
@@ -230,4 +230,35 @@ class PersistentTimerTests(unittest.TestCase):
         self.assertIn(b'2 minutes</strong> already saved against this job',page.data)
         self.assertIn(b'Change job',page.data)
         self.assertIsNone(snapshot(self.job))
+        self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"],2)
+
+    def test_recovery_queue_survives_search_and_excludes_finished_sessions(self):
+        self.command("start")
+        sid = snapshot(self.job)["id"]
+        self.now.return_value += 120
+        self.command("pause", 0, sid)
+        other = create_test_job()
+        with connect() as db:
+            db.execute("UPDATE hq_work_records SET status='approved' WHERE id=?", (other,))
+        transition(other, "start", -1, uuid.uuid4().hex)
+        self.assertEqual([(r["id"],r["state"]) for r in open_timer_jobs()["records"]],
+                         [(other,"running"), (self.job,"paused")])
+        anonymous = app.test_client()
+        self.assertEqual(anonymous.get("/hq/timer").status_code, 302)
+        c = app.test_client()
+        with c.session_transaction() as s, auth_db() as db:
+            s["hq_sid"] = issue_session(db,"owner")
+            s["csrf"] = "test"
+        page = c.get("/hq/timer?q=not-a-real-synthetic-job")
+        self.assertEqual(page.status_code,200)
+        self.assertIn(b"Open running timer",page.data)
+        self.assertIn(b"Open paused timer",page.data)
+        self.assertIn(("/hq/work/"+self.job+"/time").encode(),page.data)
+        self.assertIn(b"No matching HQ jobs",page.data)
+        self.assertEqual(snapshot(self.job)["state"],"paused")
+        self.command("finish", 1, sid)
+        self.assertIn(b"Review time",c.get("/hq/timer").data)
+        append_work_time(self.job, {"operation_id":sid, "minutes":"2", "stage":"repair",
+                                  "hourly_cost_pence":"", "note":""}, 0, "owner")
+        self.assertEqual([r["id"] for r in open_timer_jobs()["records"]],[other])
         self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"],2)
