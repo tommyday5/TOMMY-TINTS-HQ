@@ -102,10 +102,48 @@ def amount_evidence(entry, gross, fee, reference):
                 source_date=entry["day"], gross=gross, fee=fee, net=entry["pence"],
                 reference=reference.strip())
 
+def provider_fee_comparison(db, members, documented_fee):
+    """Bind any approved exact provider fees to the settlement proposal.
+
+    Missing or withdrawn fee reviews are unknown, not zero. A recorded but
+    stale review must be resolved before another proposal is saved. This
+    compares retained evidence only, not a provider payout or bank receipt.
+    """
+    from hq_provider_receipts import latest_fee, fee_context
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_square_fee_reviews'").fetchone():
+        return dict(known=[], missing=len(members), total_pence=None)
+    known = []
+    for member in members:
+        row = latest_fee(db, member["allocation_id"])
+        if not row or row["state"] != "recorded":
+            continue
+        ctx, recognition = fee_context(db, member["allocation_id"])
+        if recognition != row["recognition_manifest"]:
+            raise ValueError("Provider fee review is stale; review or withdraw it first.")
+        data = json.loads(row["snapshot"])
+        amount = data.get("fee_pence")
+        if (data.get("allocation_id") != member["allocation_id"]
+                or data.get("payment_id") != member["payment_id"]
+                or ctx["payment_id"] != member["payment_id"]
+                or data.get("gross_pence") != member["gross"]
+                or data.get("provider_evidence") != ctx["evidence"]
+                or type(amount) is not int or not 0 <= amount <= member["gross"]
+                or digest(["square-processing-fee-v1", recognition, row["revision"], data]) != row["manifest"]):
+            raise ValueError("Provider fee evidence does not match this payment; review first.")
+        known.append(dict(allocation_id=member["allocation_id"], payment_id=member["payment_id"],
+                          fee_pence=amount, manifest=row["manifest"], revision=row["revision"]))
+    missing = len(members) - len(known)
+    total = sum(f["fee_pence"] for f in known) if known else None
+    if not missing and total != documented_fee:
+        raise ValueError("Documented settlement fee differs from retained provider fees. Investigate the difference before saving.")
+    return dict(known=known, missing=missing, total_pence=total)
+
+
 def preview(db, allocation_id, entry, fee_pence, reference):
     member = payment_member(db, allocation_id, entry)
     data = {**member, **amount_evidence(entry, member["gross"], fee_pence, reference)}
     check_source(db, entry, [allocation_id])
+    data["provider_fees"] = provider_fee_comparison(db, [member], fee_pence)
     return data, digest(data)
 
 def batch_ids(raw):
@@ -121,6 +159,7 @@ def batch_preview(db, allocations, entry, fee, reference):
     data = amount_evidence(entry, sum(m["gross"] for m in members), fee, reference)
     check_source(db, entry, allocations)
     data["members"] = members
+    data["provider_fees"] = provider_fee_comparison(db, members, fee)
     return data, digest(data)
 
 def batch_save(db, allocations, entry, fee, reference, manifest, operation, actor):
@@ -234,6 +273,8 @@ def register(bp):
                 whole, _, fraction = fee_raw.partition(".")
                 fee = int(whole)*100+int(fraction.ljust(2,"0"))
                 entry = current_entry(source)
+                if entry["ref"] != source:
+                    raise ValueError("Source ID mismatch.")
                 with closing(connect()) as db, db:
                     tables(db)
                     if action == "preview":

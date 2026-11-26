@@ -1440,3 +1440,31 @@ Remaining: bank settlement and verified fee/receipt accounting in
 financial totals, exact approved historical import after actual
 independently verified recovery, formula parity, authenticated owner
 and customer browser acceptance and remaining workbook domains.
+
+
+## 26 November — processing fee evidence deployed; settlement fee cross-check
+
+PR #302 final head 7935c9be66835c97049b1d8c0937e37b44a519d6 passed
+Actions 45779492348 (127 root and 674 integration Python tests, 9 JS tests).
+Merged as c3ef29833cadedac5e2cfa5369ece37cb4a69c8b; Railway deployment
+62a423b0-1f18-4728-a111-9e02932b6b84 SUCCESS at 08:58:29 UTC, original
+1024 MB /data volume attached, no pending environment changes. Read-only
+workbook metadata confirms 48 tabs. Actual owner approval and provider/bank
+reconciliation remain unverified.
+
+New slice: Finance Command Centre > Settlement and fee review (single or
+combined). On preview and save compare retained, approved current payment fee
+revisions against the documented payout fee. Persist each matched manifest,
+revision and exact pence in the existing proposal; changed evidence invalidates
+an outstanding preview. All known fees must agree with the documented total;
+missing or withdrawn fees remain unknown, and partial coverage remains a
+manual statement proposal. Stale active fee evidence blocks save. Old proposals
+remain readable and explicitly lack a fee comparison. No independent payout
+API or bank verification, expense posting, income/balance inference or new
+receipt. No provider writes. Synthetic regression coverage of fee mismatch,
+unknown/partial coverage, persistent exact comparison and stale receipt/fee
+review; CI pending. No public route changed; previous regression confirmed
+customer service request and native conversion, vehicle linking, customer
+status/deposit visibility and account isolation. Actual browser acceptance,
+recovery snapshot and bounded historical import approval still outstanding.
+No authority cutover; no real records, payments or Sheets cells changed.
