@@ -1402,3 +1402,41 @@ product approval and deposit visibility. No public routes modified.
 Production owner/customer authenticated acceptance still unverified.
 Historical import and independent actual recovery remain unapproved.
 No authority cutover, live financial edits, messages or Sheets writes.
+
+
+## 26 November — provider-confirmed receipts deployed; exact provider fee evidence
+
+PR #301 final head f542838f45e5cff0c66556179b832616024b51e3 passed
+Actions 45772138958 and merged as c509dcc92cc258315f2f586acdd9be492700f5f6.
+Railway deployment fdcca90c-151c-47be-ac98-7ba4a3e84b0e reports SUCCESS
+at 07:01:40 UTC, original 1024 MB /data volume
+540528d1-3953-4737-9d92-3c861575c5d4 attached; no pending infrastructure
+changes. Read-only workbook metadata confirms all 48 tabs.
+Provider-confirmed existing allocation classification deployed, not
+owner-tested or bank reconciled. No authority cutover.
+
+New slice: Finance Command Centre > Provider-confirmed receipts >
+Read and preview Square processing fees on an eligible recognition >
+Save provider processing fees. The exact GetPayment read now optionally
+validates explicit bounded GBP card processing fee entries, including
+signed adjustments, while preserving the existing adapter output for
+all other callers. Missing/empty fees are unknown; unsupported types,
+ambiguous duplicate rows, inconsistent currency, timestamps or amounts
+fail closed. One initial fee plus adjustments, with nonnegative bounded
+net fee, is the first supported subset. Both payment and fee details
+come from the same read. Approval binds the unchanged recognition,
+payment and exact fee rows, re-reads on save, and checks local revisions
+under the write transaction. Persistent original fee snapshots, review
+time, withdrawal and stale receipt warnings remain private. No new
+receipt, expense entry, payout/bank balance or aggregate financial
+posting; payment processing fee observations may not include later
+payout adjustments or other charges. No provider write or actual
+financial record changed. Synthetic HTTP tests exercise signed fees,
+unknown/malformed evidence, stale approvals, replays, reload and
+withdrawal, owner/CSRF isolation and unchanged receipt totals. CI and
+deployment pending. No public route modified by this slice.
+
+Remaining: bank settlement and verified fee/receipt accounting in
+financial totals, exact approved historical import after actual
+independently verified recovery, formula parity, authenticated owner
+and customer browser acceptance and remaining workbook domains.

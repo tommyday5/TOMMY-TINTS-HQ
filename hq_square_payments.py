@@ -168,7 +168,7 @@ def refresh_payments():
 
 
 
-def inspect_exact_payment(payment_id):
+def inspect_exact_payment(payment_id, *, include_fees=False):
     """Owner-triggered, memory-only GetPayment check for an exact known ID.
 
     The rolling created-at snapshot excludes older payments; an individual
@@ -198,9 +198,46 @@ def inspect_exact_payment(payment_id):
         raise ValueError("Square returned a different payment reference")
     ref, status, total, refunded, currency, created, updated = _payment(
         payment, os.environ["HQ_SQUARE_LOCATION_ID"])
-    return {"id": ref, "status": status, "total_minor": total,
-            "refunded_minor": refunded, "currency": currency,
-            "created_at": created, "updated_at": updated}
+    evidence = {"id": ref, "status": status, "total_minor": total,
+                "refunded_minor": refunded, "currency": currency,
+                "created_at": created, "updated_at": updated}
+    if include_fees:
+        if payment.get("source_type") != "CARD" or currency != "GBP":
+            raise ValueError("Only provider-confirmed GBP card fees qualify")
+        return evidence, _processing_fees(payment.get("processing_fee"), currency, created, total)
+    return evidence
+
+
+
+def _processing_fees(items, currency, created, gross):
+    """Bounded explicit fee evidence, not payout completeness or final cost.
+
+    Square INITIAL is assessed and ADJUSTMENT may be signed. Missing or
+    empty fee lists are unknown, not a zero-fee payment.
+    """
+    if not isinstance(items, list) or not 1 <= len(items) <= 50:
+        raise ValueError("Explicit Square processing fee details are unavailable")
+    rows = []
+    for item in items:
+        if not isinstance(item, dict) or item.get("type") not in ("INITIAL", "ADJUSTMENT"):
+            raise ValueError("Invalid Square processing fee type")
+        money = item.get("amount_money")
+        if (not isinstance(money, dict) or money.get("currency") != currency
+                or type(money.get("amount")) is not int
+                or not -gross <= money["amount"] <= gross
+                or (item["type"] == "INITIAL" and money["amount"] < 0)):
+            raise ValueError("Invalid Square processing fee amount")
+        stamp = _timestamp(item.get("effective_at"))
+        if not datetime.fromisoformat(created) <= datetime.fromisoformat(stamp) <= datetime.now(timezone.utc) + timedelta(minutes=5):
+            raise ValueError("Invalid Square processing fee effective time")
+        row = dict(type=item["type"], effective_at=stamp, amount_pence=money["amount"])
+        if row in rows:
+            raise ValueError("Ambiguous duplicate Square processing fee entries")
+        rows.append(row)
+    total = sum(row["amount_pence"] for row in rows)
+    if sum(row["type"] == "INITIAL" for row in rows) != 1 or not 0 <= total <= gross:
+        raise ValueError("Square processing fees cannot be reconciled")
+    return sorted(rows, key=lambda row: (row["effective_at"], row["type"], row["amount_pence"]))
 
 
 def _stored_payment_consistent(row, refreshed, start, end):

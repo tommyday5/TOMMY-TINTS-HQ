@@ -270,6 +270,97 @@ class AllocationTests(unittest.TestCase):
         self.assertIsNone(after["collected_income"])
         self.assertNotIn(b"square-recognition-test", app.test_client().get("/book").data)
 
+
+    def test_provider_processing_fee_review_exact_signed_and_reversible(self):
+        import re
+        url = "/hq/finance/provider-confirmed-receipts"
+        evidence_url = "/hq/finance/square-invoice-evidence"
+        self.assertEqual(self.client.get(url).status_code, 302)
+        self.login()
+        payload = self.payload(method="card_reported", evidence_ref="square-fee-test")
+        self.assertEqual(self.post(payload).status_code, 200)
+        form = dict(allocation=payload["id"], csrf="test", action="review")
+        evidence = dict(id="square-fee-test", status="COMPLETED", total_minor=20000,
+                        refunded_minor=0, currency="GBP",
+                        created_at="2026-11-22T10:00:00+00:00",
+                        updated_at="2026-11-22T10:01:00+00:00")
+        def fee(kind, amount, currency="GBP"):
+            return dict(type=kind, effective_at="2026-11-22T10:01:00Z",
+                        amount_money=dict(amount=amount, currency=currency))
+        items = [fee("INITIAL", 500), fee("ADJUSTMENT", -100)]
+        payment = dict(id=evidence["id"], status="COMPLETED", location_id="test-loc",
+                       source_type="CARD", total_money=dict(amount=20000,currency="GBP"),
+                       refunded_money=dict(amount=0,currency="GBP"),
+                       created_at=evidence["created_at"], updated_at=evidence["updated_at"])
+        with patch.dict(os.environ, {"HQ_SQUARE_READ_TOKEN":"test", "HQ_SQUARE_LOCATION_ID":"test-loc"}), \
+                patch("hq_square_invoice_evidence.storage_ready", return_value=True), \
+                patch("hq_provider_receipts.storage_ready", return_value=True), \
+                patch("hq_square_invoice_evidence.inspect_exact_payment", return_value=evidence) as provider, \
+                patch("hq_square_payments.requests.get") as get, \
+                patch("requests.post") as external_post:
+            def result(rows):
+                get.return_value.json.return_value = {"payment": dict(payment, processing_fee=rows)}
+            def manifest(page):
+                self.assertEqual(page.status_code, 200, page.get_data(as_text=True))
+                return re.search(rb'name="manifest" value="([0-9a-f]{64})"', page.data)[1].decode()
+            initial = manifest(self.client.post(evidence_url, data=form))
+            self.assertEqual(self.client.post(evidence_url, data=dict(form, action="save",
+                manifest=initial, confirm="yes")).status_code, 200)
+            f = dict(form, action="fee-preview")
+            self.assertEqual(self.client.post(url, data=f).status_code, 409)
+            get.assert_not_called()
+            receipt = manifest(self.client.post(url, data=dict(form, action="preview")))
+            self.assertEqual(self.client.post(url, data=dict(form, action="save",
+                manifest=receipt, confirm="yes")).status_code, 303)
+            self.assertEqual(self.client.get(url).status_code, 200)
+            self.assertEqual(self.client.post(url, data=dict(f, csrf="bad")).status_code, 403)
+            get.assert_not_called()
+            for invalid in (None, [], [fee("INITIAL", True)], [fee("INITIAL", 500, "USD")],
+                            [fee("INITIAL", -100)], [fee("ADJUSTMENT", 100)],
+                            [fee("INITIAL", 500), fee("INITIAL", 500)],
+                            [fee("INITIAL", 500), fee("ADJUSTMENT", -600)]):
+                result(invalid)
+                self.assertEqual(self.client.post(url, data=f).status_code, 400)
+            result(items)
+            preview = self.client.post(url, data=f)
+            exact = manifest(preview)
+            self.assertIn("£4.00".encode(), preview.data)
+            self.assertIn("£196.00".encode(), preview.data)
+            approval = dict(f, action="fee-save", manifest=exact, confirm="yes")
+            self.assertEqual(self.client.post(url, data=dict(approval, confirm="")).status_code, 400)
+            result([fee("INITIAL", 500)])
+            self.assertEqual(self.client.post(url, data=approval).status_code, 409)
+            result(list(reversed(items)))
+            self.assertEqual(self.client.post(url, data=approval).status_code, 303)
+            self.assertEqual(self.client.post(url, data=approval).status_code, 409)
+            get.reset_mock()
+            again = app.test_client()
+            with again.session_transaction() as sess, auth_db() as db:
+                sess.update(hq_sid=issue_session(db,"synthetic-owner"), google_sub="synthetic-owner",csrf="test")
+            page = again.get(url)
+            self.assertIn(b"Provider fee evidence recorded at review time", page.data)
+            self.assertIn("£4.00".encode(), page.data)
+            get.assert_not_called()
+            provider.return_value = dict(evidence, refunded_minor=5000,
+                                         updated_at="2026-11-22T10:03:00+00:00")
+            self.assertEqual(self.client.post(evidence_url, data=dict(form, action="recheck",
+                confirm="yes")).status_code, 200)
+            self.assertIn(b"Fee review required", again.get(url).data)
+            undo = dict(f, action="fee-withdraw", revision="1", reason="Synthetic correction",confirm="yes")
+            self.assertEqual(again.post(url, data=dict(undo, revision="0")).status_code, 409)
+            self.assertEqual(again.post(url, data=undo).status_code, 303)
+            self.assertEqual(again.post(url, data=undo).status_code, 409)
+            self.assertIn(b"Fee review withdrawn", again.get(url).data)
+            external_post.assert_not_called()
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_square_fee_reviews").fetchone()[0], 2)
+            self.assertEqual(db.execute("SELECT amount_pence FROM hq_receivable_allocations").fetchone()[0], 20000)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_receivable_allocations").fetchone()[0], 1)
+        after = self.client.get("/api/hq/finance/receipt-allocations").json
+        self.assertFalse(after["receipts_verified"])
+        self.assertIsNone(after["collected_income"])
+        self.assertNotIn(b"square-fee-test", app.test_client().get("/book").data)
+
     def test_square_evidence_rejects_duplicate_reference_wrong_amount_and_noncard(self):
         self.login()
         url = "/hq/finance/square-invoice-evidence"
