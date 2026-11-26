@@ -1,6 +1,7 @@
 """Owner-entered finance planning and transaction review; never bank verification."""
 import json, re, sqlite3, uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from flask import Blueprint, jsonify, render_template, request, session
 from hq_auth import required
 from customer_request_store import connect
@@ -19,6 +20,11 @@ def schema(db):
   if name not in columns:db.execute('ALTER TABLE finance_bills ADD COLUMN '+name+' '+definition)
  db.execute('CREATE TABLE IF NOT EXISTS finance_bill_history (id TEXT PRIMARY KEY, bill_id TEXT NOT NULL, revision INTEGER NOT NULL, snapshot TEXT NOT NULL, created TEXT NOT NULL, UNIQUE(bill_id,revision))')
 
+ db.execute("""CREATE TABLE IF NOT EXISTS finance_plan_history (
+  revision INTEGER PRIMARY KEY, snapshot TEXT NOT NULL,
+  capture_kind TEXT NOT NULL CHECK(capture_kind IN ('before_edit','saved')),
+  captured_at TEXT NOT NULL)""")
+
  # Only observed transaction states; never invent earlier historical values.
  db.execute("""CREATE TABLE IF NOT EXISTS finance_transaction_history (
   transaction_id TEXT NOT NULL, revision INTEGER NOT NULL, snapshot TEXT NOT NULL,
@@ -30,6 +36,31 @@ def schema(db):
   transaction_id TEXT NOT NULL, revision INTEGER NOT NULL,
   archived INTEGER NOT NULL CHECK(archived IN (0,1)), reason TEXT NOT NULL,
   captured_at TEXT NOT NULL, PRIMARY KEY(transaction_id,revision))""")
+
+def capture_plan(db,row,kind):
+ fields={key:row[key] for key in ('balance','balance_date','target')}
+ db.execute("""INSERT OR IGNORE INTO finance_plan_history
+  (revision,snapshot,capture_kind,captured_at) VALUES(?,?,?,?)""",
+  (row['revision'],json.dumps(fields,sort_keys=True),kind,datetime.now(timezone.utc).isoformat()))
+
+def planning_forecast(plan,bills,today):
+ """Owner-entered balance minus recorded commitments only, never bank cash."""
+ until=(today+timedelta(days=30)).isoformat()
+ stamp=plan['balance_date']
+ active=[b for b in bills if b['status']=='planned' and not b['archived'] and b['due']<=until]
+ total=sum(b['amount'] for b in active) if bills else None
+ reason=None
+ if plan['balance'] is None or not stamp:
+  reason='Reported balance and date required.'
+ elif stamp>today.isoformat():
+  reason='Balance date is in the future; correct the saved snapshot.'
+ elif any(b['status']=='reported_paid' and (not b['status_date'] or b['status_date']>=stamp) for b in bills):
+  reason='A reported payment is on or after the balance date; update the balance snapshot to a later date before using this estimate.'
+ elif not bills:
+  reason='No commitment records entered; actual commitments unknown.'
+ return dict(as_of=today.isoformat(),through=until,planned_pence=total,
+             estimate_pence=None if reason else plan['balance']-total,
+             reason=reason,bank_verified=False)
 
 def transaction_archived(db,ref):
  row=db.execute('SELECT archived FROM finance_transaction_archive WHERE transaction_id=? ORDER BY revision DESC LIMIT 1',(ref,)).fetchone()
@@ -65,6 +96,8 @@ def snapshot():
  with connect() as db:
   schema(db)
   plan=db.execute('SELECT * FROM finance_plan WHERE id=1').fetchone()
+  plan=dict(plan) if plan else dict(balance=None,balance_date=None,target=None,revision=0)
+  plan_history=[dict(revision=r['revision'],snapshot=json.loads(r['snapshot']),capture_kind=r['capture_kind'],captured_at=r['captured_at']) for r in db.execute('SELECT * FROM finance_plan_history ORDER BY revision DESC LIMIT 100')]
   bills=[dict(r) for r in db.execute('SELECT * FROM finance_bills ORDER BY archived,due,id')]
   bill_history=[dict(id=r['id'],bill_id=r['bill_id'],revision=r['revision'],snapshot=json.loads(r['snapshot']),created=r['created']) for r in db.execute('SELECT * FROM finance_bill_history ORDER BY created DESC,id DESC LIMIT 250')]
   transactions=[dict(r) for r in db.execute('SELECT t.* FROM finance_transactions t WHERE '+ACTIVE_TRANSACTION_SQL+' ORDER BY day DESC,id LIMIT 200')]
@@ -72,7 +105,7 @@ def snapshot():
   archived_transactions=[dict(r) for r in db.execute('SELECT t.* FROM finance_transactions t WHERE NOT ('+ACTIVE_TRANSACTION_SQL+') ORDER BY day DESC,id LIMIT 200')]
   archived_count=db.execute('SELECT COUNT(*) FROM finance_transactions t WHERE NOT ('+ACTIVE_TRANSACTION_SQL+')').fetchone()[0]
   transaction_history=[dict(transaction_id=r['transaction_id'],revision=r['revision'],snapshot=json.loads(r['snapshot']),capture_kind=r['capture_kind'],captured_at=r['captured_at']) for r in db.execute('SELECT * FROM finance_transaction_history ORDER BY captured_at DESC,transaction_id,revision DESC LIMIT 250')]
- return dict(plan=dict(plan) if plan else dict(balance=None,balance_date=None,target=None,revision=0),bills=bills,bill_history=bill_history,transactions=transactions,transaction_count=count,archived_transactions=archived_transactions,archived_transaction_count=archived_count,transaction_history=transaction_history,categories=CATEGORIES,bank_verified=False,source='Owner-entered HQ records',received_income=None)
+ return dict(plan=plan,plan_history=plan_history,forecast=planning_forecast(plan,bills,datetime.now(ZoneInfo('Europe/London')).date()),bills=bills,bill_history=bill_history,transactions=transactions,transaction_count=count,archived_transactions=archived_transactions,archived_transaction_count=archived_count,transaction_history=transaction_history,categories=CATEGORIES,bank_verified=False,source='Owner-entered HQ records',received_income=None)
 
 @finance.get('/hq/finance/command')
 @required
@@ -98,7 +131,9 @@ def api():
     row=db.execute('SELECT * FROM finance_plan WHERE id=1').fetchone()
     if row and row['revision']!=rev:return jsonify(error='Changed elsewhere. Reload before editing.'),409
     if not row and rev!=0:return jsonify(error='Changed elsewhere. Reload.'),409
+    if row:capture_plan(db,row,'before_edit')
     db.execute('INSERT OR REPLACE INTO finance_plan VALUES(1,?,?,?,?)',(balance,stamp,target,rev+1));ref='1'
+    capture_plan(db,db.execute('SELECT * FROM finance_plan WHERE id=1').fetchone(),'saved')
    elif kind in ('bill','transaction'):
     ref=d.get('id')
     if not isinstance(ref,str) or not re.fullmatch('[0-9a-f]{32}',ref):raise ValueError('Invalid record ID')
