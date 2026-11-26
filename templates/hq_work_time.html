@@ -48,6 +48,18 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 </form>
 {% if timer.active_seconds // 60 < 1 or timer.active_seconds // 60 > 1440 %}<p class="notice">Outside the 1–1440 minute ledger limit. Retain the session with a correction reason, then record reviewed manual entries as appropriate.</p>{% endif %}
 {% endif %}
+{% if timer and timer.state in ('running','paused') and work.can_edit_time %}
+<form method="post" action="/hq/work/{{ work.id }}/timer">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="timer_revision" value="{{ timer.revision }}">
+<input type="hidden" name="timer_session" value="{{ timer.id }}">
+<input type="hidden" name="operation_id" value="{{ allowance_operation }}">
+<label for="editAllowance">Estimated total job minutes</label>
+<input id="editAllowance" name="allowance_minutes" type="number" min="1" max="30000" step="1" required value="{{ timer.allowance_minutes if timer.allowance_minutes is not none else '' }}">
+<p class="hint">Changing this estimate does not reset working time, breaks, actual cost or customer price.</p>
+<button class="secondary" name="action" value="allowance">Save estimated allowance</button>
+</form>
+{% endif %}
 <p id="serverAllowanceNotice"></p>
 </section>
 <details id="legacyTimer"><summary>Previous device-only timer (recovery only)</summary><p>Only use this to recover previously recorded local work. Do not run both timers or save overlapping time.</p>
@@ -104,6 +116,22 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 </form>
 {% else %}
 <div class="panel">{% if not work.can_edit_time %}<p>New time entries and corrections require approved or in-progress jobs. Existing records remain visible.</p>{% else %}<p>Finish and review the active timer before saving its minutes.</p>{% endif %}</div>
+{% endif %}
+{% if timer_history is defined %}
+<section class="panel" id="sessionHistory"><h2>Persistent timer audit history</h2>
+<p>Server UTC timestamps. Session totals show accumulated seconds at the last timing transition; the running clock above includes elapsed time since then.</p>
+{% if timer_history.sessions %}
+<ol>{% for item in timer_history.sessions %}
+<li><strong>{{ item.state|title }}</strong> · {{ item.active_seconds }} active seconds · {{ item.break_seconds }} break seconds
+<p>Session {{ item.id[-8:] }} · allowance {{ item.allowance_minutes if item.allowance_minutes is not none else 'not recorded' }}{% if item.allowance_minutes is not none %} min{% endif %} · {{ item.changed_utc }} UTC{% if item.entry_id %} · linked ledger entry {{ item.entry_id[-8:] }}{% endif %}</p></li>
+{% endfor %}</ol>
+<details><summary>View timer actions and correction reasons</summary>
+<ol>{% for event in timer_history.events %}
+<li>{{ event.occurred_utc }} UTC · session {{ event.session_id[-8:] }} · <strong>{{ event.action|title }}</strong>{% if event.detail %} · {{ event.detail }}{% if event.action in ('start','allowance') %} min allowance{% endif %}{% endif %}</li>
+{% endfor %}</ol></details>
+{% else %}<p>No persistent timer sessions recorded for this job.</p>{% endif %}
+{% if timer_history.truncated %}<p>Showing up to 100 recent sessions and 100 recent actions. Older evidence is retained.</p>{% endif %}
+</section>
 {% endif %}
 <section class="panel" id="timeHistory"><h2>Time entry history</h2>
 {% if work.entries %}
