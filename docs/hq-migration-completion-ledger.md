@@ -1584,3 +1584,18 @@ inferred. Next: direct bank verification requires a supported independent
 source; existing worksheet and owner-reported statements are not direct
 bank verification. Continue native financial formula parity and editable
 owner/customer workflows while migration approval remains outstanding.
+
+### 26 November — finance plan regression correction
+
+Actions 45815984881 failed exactly one source-continuity test (the old
+client-side expression was asserted literally after forecast computation
+moved to the server). The connected Sheets endpoint, source labels,
+stale indicators and separate accounting remain unchanged. Replaced
+that assertion with checks of server forecast rendering, missing-value
+display and reasons; retained all source continuity assertions. Added
+synthetic authenticated save/reload test for overdue commitments,
+ambiguous reported payment date and fresh balance recovery. No
+application logic change in this correction; fresh full CI required.
+Main and Railway still at #305 at inspection, original /data volume
+attached; all 48 workbook titles read-only confirmed. No actual import,
+recovery operation or authority cutover.
