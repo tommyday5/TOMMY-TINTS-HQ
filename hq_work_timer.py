@@ -39,9 +39,13 @@ def snapshot(work_id):
         row["display_break"] = row["break_seconds"] + (elapsed if row["state"] == "paused" else 0)
     return row
 
-def transition(work_id, action, revision, operation_id):
+def transition(work_id, action, revision, operation_id, session_id=''):
     _validate_id(work_id)
     _validate_id(operation_id)
+    if action != "start":
+        _validate_id(session_id)
+    elif session_id:
+        raise ValueError("Start must not identify an existing timer")
     if type(revision) is not int or revision < -1 or action not in ("start","pause","resume","finish"):
         raise ValueError("Invalid timer operation")
     with connect() as db:
@@ -52,6 +56,8 @@ def transition(work_id, action, revision, operation_id):
         if prior:
             if (prior["work_id"],prior["action"],prior["expected_revision"]) != (work_id,action,revision):
                 raise StaleWorkRecordError("Timer operation already used")
+            if action != "start" and prior["session_id"] != session_id:
+                raise StaleWorkRecordError("Timer operation belongs to another session")
             return
         work = _read_work(db, work_id)
         archived = db.execute("SELECT is_archived FROM hq_work_archive_state WHERE work_id=?", (work_id,)).fetchone()
@@ -66,7 +72,7 @@ def transition(work_id, action, revision, operation_id):
             db.execute("INSERT INTO hq_timer_sessions VALUES (?,?,?,?,?,?,?,?)",
                        (sid,work_id,"running",0,0,t,0,None))
         else:
-            if not row or row["revision"] != revision:
+            if not row or row["id"] != session_id or row["revision"] != revision:
                 raise StaleWorkRecordError("Timer changed; reload")
             sid = row["id"]
             elapsed = t - row["changed_at"]
