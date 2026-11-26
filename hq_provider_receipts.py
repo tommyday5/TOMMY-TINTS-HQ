@@ -247,7 +247,89 @@ def fee_listing(db):
     return result
 
 
+
+def monthly_receipt_report(db, month):
+    """Payment-month evidence subtotal, not accrual expenses or bank cash."""
+    parsed = datetime.strptime(month, "%Y-%m")
+    if parsed.strftime("%Y-%m") != month:
+        raise ValueError("Choose a valid payment month.")
+    records = db.execute("""SELECT e.* FROM hq_square_receipt_recognition e
+        WHERE NOT EXISTS (SELECT 1 FROM hq_square_receipt_recognition n
+            WHERE n.allocation_id=e.allocation_id AND n.revision>e.revision)
+        ORDER BY e.allocation_id LIMIT 5001""").fetchall()
+    if len(records) > 5000:
+        raise ValueError("Evidence register exceeds the safe report limit; no partial totals shown.")
+    items, seen = [], set()
+    for raw in records:
+        row = dict(raw)
+        snap = json.loads(row["snapshot"])
+        created = datetime.fromisoformat(snap["evidence"]["created_at"])
+        if created.tzinfo is None:
+            raise ValueError("Stored payment date has no timezone; report withheld.")
+        if created.astimezone(timezone.utc).strftime("%Y-%m") != month:
+            continue
+        item = dict(invoice_ref=snap["invoice_ref"], payment_id=row["payment_id"],
+                    allocation_id=row["allocation_id"], day=created.astimezone(timezone.utc).date().isoformat(),
+                    gross=None, fee=None, state="withdrawn" if row["state"] == "withdrawn" else "review required")
+        items.append(item)
+        if row["state"] != "recognised":
+            continue
+        try:
+            ctx, recognition = fee_context(db, row["allocation_id"])
+            if (recognition != row["manifest"] or ctx != snap
+                    or digest(["square-receipt-recognition-v1", digest(ctx), row["revision"]]) != recognition
+                    or row["payment_id"] != ctx["payment_id"]
+                    or type(ctx["amount_pence"]) is not int or ctx["amount_pence"] <= 0):
+                continue
+        except ValueError:
+            continue
+        key = ctx["payment_id"].casefold()
+        if key in seen:
+            raise ValueError("Duplicate payment evidence; report withheld.")
+        seen.add(key)
+        item.update(gross=ctx["amount_pence"], state="recognised")
+        fee = latest_fee(db, row["allocation_id"])
+        if fee and fee["state"] == "recorded" and fee["recognition_manifest"] == recognition:
+            data = json.loads(fee["snapshot"])
+            amount = data.get("fee_pence")
+            if (data.get("allocation_id") == row["allocation_id"]
+                    and data.get("payment_id") == ctx["payment_id"]
+                    and data.get("gross_pence") == item["gross"]
+                    and data.get("provider_evidence") == ctx["evidence"]
+                    and type(amount) is int and 0 <= amount <= item["gross"]
+                    and digest(["square-processing-fee-v1", recognition, fee["revision"], data]) == fee["manifest"]):
+                item["fee"] = amount
+    included = [i for i in items if i["state"] == "recognised"]
+    covered = [i for i in included if i["fee"] is not None]
+    gross = sum(i["gross"] for i in included) if included else None
+    known_fees = sum(i["fee"] for i in covered) if covered else None
+    complete = bool(included) and len(covered) == len(included)
+    return dict(month=month, rows=sorted(items, key=lambda i: (i["day"], i["allocation_id"])),
+                gross=gross, known_fees=known_fees,
+                net=gross-known_fees if complete else None, included=len(included),
+                missing=len(included)-len(covered), excluded=len(items)-len(included))
+
 def register(bp):
+
+    @bp.route("/hq/finance/provider-receipt-month", methods=["GET"])
+    @required
+    def provider_receipt_month():
+        if not storage_ready():
+            abort(503)
+        month = request.args.get("month", datetime.now(timezone.utc).strftime("%Y-%m"))
+        report, error, status = None, None, 200
+        try:
+            with closing(connect()) as db, db:
+                fee_tables(db)
+                db.execute("BEGIN")
+                report = monthly_receipt_report(db, month)
+        except (ValueError, KeyError, TypeError, OverflowError):
+            error, status = "Invalid month or inconsistent/oversized evidence. No partial totals shown.", 409
+        except (sqlite3.Error, OSError, RuntimeError):
+            error, status = "Persistent storage unavailable; no totals shown.", 503
+        return render_template("finance_provider_receipt_month.html", month=month,
+            report=report, error=error), status, {"Cache-Control": "no-store"}
+
     @bp.route("/hq/finance/provider-confirmed-receipts", methods=["GET","POST"])
     @required
     def provider_confirmed_receipts():

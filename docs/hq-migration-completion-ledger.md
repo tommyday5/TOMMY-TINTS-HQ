@@ -1468,3 +1468,44 @@ customer service request and native conversion, vehicle linking, customer
 status/deposit visibility and account isolation. Actual browser acceptance,
 recovery snapshot and bounded historical import approval still outstanding.
 No authority cutover; no real records, payments or Sheets cells changed.
+
+
+## 26 November — settlement fee cross-check deployed; monthly card receipt evidence
+
+PR #303 exact head 876ff60002ca4e62cd970f0f6aace2b1adad0be1 passed
+Actions 45787811185 (674 integration Python tests and 9 JS tests, syntax
+and dependency checks passed). Squash merged as 41353437129aa791795b190410f00b8f23611762.
+Railway deployment bf87ae35-081d-43d7-aad1-040eb1731117 reports SUCCESS
+at 10:05:30 UTC. Original 1024 MB /data volume checked before merge;
+no infrastructure changes. All 48 workbook tabs and Monzo A7:U7 headings
+read-only verified. Existing settlement fee comparisons are deployed,
+not owner-tested, bank reconciled or authoritative.
+
+New proposed owner workspace: Finance Command Centre > Monthly card
+receipts & fee coverage (also linked from Provider-confirmed receipts).
+Choose payment month in UTC; native persistent recognised receipts
+and current fee approvals are joined by exact allocation/payment,
+revision and evidence digest. One payment counted once, withdrawn or
+locally stale recognition excluded and shown separately. Known fee
+subtotal and included gross separate; net only when every included
+payment has current retained fee evidence. Empty or missing amounts
+are unknown. The bounded whole-register query withholds totals above
+its safe limit rather than showing partial totals. Editing/withdrawal
+uses existing owner approval screens; refreshed report reflects the
+retained revisions. No provider calls, new cash events, bank balance,
+expense posting, verified total income or profit inference. Fees are
+grouped by payment month, not accounting effective date. Synthetic
+route coverage for month selection, missing fees, stale/refunded
+recognition, privacy and exact pennies; CI and deploy pending.
+
+PR #303 CI includes public book request to canonical owner-approved
+portal, quote conversion, appointment acceptance and confirmation,
+maintenance pricing isolation, vehicle requests, product approval
+and deposit visibility. No public route modified. Authenticated live
+browser acceptance remains unverified; first historical 1–5 customer
+import requires exact conflict-free manifest and independently
+verified recovery, as previously recorded. No actual live records,
+source writes, financial posting, or historical authority changes.
+Next: independent bank settlement verification and fee effective-date
+accounting, workbook formula parity, approved bounded imports and
+owner/customer production acceptance.

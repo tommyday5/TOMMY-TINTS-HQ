@@ -1,0 +1,14 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Monthly card receipt evidence · Tommy Tints HQ</title><link rel="stylesheet" href="/static/finance-command.css"></head><body><main>
+<header><a href="/hq/finance/command">Finance Command Centre</a> · <a href="{{ url_for('.provider_confirmed_receipts') }}">Edit receipt and fee approvals</a></header>
+<h1>Monthly card receipt evidence</h1>
+<p>Existing owner-approved Square payments grouped by original payment month (UTC), not invoice, bank settlement or fee expense date. This is a subset of business income only. Later provider changes may not be known until rechecked. No cash, expense or profit posting.</p>
+<form method="get"><label>Payment month<input type="month" name="month" value="{{ month }}" required></label><button>Show month</button></form>
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+{% macro money(v) %}{% if v is none %}Unknown{% else %}£{{ '%.2f'|format(v/100) }}{% endif %}{% endmacro %}
+{% if report %}<article><h2>{{ report.month }} · retained evidence subtotals</h2>
+<p>Recognised receipts subtotal: <strong>{{ money(report.gross) }}</strong></p>
+<p>Known processing fees subtotal: <strong>{{ money(report.known_fees) }}</strong></p>
+<p>Recognised gross less fees (only with full included fee coverage): <strong>{{ money(report.net) }}</strong></p>
+<p>{{ report.included }} included · {{ report.missing }} with unknown fees · {{ report.excluded }} withdrawn or require review. Other provider receipts, refunds and unrecognised payments are not included. Known fee subtotal is not total monthly processing expenditure.</p></article>
+{% for r in report.rows %}<article><h3>{{ r.invoice_ref }} · {{ r.day }}</h3><p>{{ r.payment_id }} · {{ r.state }}</p><p>Gross: {{ money(r.gross) }} · Fee: {{ money(r.fee) }}</p><a href="{{ url_for('.provider_confirmed_receipts') }}">Review or correct retained approvals</a></article>{% else %}<p>No retained classifications in this month; amounts are unknown, not zero.</p>{% endfor %}
+{% endif %}</main></body></html>
