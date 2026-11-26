@@ -39,6 +39,23 @@ def snapshot(work_id):
         row["display_break"] = row["break_seconds"] + (elapsed if row["state"] == "paused" else 0)
     return row
 
+def open_timer_jobs():
+    """Owner-only recovery queue, independent of job search and pagination."""
+    with connect() as db:
+        _schema(db)
+        tables(db)
+        rows = db.execute("""SELECT t.work_id AS id, t.state, t.changed_at,
+                w.service, c.name, v.make, v.model, v.registration
+            FROM hq_timer_sessions t
+            JOIN hq_work_records w ON w.id=t.work_id
+            JOIN hq_customers c ON c.id=w.customer_id
+            JOIN hq_vehicles v ON v.id=w.vehicle_id
+            WHERE t.state IN ('running','paused','review')
+            ORDER BY CASE t.state WHEN 'running' THEN 0 WHEN 'review' THEN 1 ELSE 2 END,
+                t.changed_at DESC,t.id DESC LIMIT 51""").fetchall()
+    return {"records": [dict(row) for row in rows[:50]], "has_more": len(rows)>50}
+
+
 def history(work_id):
     """Bounded, owner-facing audit evidence; never modifies timer state."""
     _validate_id(work_id)
