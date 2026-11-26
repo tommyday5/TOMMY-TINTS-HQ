@@ -1367,3 +1367,38 @@ off-volume recovery and explicit manifest approval; no import executed.
 Next: verified receipt and fee accounting with provider evidence,
 approved historical migration, remaining operational domains and
 independent owner/customer UI acceptance.
+
+
+## 26 November — bulk monthly commitments deployed; provider-confirmed receipt classification
+
+PR #300 final head 9ac3488579644b850a08f9a7857e241550b44582 passed
+Actions 45765089671 (672 integration Python tests and 9 JS tests; root
+test step also passed). Squash merged as e4822c7106b200e17b6ef5725f5e20473ea202f3.
+Railway deployment bd0a4d07-918e-4efb-bd01-ee8aaf51e7b5 reports SUCCESS
+with the original 1024 MB /data mount and no pending work. Workbook
+read-only metadata confirms all 48 tabs. Batch generation deployed,
+not owner-tested, historically migrated or reconciled.
+
+Proposed native slice: Finance Command Centre > Provider-confirmed
+receipts. Owner selects an existing reported card allocation with retained
+exact Square evidence, explicitly reviews fresh provider status, then
+approves the exact existing allocation/invoice/payment classification.
+Fresh provider evidence is checked again before the transaction; changes
+to invoice, allocation, scope, evidence, duplicate references or approval
+state block the save. Append-only recognition and withdrawal history;
+latest locally known changes invalidate the recognition display. No second
+receipt, income total, bank settlement, refund or customer status is
+created. Provider-confirmed means exact completed GBP and explicit zero
+refunds at the observation time, not current live status. Partial/refunded
+payments require separate review. Bank posting and processing fee
+accounting remain outstanding. Synthetic approval, stale-provider,
+duplicate, refund recheck, withdrawal, storage and isolation test added.
+CI/deployment of this slice pending.
+
+PR #300 CI explicitly passed service request owner review, native quote
+conversion and customer approval visibility, appointment acceptance and
+confirmation, customer vehicle linkage, maintenance pricing isolation,
+product approval and deposit visibility. No public routes modified.
+Production owner/customer authenticated acceptance still unverified.
+Historical import and independent actual recovery remain unapproved.
+No authority cutover, live financial edits, messages or Sheets writes.
