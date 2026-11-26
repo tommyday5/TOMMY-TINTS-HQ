@@ -232,8 +232,9 @@ class NativePeriodReviewTests(unittest.TestCase):
                 db.executemany("INSERT INTO finance_transactions VALUES(?,?,?,?,?,?,?)",entries)
                 db.execute("INSERT INTO finance_transaction_archive VALUES(?,?,?,?,?)",
                            ("7"*32,1,1,"synthetic","2026-01-08"))
-            split_save("2"*32,0,"save",[dict(category="fuel",pence=-100000),
-                       dict(category="materials",pence=-20000)],"synthetic-owner")
+            with app.app_context():
+                split_save("2"*32,0,"save",[dict(category="fuel",pence=-100000),
+                           dict(category="materials",pence=-20000)],"synthetic-owner")
             preview=preview_native_period("2026-01-01","2026-01-30")
             self.assertEqual(preview["mapped"],dict(trading=300000,opex=100000,growth=20000))
             self.assertEqual(preview["archived"],1)
