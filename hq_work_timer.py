@@ -74,6 +74,12 @@ def transition(work_id, action, revision, operation_id, session_id='', allowance
         archived = db.execute("SELECT is_archived FROM hq_work_archive_state WHERE work_id=?", (work_id,)).fetchone()
         if work["kind"] != "job" or work["status"] not in ("approved","in_progress") or (archived and archived["is_archived"]):
             raise ValueError("Timer requires an active approved job")
+        # BEGIN IMMEDIATE serializes competing starts across all owner jobs.
+        # Paused sessions remain recoverable; only active work must not overlap.
+        if action in ("start", "resume") and db.execute(
+                "SELECT 1 FROM hq_timer_sessions WHERE state='running' AND work_id != ? LIMIT 1",
+                (work_id,)).fetchone():
+            raise ValueError("Pause the running timer on the other job before starting or resuming work")
         row = _open(db, work_id)
         t = now()
         if action == "start":

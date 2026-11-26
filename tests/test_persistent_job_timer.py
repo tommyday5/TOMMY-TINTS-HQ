@@ -128,3 +128,21 @@ class PersistentTimerTests(unittest.TestCase):
         self.assertEqual(change_work_status(self.job, "completed", 2), "completed")
         self.assertEqual(set_work_archived(self.job, "archive", 3, uuid.uuid4().hex), 4)
         self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"], 2)
+
+    def test_active_work_cannot_overlap_across_jobs_but_paused_work_is_recoverable(self):
+        other = create_test_job()
+        with connect() as db:
+            db.execute("UPDATE hq_work_records SET status='approved' WHERE id=?", (other,))
+        self.command("start")
+        sid = snapshot(self.job)["id"]
+        with self.assertRaisesRegex(ValueError, "other job"):
+            transition(other, "start", -1, uuid.uuid4().hex)
+        self.command("pause", 0, sid)
+        transition(other, "start", -1, uuid.uuid4().hex)
+        other_sid = snapshot(other)["id"]
+        with self.assertRaisesRegex(ValueError, "other job"):
+            self.command("resume", 1, sid)
+        self.assertEqual(snapshot(self.job)["state"], "paused")
+        transition(other, "pause", 0, uuid.uuid4().hex, other_sid)
+        self.command("resume", 1, sid)
+        self.assertEqual(snapshot(self.job)["state"], "running")
