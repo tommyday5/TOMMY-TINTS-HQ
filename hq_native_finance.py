@@ -19,6 +19,18 @@ def schema(db):
   if name not in columns:db.execute('ALTER TABLE finance_bills ADD COLUMN '+name+' '+definition)
  db.execute('CREATE TABLE IF NOT EXISTS finance_bill_history (id TEXT PRIMARY KEY, bill_id TEXT NOT NULL, revision INTEGER NOT NULL, snapshot TEXT NOT NULL, created TEXT NOT NULL, UNIQUE(bill_id,revision))')
 
+ # Only observed transaction states; never invent earlier historical values.
+ db.execute("""CREATE TABLE IF NOT EXISTS finance_transaction_history (
+  transaction_id TEXT NOT NULL, revision INTEGER NOT NULL, snapshot TEXT NOT NULL,
+  capture_kind TEXT NOT NULL CHECK(capture_kind IN ('before_edit','saved')),
+  captured_at TEXT NOT NULL, PRIMARY KEY(transaction_id,revision))""")
+
+def capture_transaction(db,row,kind):
+ fields={key:row[key] for key in ('day','description','amount','category','reviewed')}
+ db.execute("""INSERT OR IGNORE INTO finance_transaction_history
+  (transaction_id,revision,snapshot,capture_kind,captured_at) VALUES(?,?,?,?,?)""",
+  (row['id'],row['revision'],json.dumps(fields,sort_keys=True),kind,datetime.now(timezone.utc).isoformat()))
+
 def money(v,nullable=False,signed=False):
  if nullable and v is None:return None
  if type(v) is not int or abs(v)>1000000000 or (not signed and v<0):raise ValueError('Amounts must be integer pence within limits')
@@ -43,7 +55,8 @@ def snapshot():
   bill_history=[dict(id=r['id'],bill_id=r['bill_id'],revision=r['revision'],snapshot=json.loads(r['snapshot']),created=r['created']) for r in db.execute('SELECT * FROM finance_bill_history ORDER BY created DESC,id DESC LIMIT 250')]
   transactions=[dict(r) for r in db.execute('SELECT * FROM finance_transactions ORDER BY day DESC,id LIMIT 200')]
   count=db.execute('SELECT COUNT(*) FROM finance_transactions').fetchone()[0]
- return dict(plan=dict(plan) if plan else dict(balance=None,balance_date=None,target=None,revision=0),bills=bills,bill_history=bill_history,transactions=transactions,transaction_count=count,categories=CATEGORIES,bank_verified=False,source='Owner-entered HQ records',received_income=None)
+  transaction_history=[dict(transaction_id=r['transaction_id'],revision=r['revision'],snapshot=json.loads(r['snapshot']),capture_kind=r['capture_kind'],captured_at=r['captured_at']) for r in db.execute('SELECT * FROM finance_transaction_history ORDER BY captured_at DESC,transaction_id,revision DESC LIMIT 250')]
+ return dict(plan=dict(plan) if plan else dict(balance=None,balance_date=None,target=None,revision=0),bills=bills,bill_history=bill_history,transactions=transactions,transaction_count=count,transaction_history=transaction_history,categories=CATEGORIES,bank_verified=False,source='Owner-entered HQ records',received_income=None)
 
 @finance.get('/hq/finance/command')
 @required
@@ -96,7 +109,10 @@ def api():
      if category not in CATEGORIES or type(reviewed) is not bool:raise ValueError('Choose a valid classification')
      if reviewed and category=='unclassified':raise ValueError('Classify before marking reviewed')
      values=(day(d.get('day')),text(d.get('description')),money(d.get('amount'),signed=True),category,int(reviewed))
+     if row:
+      capture_transaction(db,row,'before_edit')
      db.execute('INSERT OR REPLACE INTO finance_transactions VALUES(?,?,?,?,?,?,?)',(ref,*values,rev+1))
+     capture_transaction(db,db.execute('SELECT * FROM finance_transactions WHERE id=?',(ref,)).fetchone(),'saved')
    else:raise ValueError('Invalid record type')
    audit(db,kind,ref,rev+1)
   return jsonify(saved=True,bank_verified=False)
