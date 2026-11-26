@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Transaction archive · Tommy Tints HQ</title><link rel="stylesheet" href="/static/finance-command.css"></head>
+<body><main><header><a href="/hq/finance/command">Back to Finance Command Centre</a></header>
+<h1>{{ 'Restore' if archived else 'Archive' }} manual transaction</h1>
+<article><h2>{{ parent.description }}</h2><p>{{ parent.day }} · £{{ "%.2f"|format(parent.amount/100) }}</p><p>{{ parent.category|replace('_',' ') }} · revision {{ parent.revision }} · {{ 'Archived' if archived else 'Active' }}</p></article>
+<p>Archiving excludes this owner-entered record from native monthly classification totals. It does not delete the original, change bank evidence, balances, payments or Google Sheets. Restore reverses the exclusion.</p>
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+{% if split %}<p>Withdraw the active split before changing the lifecycle. <a href="{{ url_for('native_finance.transaction_split_page',ref=parent.id) }}">Review split</a></p>{% else %}
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="revision" value="{{ parent.revision }}">
+<label>Reason for {{ 'restoring' if archived else 'archiving' }}<input name="reason" maxlength="160" required></label>
+<button name="action" value="{{ 'restore' if archived else 'archive' }}">{{ 'Restore to native totals' if archived else 'Archive and exclude from native totals' }}</button></form>{% endif %}
+<h2>Archive and restore history</h2>
+{% for event in history %}<article><h3>Revision {{ event.revision }} · {{ 'Archived' if event.archived else 'Restored' }}</h3><p>{{ event.reason }}</p><small>{{ event.captured_at }}</small></article>{% else %}<p>No lifecycle changes recorded.</p>{% endfor %}
+</main></body></html>

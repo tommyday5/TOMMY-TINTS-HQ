@@ -25,6 +25,20 @@ def schema(db):
   capture_kind TEXT NOT NULL CHECK(capture_kind IN ('before_edit','saved')),
   captured_at TEXT NOT NULL, PRIMARY KEY(transaction_id,revision))""")
 
+ # Separate append-only lifecycle preserves legacy transaction schema and values.
+ db.execute("""CREATE TABLE IF NOT EXISTS finance_transaction_archive (
+  transaction_id TEXT NOT NULL, revision INTEGER NOT NULL,
+  archived INTEGER NOT NULL CHECK(archived IN (0,1)), reason TEXT NOT NULL,
+  captured_at TEXT NOT NULL, PRIMARY KEY(transaction_id,revision))""")
+
+def transaction_archived(db,ref):
+ row=db.execute('SELECT archived FROM finance_transaction_archive WHERE transaction_id=? ORDER BY revision DESC LIMIT 1',(ref,)).fetchone()
+ return bool(row and row['archived'])
+
+# Alias t is required for the shared predicate.
+ACTIVE_TRANSACTION_SQL="""COALESCE((SELECT a.archived FROM finance_transaction_archive a
+ WHERE a.transaction_id=t.id ORDER BY a.revision DESC LIMIT 1),0)=0"""
+
 def capture_transaction(db,row,kind):
  fields={key:row[key] for key in ('day','description','amount','category','reviewed')}
  db.execute("""INSERT OR IGNORE INTO finance_transaction_history
@@ -53,10 +67,12 @@ def snapshot():
   plan=db.execute('SELECT * FROM finance_plan WHERE id=1').fetchone()
   bills=[dict(r) for r in db.execute('SELECT * FROM finance_bills ORDER BY archived,due,id')]
   bill_history=[dict(id=r['id'],bill_id=r['bill_id'],revision=r['revision'],snapshot=json.loads(r['snapshot']),created=r['created']) for r in db.execute('SELECT * FROM finance_bill_history ORDER BY created DESC,id DESC LIMIT 250')]
-  transactions=[dict(r) for r in db.execute('SELECT * FROM finance_transactions ORDER BY day DESC,id LIMIT 200')]
-  count=db.execute('SELECT COUNT(*) FROM finance_transactions').fetchone()[0]
+  transactions=[dict(r) for r in db.execute('SELECT t.* FROM finance_transactions t WHERE '+ACTIVE_TRANSACTION_SQL+' ORDER BY day DESC,id LIMIT 200')]
+  count=db.execute('SELECT COUNT(*) FROM finance_transactions t WHERE '+ACTIVE_TRANSACTION_SQL).fetchone()[0]
+  archived_transactions=[dict(r) for r in db.execute('SELECT t.* FROM finance_transactions t WHERE NOT ('+ACTIVE_TRANSACTION_SQL+') ORDER BY day DESC,id LIMIT 200')]
+  archived_count=db.execute('SELECT COUNT(*) FROM finance_transactions t WHERE NOT ('+ACTIVE_TRANSACTION_SQL+')').fetchone()[0]
   transaction_history=[dict(transaction_id=r['transaction_id'],revision=r['revision'],snapshot=json.loads(r['snapshot']),capture_kind=r['capture_kind'],captured_at=r['captured_at']) for r in db.execute('SELECT * FROM finance_transaction_history ORDER BY captured_at DESC,transaction_id,revision DESC LIMIT 250')]
- return dict(plan=dict(plan) if plan else dict(balance=None,balance_date=None,target=None,revision=0),bills=bills,bill_history=bill_history,transactions=transactions,transaction_count=count,transaction_history=transaction_history,categories=CATEGORIES,bank_verified=False,source='Owner-entered HQ records',received_income=None)
+ return dict(plan=dict(plan) if plan else dict(balance=None,balance_date=None,target=None,revision=0),bills=bills,bill_history=bill_history,transactions=transactions,transaction_count=count,archived_transactions=archived_transactions,archived_transaction_count=archived_count,transaction_history=transaction_history,categories=CATEGORIES,bank_verified=False,source='Owner-entered HQ records',received_income=None)
 
 @finance.get('/hq/finance/command')
 @required
@@ -104,6 +120,7 @@ def api():
      db.execute('INSERT INTO finance_bill_history (id,bill_id,revision,snapshot,created) VALUES(?,?,?,?,?)',
       (uuid.uuid4().hex,ref,rev+1,json.dumps(bill_state,sort_keys=True),datetime.now(timezone.utc).isoformat()))
     else:
+     if row and transaction_archived(db,ref):return jsonify(error='Restore this archived transaction before editing.'),409
      if row and split_active(db,ref):return jsonify(error='Withdraw the active split before changing this transaction.'),409
      category=d.get('category');reviewed=d.get('reviewed',False)
      if category not in CATEGORIES or type(reviewed) is not bool:raise ValueError('Choose a valid classification')
@@ -119,6 +136,10 @@ def api():
  except (ValueError,TypeError):return jsonify(error='Check amounts, dates and required fields. Review does not verify a bank receipt.'),400
  except sqlite3.Error:return jsonify(error='Finance storage unavailable. Nothing confirmed saved.'),503
 
+
+# Owner-only archive/restore, explicitly separate from verified bank data.
+from hq_transaction_archive import register as register_archive
+register_archive(finance)
 
 # Additive owner-only receivables routes. Do not merge invoice values with receipts.
 from hq_receivables import register as register_receivable_routes
