@@ -201,3 +201,30 @@ class PersistentTimerTests(unittest.TestCase):
         self.assertIn(b'415 min allowance',page.data)
         anonymous=app.test_client()
         self.assertEqual(anonymous.get("/hq/work/"+self.job+"/time").status_code,302)
+
+    def test_next_session_suggests_last_saved_allowance_not_discarded(self):
+        self.command("start", allowance="390")
+        sid = snapshot(self.job)["id"]
+        self.now.return_value += 120
+        self.command("finish", 0, sid)
+        append_work_time(self.job, {"operation_id":sid, "minutes":"2", "stage":"repair",
+                                    "hourly_cost_pence":"", "note":""}, 0, "owner")
+        self.now.return_value += 1
+        self.command("start", allowance="600")
+        sid = snapshot(self.job)["id"]
+        self.now.return_value += 15
+        self.command("finish", 0, sid)
+        self.command("discard", 1, sid, reason="Synthetic mistaken start")
+        self.assertEqual(history(self.job)["previous_saved_allowance"], 390)
+        c=app.test_client()
+        with c.session_transaction() as s, auth_db() as db:
+            s["hq_sid"]=issue_session(db,"owner")
+            s["csrf"]="test"
+        page=c.get("/hq/work/"+self.job+"/time")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b'placeholder="e.g. 390" value="390"',page.data)
+        self.assertIn(b'Previous saved session estimate suggested',page.data)
+        self.assertIn(b'2 minutes</strong> already saved against this job',page.data)
+        self.assertIn(b'Change job',page.data)
+        self.assertIsNone(snapshot(self.job))
+        self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"],2)
