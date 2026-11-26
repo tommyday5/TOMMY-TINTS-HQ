@@ -1133,3 +1133,38 @@ product withdrawal/approval and maintenance price isolation. No public
 route change. Production authenticated UI acceptance remains unverified.
 Next: independent off-volume recovery and bounded approved import, provider
 payment evidence and fee accounting, financial parity and customer acceptance.
+
+
+## 26 November — DNA evidence live; offline recovery verification
+
+PR #294 final head 50a28732173e7def2b98c98d2e05a86d5f4a424e
+passed Actions run 45726526347 (665 integration tests observed; dependency,
+syntax and app update steps successful). Squash merged as 92a63043;
+Railway deployment 616459d4-ec05-4dd9-80c4-e5bb41d7022a reports SUCCESS
+at 01:07:40 UTC. Original 1024 MB /data volume and 48 workbook tabs
+were checked before merge. DNA manual payout proposals now deployed;
+independent provider/bank verification, actual fee posting and owner
+acceptance remain unverified. No authority cutover.
+
+New slice provides an offline verification command for the existing
+encrypted SQLite export. The owner workflow describes how to run it on
+a trusted separate computer. Passphrase is entered locally, bounded
+regular files only, authenticated decryption and SQLite integrity checks
+in memory, no database restore or network connection. Output contains
+only hashes, byte count and check result, not records. Synthetic test
+checks an exported snapshot after removing the temporary live source,
+wrong password, tampering and unchanged snapshot. CI/deployment pending.
+A locally printed result is not server-attested proof of off-volume
+custody; retain it alongside the encrypted copy. No real snapshot,
+download, import or workbook write was performed.
+
+Owner action: Historical Jobs Migration > staged job > Private recovery
+snapshot > Save private backup and check isolated restore; export using
+owner-held public key and verify independently. Then prepare exact
+bounded import manifest and separately approve it; do not apply if
+source conflicts or missing fields remain. Production browser acceptance
+and exact first import eligibility/counts are still unverified.
+Customer service-to-HQ, canonical quote conversion, vehicle requests,
+product approval and account isolation passed PR #294 CI. Public routes
+unchanged. Next: bounded owner-approved historical import, actual
+verified receipt/fee accounting and independent customer UI acceptance.

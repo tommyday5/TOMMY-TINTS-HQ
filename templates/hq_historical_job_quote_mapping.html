@@ -71,6 +71,7 @@
 {% for item in backups %}<p>Snapshot {{ item.id }} · {{ item.bytes }} bytes · previously checked before saving (not reverified on this page).</p>{% else %}<p>No private recovery snapshots saved.</p>{% endfor %}
 {% if backups %}
 <h3>Download an encrypted recovery copy</h3>
+<p>Keep the encrypted copy on a separate owner-controlled device. On a trusted offline computer with Python 3.12 and the repository dependencies installed, run <code>python -m hq_verify_recovery path/to/download.tthq path/to/recovery-private.pem</code> from the repository checkout. Enter the passphrase only on that computer. The verifier checks authentication and SQLite integrity without restoring or writing the database and prints a hash-only verification result. Never upload your private key. Keep the result and encrypted copy together; an HQ download alone is not proof of independent recovery.</p>
 <p>Save a copy outside Railway on storage you control. Use a 3072- or 4096-bit RSA public key in PEM format; keep its corresponding private key separately offline. Never paste the private key here. No automatic cloud upload or restore takes place. If the private key is lost the export cannot be recovered.</p>
 <form method="post">
 <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="encrypted_export">
