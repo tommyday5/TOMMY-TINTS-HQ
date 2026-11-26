@@ -38,3 +38,24 @@ test('invalid stored data cannot inflate time; unknown allowance stays unknown',
   assert.equal(t.nodes.clockPercent.textContent,'—');
   assert.equal(t.nodes.clockFinish.disabled,true);
 });
+
+function persistentClock({seconds=0,recorded=0,running='yes',allowance=100}={}) {
+  let now=1000000,tick,foreground;
+  const nodes={serverTimer:{dataset:{seconds:String(seconds),recorded:String(recorded),running,allowance:String(allowance)}},serverClock:{},serverAllowanceNotice:{}};
+  const script='(()=>{const root=document.getElementById(\'serverTimer\');'+source.split("(()=>{const root=document.getElementById('serverTimer');")[1];
+  vm.runInNewContext(script,{document:{getElementById:id=>nodes[id],hidden:false,addEventListener:(_,fn)=>{foreground=fn}},Date:{now:()=>now},setInterval:fn=>{tick=fn}});
+  return {nodes,wake(seconds){now+=seconds*1000;foreground()},tick(){tick()}};
+}
+test('persistent timer catches up after device sleep without counting paused breaks',()=>{
+  const running=persistentClock({seconds:60});running.wake(3600);
+  assert.equal(running.nodes.serverClock.textContent,'01:01:00');
+  const paused=persistentClock({seconds:60,running:'no'});paused.wake(3600);
+  assert.equal(paused.nodes.serverClock.textContent,'00:01:00');
+});
+test('persistent allowance distinguishes 75, 90, and 100 percent including saved labour',()=>{
+  const t=persistentClock({recorded:75,running:'yes'});
+  assert.match(t.nodes.serverAllowanceNotice.textContent,/75%/);
+  t.wake(15*60);assert.match(t.nodes.serverAllowanceNotice.textContent,/90%/);
+  t.wake(10*60);assert.match(t.nodes.serverAllowanceNotice.textContent,/Allowance reached/);
+  t.wake(60);assert.match(t.nodes.serverAllowanceNotice.textContent,/00:01:00 over/);
+});
