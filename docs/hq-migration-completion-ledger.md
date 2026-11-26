@@ -1842,3 +1842,25 @@ Authenticated production browser acceptance remains outstanding.
 Historical migration, formula reconciliation and authority unchanged;
 actual off-volume recovery and bounded import still require owner
 approval. No production database row contents inspected or changed.
+
+### 2026-11-26 — recovery queue regression and reviewed timer correction
+
+PR #317 exact head 38e4afff47082ead48069f243a8b388406c5b56f passed
+Actions 45902350476 (dependency, syntax, full integration/regression and
+JavaScript checks), squash merged as f78b08e2b99b5c80a001f11f9c65f233a5a85699.
+Railway deployment 0a6e77ac-f665-485d-8252-cf9666d324e2 was BUILDING
+on initial check. Original /data volume 540528d1-3953-4737-9d92-3c861575c5d4
+(1024 MB) confirmed before merge. Workbook 48-tab schema reverified read-only.
+
+Next slice: owner review can reduce measured timer minutes with a required
+reason, preserving original active/break seconds and posting exactly one
+linked ledger entry. An audit event retains original seconds, approved
+minutes and correction reason. Increases, manual-entry misuse, missing
+reasons and conflicting replays rejected; existing exact-post fingerprints
+unchanged. Synthetic route and persistence regression included. No live
+record edits, price changes, external actions or authentication changes.
+No changes to public Bookings routes; exact-head CI and deployment pending.
+Native domain implementation and historical authority/reconciliation
+status remain unchanged. Current Kia native identity and authenticated
+production acceptance remain unverified. Off-volume recovery and bounded
+historical import require separately evidenced owner approval.
