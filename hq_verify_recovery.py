@@ -16,7 +16,8 @@ from hq_recovery_export import MAX_ENVELOPE, decrypt_for_isolated_verification
 
 
 def _read_bounded(path, maximum):
-    with Path(path).open("rb") as handle:
+    fd = os.open(Path(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as handle:
         if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
             raise ValueError("Regular file required")
         data = handle.read(maximum + 1)
