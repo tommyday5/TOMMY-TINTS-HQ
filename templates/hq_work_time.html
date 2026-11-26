@@ -103,7 +103,7 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 <button type="submit">Save actual time</button>
 </form>
 {% else %}
-<div class="panel"><p>Finish and review an active timer before saving its minutes. New time entries require approved or in-progress jobs. Existing records remain visible.</p></div>
+<div class="panel">{% if not work.can_edit_time %}<p>New time entries and corrections require approved or in-progress jobs. Existing records remain visible.</p>{% else %}<p>Finish and review the active timer before saving its minutes.</p>{% endif %}</div>
 {% endif %}
 <section class="panel" id="timeHistory"><h2>Time entry history</h2>
 {% if work.entries %}
