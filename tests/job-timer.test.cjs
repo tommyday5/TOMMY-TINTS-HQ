@@ -39,9 +39,9 @@ test('invalid stored data cannot inflate time; unknown allowance stays unknown',
   assert.equal(t.nodes.clockFinish.disabled,true);
 });
 
-function persistentClock({seconds=0,recorded=0,running='yes',allowance=100}={}) {
+function persistentClock({seconds=0,recorded=0,running='yes',allowance=100,paused='no',breakSeconds=0}={}) {
   let now=1000000,tick,foreground;
-  const nodes={serverTimer:{dataset:{seconds:String(seconds),recorded:String(recorded),running,allowance:String(allowance)}},serverClock:{},serverAllowanceNotice:{}};
+  const nodes={serverTimer:{dataset:{seconds:String(seconds),recorded:String(recorded),running,allowance:String(allowance),paused,break:String(breakSeconds)}},serverClock:{},serverAllowanceNotice:{},serverTotalClock:{},serverBreakClock:{},serverPercent:{},serverAllowanceRing:{style:{setProperty(){}},setAttribute(){},removeAttribute(){}}};
   const script='(()=>{const root=document.getElementById(\'serverTimer\');'+source.split("(()=>{const root=document.getElementById('serverTimer');")[1];
   vm.runInNewContext(script,{document:{getElementById:id=>nodes[id],hidden:false,addEventListener:(_,fn)=>{foreground=fn}},Date:{now:()=>now},setInterval:fn=>{tick=fn}});
   return {nodes,wake(seconds){now+=seconds*1000;foreground()},tick(){tick()}};
@@ -58,4 +58,21 @@ test('persistent allowance distinguishes 75, 90, and 100 percent including saved
   t.wake(15*60);assert.match(t.nodes.serverAllowanceNotice.textContent,/90%/);
   t.wake(10*60);assert.match(t.nodes.serverAllowanceNotice.textContent,/Allowance reached/);
   t.wake(60);assert.match(t.nodes.serverAllowanceNotice.textContent,/00:01:00 over/);
+});
+
+test('persistent cumulative clock includes saved labour once and pause clock excludes breaks',()=>{
+  const t=persistentClock({seconds:120,recorded:30,running:'no',paused:'yes',breakSeconds:20,allowance:40});
+  assert.equal(t.nodes.serverTotalClock.textContent,'00:32:00');
+  assert.equal(t.nodes.serverPercent.textContent,'80%');
+  t.wake(3600);
+  assert.equal(t.nodes.serverClock.textContent,'00:02:00');
+  assert.equal(t.nodes.serverTotalClock.textContent,'00:32:00');
+  assert.equal(t.nodes.serverBreakClock.textContent,'01:00:20');
+  const running=persistentClock({seconds:120,recorded:30,breakSeconds:20,allowance:40});
+  running.wake(480);
+  assert.equal(running.nodes.serverTotalClock.textContent,'00:40:00');
+  assert.equal(running.nodes.serverBreakClock.textContent,'00:00:20');
+  assert.equal(running.nodes.serverPercent.textContent,'100%');
+  const unknown=persistentClock({allowance:0});
+  assert.equal(unknown.nodes.serverPercent.textContent,'—');
 });
