@@ -6,6 +6,7 @@
 <form method="get"><label>Month<input type="month" name="month" value="{{ month }}" required></label><button>Show month</button></form>
 {% if error %}<p role="alert">{{ error }}</p>{% endif %}
 {% if report is not none %}
+<p>{{ report.archived_count }} archived manual entries excluded from these totals. <a href="/hq/finance/command">Review archived entries in Finance Command Centre</a>.</p>
 {% if report.entries %}
 <div class="grid">
 <article><h2>Recorded inflows</h2><p>£{{ "%.2f"|format(report.incoming/100) }}</p></article>
@@ -21,8 +22,9 @@
 <p>{% if entry.split %}Active split proposal (not bank verified){% elif entry.reviewed %}Owner-reviewed classification (not bank verified){% else %}Needs owner review{% endif %}</p>
 {% for line in entry.lines %}<p>{{ line.category|replace("_"," ") }} · £{{ "%.2f"|format(line.pence/100) }}</p>{% endfor %}
 <a href="{{ url_for('native_finance.transaction_split_page',ref=entry.id) }}">{{ 'Edit / withdraw split' if entry.split else 'Create split / view history' }}</a>
+<a href="{{ url_for('native_finance.transaction_archive_page',ref=entry.id) }}">Archive / history</a>
 </article>
 {% endfor %}
-{% else %}<p>No owner-entered transactions in this month. Actual bank activity is unknown.</p>{% endif %}
+{% else %}<p>No active owner-entered transactions in this month. Actual bank activity is unknown.</p>{% endif %}
 {% endif %}
 </main></body></html>
