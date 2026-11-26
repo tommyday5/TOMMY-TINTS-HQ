@@ -18,7 +18,7 @@ from hq_auth import required
 from hq_core_records import _audit_work, _schema, StaleWorkRecordError
 from hq_work_progress import WORK_STAGES, work_progress_snapshot, record_work_progress
 from hq_work_time import time_ledger_snapshot, append_work_time, void_work_time
-from hq_work_timer import snapshot as timer_snapshot, transition as timer_transition, history as timer_history
+from hq_work_timer import snapshot as timer_snapshot, transition as timer_transition, history as timer_history, open_timer_jobs
 from hq_work_materials import material_ledger_snapshot, append_work_material, void_work_material, UNITS
 from hq_work_expenses import expense_ledger_snapshot, append_work_expense, void_work_expense, EXPENSE_TYPES
 from hq_work_archive import archived_work_snapshot, set_work_archived, list_archived_work
@@ -864,4 +864,9 @@ def timer_jobs():
         page=search_work_records(query=query,kind='job',limit=50)
     except ValueError:
         abort(400)
-    return render_template('timer_jobs.html',page=page,query=query)
+    try:
+        unfinished = open_timer_jobs()
+    except (OSError, sqlite3.Error, RuntimeError):
+        current_app.logger.exception('Timer recovery unavailable')
+        abort(503)
+    return render_template('timer_jobs.html',page=page,query=query,unfinished=unfinished)
