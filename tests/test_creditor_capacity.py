@@ -268,3 +268,73 @@ class NativePeriodReviewTests(unittest.TestCase):
             self.assertEqual(state["native_review"]["mapped"]["trading"],300000)
             self.assertEqual(len(snapshot()[0]),1)
             self.assertIn(b"Saved native observation provenance",client.get(url).data)
+
+
+    def test_explicit_funding_refund_categories_via_owner_api_and_period_preview(self):
+        from hq_creditor_capacity import preview_native_period
+        from hq_finance_splits import validate_lines
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
+            "HQ_DATA_DIR":tmp, "HQ_SESSION_SECRET":"synthetic",
+            "GOOGLE_CLIENT_ID":"test", "GOOGLE_CLIENT_SECRET":"test",
+            "HQ_ALLOWED_GOOGLE_EMAIL":"owner@example.invalid",
+        }), patch("hq_creditor_capacity.storage_ready", return_value=True):
+            client=app.test_client()
+            api="/api/hq/finance/native"
+            headers={"X-HQ-CSRF":"test"}
+            with client.session_transaction() as sess, auth_db() as db:
+                sess["hq_sid"]=issue_session(db,"synthetic-owner")
+                sess["google_sub"]="synthetic-owner"
+                sess["csrf"]="test"
+            categories=client.get(api).get_json()["categories"]
+            entries=[
+                ("customer_income",300000), ("director_funding",100000),
+                ("external_funding",60000), ("loan_repayment",-25000),
+                ("non_trading_refund",5000), ("customer_refund",-10000),
+                ("director_loan_repayment",-20000), ("loan",75000),
+                ("director_repayment",-5000), ("director_funding",50000),
+            ]
+            for i,(category,amount) in enumerate(entries):
+                self.assertIn(category,categories)
+                payload=dict(kind="transaction", id=format(i+1,"032x"), revision=0,
+                    day="2026-01-02", description="synthetic", amount=amount,
+                    category=category, reviewed=i!=9)
+                if category in ("director_funding","external_funding","loan_repayment",
+                                "non_trading_refund","customer_refund","director_loan_repayment"):
+                    for invalid in (0,-amount):
+                        self.assertEqual(client.post(api,json=dict(payload,amount=invalid),
+                                                     headers=headers).status_code,400)
+                response=client.post(api,json=payload,headers=headers)
+                self.assertEqual(response.status_code,200)
+                self.assertFalse(response.get_json()["bank_verified"])
+            with self.assertRaises(ValueError):
+                validate_lines([dict(category="director_funding",pence=-100),
+                                dict(category="fuel",pence=-100)],-200)
+            self.assertEqual(len(validate_lines([dict(category="director_funding",pence=100),
+                                                 dict(category="external_funding",pence=100)],200)),2)
+            report=preview_native_period("2026-01-01","2026-01-30")
+            self.assertEqual(report["mapping_version"],2)
+            self.assertEqual(report["mapped"],dict(trading=300000,director_funding=100000,
+                                                   observed_debt=25000))
+            self.assertEqual(report["excluded"]["external_funding"]["incoming"],60000)
+            self.assertEqual(report["excluded"]["non_trading_refund"]["incoming"],5000)
+            self.assertEqual(report["excluded"]["customer_refund"]["outgoing"],10000)
+            self.assertEqual(report["excluded"]["director_loan_repayment"]["outgoing"],20000)
+            self.assertEqual(report["excluded"]["loan"]["incoming"],75000)
+            self.assertEqual(report["excluded"]["director_repayment"]["outgoing"],5000)
+            self.assertEqual(report["excluded"]["unreviewed"]["incoming"],50000)
+            self.assertFalse(report["bank_verified"])
+            form=PeriodObservationTests().form()
+            form.update(native_review_digest=report["digest"],native_review_confirm="yes",
+                        period_director_funding="1000.00",period_observed_debt="250.00",
+                        period_trading="2900.00")
+            url="/hq/finance/creditor-capacity"
+            self.assertEqual(client.post(url,data=form).status_code,303)
+            state=snapshot()[0][0]["state"]
+            self.assertEqual(state["director_funding"],101458)
+            self.assertEqual(state["period"]["totals"]["trading"],290000)
+            self.assertEqual(state["native_review"]["mapped"]["trading"],300000)
+            self.assertEqual(state["native_review"]["mapping_version"],2)
+            self.assertIn(b"Saved native observation provenance",client.get(url).data)
+            self.assertEqual(client.post(url,data=form).status_code,303)
+            self.assertEqual(len(snapshot()[0]),1)
+            self.assertEqual(app.test_client().get(api).status_code,302)
