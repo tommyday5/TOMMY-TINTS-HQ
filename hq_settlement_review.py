@@ -81,6 +81,8 @@ def payment_member(db, allocation_id, entry):
                 recheck_id=latest["id"] if latest else None, gross=gross)
 
 def check_source(db, entry, allocations):
+    from hq_creditor_transaction_matches import require_no_match
+    require_no_match(db, entry["ref"])
     if dna_active(db, source=entry["ref"]):
         raise ValueError("Withdraw the existing DNA payout proposal first.")
     if active_candidates(db, entry["ref"]) or reported_links(db, entry["ref"]):
