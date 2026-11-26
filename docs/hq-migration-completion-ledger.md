@@ -1718,3 +1718,43 @@ Next: direct independent bank evidence and richer classification mappings
 after explicit review, remaining formula parity, bounded migration and
 customer production acceptance. No actual data, payments, bookings or
 workbook cells modified.
+
+
+## 26 November — native transaction observations deployed; explicit funding and refunds
+
+PR #309 initially failed a synthetic split fixture with missing Flask application
+context (Actions 45846169575). Corrected the fixture without weakening the
+production checks; exact head 26abf31961bb2706ba0ef5c50534d006792679ba passed
+Actions 45854652965 (127 root + 682 integration Python tests and 9 JS tests).
+Squash merged as d337b6ac412d1fa352e97f0f6962047ac9341c5a; Railway deployment
+e4ee1859-ce39-4c1c-97fc-21b09b955e46 SUCCESS at 16:01:59 UTC. Existing /data
+volume 540528d1-3953-4737-9d92-3c861575c5d4 checked attached; 1/1 replica,
+no pending infrastructure work. All 48 workbook tabs and Cash Engine A4:I12
+and A14:P15 formula schema were read-only rechecked. No production database
+rows or Sheets cells changed by development.
+
+New proposed slice: Finance Command Centre > Transactions & reconciliation
+supports explicit director funding, external funding, loan repayment,
+non-trading refund, customer refund and director loan repayment. Existing
+legacy categories remain unchanged and are never automatically reclassified.
+New categories require the correct signed nonzero amount on parent and split
+edits. Cash Engine native review mapping v2 includes reviewed director funding
+as owner support (not trading) and loan repayment as debt outflow; other new
+categories are explicitly disclosed as excluded amounts. Customer refunds are
+not silently netted into gross trading suggestions; owner reviews and corrects
+period totals before saving. Existing v1 saved provenance is preserved; new
+previews use v2 and stale digests are rejected. No verified bank balance or
+posting is implied. Synthetic HTTP regression covers editable classifications,
+direction rejection, legacy ambiguity, excluded refund and funding totals,
+owner-edited observation, persistence and replay. CI/deployment pending.
+
+PR #309 passing logs confirm service and combined-basket requests, canonical
+quote conversion, customer-visible approval, owner booking confirmation,
+maintenance pricing isolation and private product quote workflows. No public
+routes changed. Direct production HTTP probes for /book and creditor-capacity
+still failed DNS in the development environment; authenticated live acceptance
+unverified. Recovery export and exact 1–5 customer import require separate
+owner approvals; no live snapshot or import executed. Historical authority
+unchanged. Next: independent bank evidence, full formula parity (including
+premises subset and remaining settings), approved bounded migration, customer
+production acceptance and legal/operational workflow gaps.

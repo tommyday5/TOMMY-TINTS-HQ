@@ -55,6 +55,8 @@ def validate_lines(lines, amount):
             raise ValueError("Choose a category and nonzero amount.")
         if abs(pence) > abs(amount) or (pence > 0) != (amount > 0):
             raise ValueError("Each split must have the same direction as its parent.")
+        from hq_native_finance import validate_explicit_direction
+        validate_explicit_direction(category,pence)
         clean.append(dict(category=category, pence=pence))
     if sum(x["pence"] for x in clean) != amount:
         raise ValueError("Split amounts must add up exactly to the transaction.")

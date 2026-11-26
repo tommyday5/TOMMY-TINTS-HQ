@@ -90,6 +90,8 @@ NATIVE_PERIOD_MAP = {
     "materials": ("growth", -1), "equipment": ("growth", -1),
     "creditor_payment": ("observed_debt", -1),
     "director_drawings": ("director_drawings", -1),
+    "director_funding": ("director_funding", 1),
+    "loan_repayment": ("observed_debt", -1),
 }
 
 
@@ -118,7 +120,7 @@ def native_period_review(db, start, end):
                 bucket["outgoing"] += max(-amount,0)
     summary = dict(start=start,end=end,rows=len(evidence),mapped=mapped,
                    excluded=excluded,archived=report["archived_count"],
-                   mapping_version=1,bank_verified=False)
+                   mapping_version=2,bank_verified=False)
     summary["digest"] = hashlib.sha256(json.dumps(
         [summary,evidence],sort_keys=True,separators=(",",":")).encode()).hexdigest()
     return summary

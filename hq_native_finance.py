@@ -8,6 +8,15 @@ from customer_request_store import connect
 
 finance=Blueprint('native_finance',__name__)
 CATEGORIES=('unclassified','customer_income','materials','fuel','insurance','rent_utilities','equipment','subscriptions','vehicle','director_drawings','director_repayment','internal_transfer','loan','creditor_payment','other')
+# Explicit new categories only: legacy ambiguous classifications are never reinterpreted.
+EXPLICIT_DIRECTIONS={'director_funding':1,'external_funding':1,'loan_repayment':-1,
+                     'non_trading_refund':1,'customer_refund':-1,'director_loan_repayment':-1}
+CATEGORIES += tuple(EXPLICIT_DIRECTIONS)
+
+def validate_explicit_direction(category, amount):
+ direction=EXPLICIT_DIRECTIONS.get(category)
+ if direction is not None and amount*direction<=0:
+  raise ValueError('Explicit classification must match the direction of the transaction.')
 
 def schema(db):
  db.execute('CREATE TABLE IF NOT EXISTS finance_plan (id INTEGER PRIMARY KEY CHECK(id=1), balance INTEGER, balance_date TEXT, target INTEGER, revision INTEGER NOT NULL DEFAULT 0)')
@@ -161,6 +170,7 @@ def api():
      if category not in CATEGORIES or type(reviewed) is not bool:raise ValueError('Choose a valid classification')
      if reviewed and category=='unclassified':raise ValueError('Classify before marking reviewed')
      values=(day(d.get('day')),text(d.get('description')),money(d.get('amount'),signed=True),category,int(reviewed))
+     validate_explicit_direction(category,values[2])
      if row:
       capture_transaction(db,row,'before_edit')
      db.execute('INSERT OR REPLACE INTO finance_transactions VALUES(?,?,?,?,?,?,?)',(ref,*values,rev+1))
