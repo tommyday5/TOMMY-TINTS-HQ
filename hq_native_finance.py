@@ -176,3 +176,7 @@ register_settlement_review(finance)
 # Private creditor outflow proposals, not payments or bank entries.
 from hq_creditor_transaction_matches import register as register_creditor_transaction_matches
 register_creditor_transaction_matches(finance)
+
+# Explicit monthly planned commitment creation, never automatic payment.
+from hq_monthly_commitments import register as register_monthly_commitments
+register_monthly_commitments(finance)
