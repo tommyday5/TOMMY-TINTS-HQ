@@ -161,8 +161,15 @@ def append_work_time(work_id, payload, expected_revision, owner_identity):
             ):
                 raise StaleWorkRecordError("This time entry was submitted with different details.")
             return prior["entry_id"]
-        if work["kind"] != "job" or work["status"] not in _ALLOWED:
-            raise ValueError("Actual time can be recorded only for approved or in-progress jobs")
+        from hq_work_timer import tables as timer_tables
+        timer_tables(db)
+        timer = db.execute("SELECT * FROM hq_timer_sessions WHERE id=?", (fields["operation_id"],)).fetchone()
+        if timer and (timer["work_id"] != work_id or timer["state"] != "review"
+                      or timer["active_seconds"] // 60 != fields["minutes"]):
+            raise ValueError("Review the exact finished timer minutes before saving")
+        archived = db.execute("SELECT is_archived FROM hq_work_archive_state WHERE work_id=?", (work_id,)).fetchone()
+        if work["kind"] != "job" or work["status"] not in _ALLOWED or (archived and archived["is_archived"]):
+            raise ValueError("Actual time can be recorded only for active approved or in-progress jobs")
         if work["revision"] != expected_revision:
             raise StaleWorkRecordError("This job changed. Reload before recording time.")
         updated = db.execute("""UPDATE hq_work_records SET revision=revision+1
@@ -177,6 +184,9 @@ def append_work_time(work_id, payload, expected_revision, owner_identity):
             (entry_id, work_id, fields["operation_id"], fingerprint,
              fields["minutes"], fields["stage"], fields["note"],
              fields["hourly_cost_pence"], actor, _now()))
+        if timer:
+            db.execute("UPDATE hq_timer_sessions SET state='saved',entry_id=?,revision=revision+1 WHERE id=?",
+                       (entry_id, timer["id"]))
         _audit_work(db, work_id, expected_revision + 1, "actual_time_added",
                     {"entry_count_change": 0},
                     {"entry_count_change": 1, "entry_id": entry_id, "cost_known": fields["hourly_cost_pence"] is not None})
