@@ -426,7 +426,7 @@ def dna_money(raw):
 
 def dna_evidence(entry, payout, gross, fee, reference):
     # Exact provider statement ID; no inference from a bank merchant label.
-    payout = payout.strip().upper()
+    payout = payout.strip()
     if not ID.fullmatch(payout) or not ID.fullmatch(entry["ref"]):
         raise ValueError("Enter the exact DNA payout and bank transaction IDs.")
     if type(gross) is not int or not 0 < gross <= 1000000000:
@@ -438,7 +438,7 @@ def dna_evidence(entry, payout, gross, fee, reference):
 def dna_preview(db, entry, payout, gross, fee, reference):
     data = dna_evidence(entry, payout, gross, fee, reference)
     check_source(db, entry, [])
-    if any(r["payout_id"] == data["payout_id"] for r in dna_active(db)):
+    if any(r["payout_id"].casefold() == data["payout_id"].casefold() for r in dna_active(db)):
         raise ValueError("Withdraw the existing DNA payout proposal first.")
     return data, digest(data)
 
