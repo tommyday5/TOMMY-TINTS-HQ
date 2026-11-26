@@ -7,6 +7,7 @@ from contextlib import closing
 from datetime import date, datetime, timezone
 from decimal import Decimal, ROUND_FLOOR, ROUND_HALF_UP
 import json
+import hashlib
 import re
 import secrets
 import sqlite3
@@ -78,6 +79,60 @@ def _period_fields(form, end):
         monthly[key] = int((Decimal(value) * Decimal("30.4375") / days).quantize(
             Decimal("1"), rounding=ROUND_HALF_UP))
     return dict(start=start.isoformat(), end=end.isoformat(), days=days, totals=totals), monthly
+
+
+# Conservative explicit mapping only. Ambiguous categories and wrong
+# directions remain excluded; no inference from descriptions or bank data.
+NATIVE_PERIOD_MAP = {
+    "customer_income": ("trading", 1),
+    "fuel": ("opex", -1), "insurance": ("opex", -1),
+    "rent_utilities": ("opex", -1), "subscriptions": ("opex", -1),
+    "materials": ("growth", -1), "equipment": ("growth", -1),
+    "creditor_payment": ("observed_debt", -1),
+    "director_drawings": ("director_drawings", -1),
+}
+
+
+def native_period_review(db, start, end):
+    from hq_finance_splits import classification_period
+    first, last = _evidence_date(start), _evidence_date(end)
+    if not 1 <= (last-first).days+1 <= 366:
+        raise ValueError("Observation period must contain 1 to 366 inclusive days.")
+    report = classification_period(db, start, end, include_revisions=True)
+    mapped, excluded = {}, {}
+    evidence = []
+    for row in report["entries"]:
+        evidence.append({key:row[key] for key in
+                         ("id","day","revision","amount","reviewed","lines")})
+        for line in row["lines"]:
+            cat, amount = line["category"], line["pence"]
+            rule = NATIVE_PERIOD_MAP.get(cat)
+            if row["reviewed"] and rule and amount*rule[1]>0:
+                key = rule[0]
+                mapped[key] = mapped.get(key,0)+abs(amount)
+            else:
+                reason = "unreviewed" if not row["reviewed"] else cat
+                bucket = excluded.setdefault(reason, dict(count=0, incoming=0, outgoing=0))
+                bucket["count"] += 1
+                bucket["incoming"] += max(amount,0)
+                bucket["outgoing"] += max(-amount,0)
+    summary = dict(start=start,end=end,rows=len(evidence),mapped=mapped,
+                   excluded=excluded,archived=report["archived_count"],
+                   mapping_version=1,bank_verified=False)
+    summary["digest"] = hashlib.sha256(json.dumps(
+        [summary,evidence],sort_keys=True,separators=(",",":")).encode()).hexdigest()
+    return summary
+
+
+def preview_native_period(start, end):
+    from hq_native_finance import schema
+    from hq_finance_splits import tables
+    with closing(connect()) as db, db:
+        schema(db)
+        tables(db)
+        db.commit()
+        db.execute("BEGIN")
+        return native_period_review(db,start,end)
 
 
 def _fields(form):
@@ -192,12 +247,34 @@ def save(form, owner):
     if not ID.fullmatch(op) or not re.fullmatch(r"[0-9]{1,18}", rev):
         raise ValueError("Invalid revision or operation.")
     rev = int(rev)
-    state = json.dumps(_fields(form), sort_keys=True)
+    data = _fields(form)
+    digest = form.get("native_review_digest", "")
+    if digest and (not re.fullmatch(r"[0-9a-f]{64}",digest) or "period" not in data
+                   or form.get("native_review_confirm") != "yes"):
+        raise ValueError("Confirm the partial native transaction review in period mode.")
     actor = _actor_fingerprint(owner)
     with closing(connect()) as db, db:
         _scenario_table(db)
+        if digest:
+            from hq_native_finance import schema
+            from hq_finance_splits import tables
+            schema(db)
+            tables(db)
+        db.commit()
         db.execute("BEGIN IMMEDIATE")
         previous = db.execute("SELECT * FROM hq_creditor_capacity_scenarios WHERE operation=?", (op,)).fetchone()
+        if digest:
+            if previous:
+                # Exact replay uses retained provenance, never today's source.
+                review = json.loads(previous["state"]).get("native_review")
+                if not review or review["digest"] != digest:
+                    raise ValueError("Operation already used with different review.")
+            else:
+                review = native_period_review(db,data["period"]["start"],data["period"]["end"])
+                if review["digest"] != digest:
+                    raise ValueError("Native transactions changed. Prepare the review again.")
+            data["native_review"] = review
+        state = json.dumps(data, sort_keys=True)
         if previous:
             if (previous["revision"], previous["state"], previous["actor"]) != (rev+1, state, actor):
                 raise ValueError("Operation already used with different details.")
@@ -255,7 +332,15 @@ def register(bp):
         warning = bool(latest and (summary["committed_known"] > data["registered_debt"]
                                   or summary["unresolved"] or summary["incomplete"]
                                   or summary["archived"]))
-        return render_template("hq_creditor_capacity.html", money=MONEY, rates=RATES, data=data,
+        review = None
+        if request.method == "GET" and ("review_start" in request.args or "review_end" in request.args):
+            try:
+                review = preview_native_period(request.args.get("review_start",""),request.args.get("review_end",""))
+            except (ValueError, TypeError, KeyError, AttributeError) as exc:
+                error, code = str(exc), 400
+            except (sqlite3.Error, OSError):
+                error, code = "Native transaction review unavailable.", 503
+        return render_template("hq_creditor_capacity.html", native_review=review, money=MONEY, rates=RATES, data=data,
                                revision=latest["revision"] if latest else 0, history=history,
                                result=result, affordability=business_affordability(data) if latest else None,
                                optional_money=OPTIONAL_MONEY, period_money=PERIOD_MONEY, period_optional=PERIOD_OPTIONAL,
