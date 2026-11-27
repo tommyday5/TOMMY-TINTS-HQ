@@ -1935,3 +1935,28 @@ customer isolation. Direct /book and /hq/timer HTTP probes again failed DNS
 in this environment; authenticated production UI remains unverified.
 Historical domain authority unchanged; approved actual recovery snapshot
 and bounded historical import still outstanding.
+
+
+### 2026-11-27 — full activity ledger deployed; auditable rate correction
+
+PR #321 exact head afd5ad041c86631fcef59dec045f98bdb01e0c04 passed
+Actions 45932125318 (127 + 695 Python tests, 14 JavaScript tests).
+Squash merged as 4410b51d7630725e07ac4f0249d3627f373c9653.
+Railway deployment 5ce440e1-2dea-42e2-92db-8e0bee19948d SUCCESS at
+04:03:14 UTC. Original 1024 MB /data volume confirmed before merge;
+workbook metadata read-only confirms 48 tabs. No historical authority
+changed. Customer service request, canonical mixed-quote conversion,
+approval/appointment handoff, and account isolation passed in CI.
+Authenticated production browser acceptance remains unverified.
+
+Next slice: allow owner to correct previously saved internal hourly cost
+without changing the time, activity, note, customer selling price or
+timer source evidence. Atomic revision-checked reversal and replacement,
+original-to-successor audit link, mandatory reason, replay protection,
+unknown and explicit zero rate handling. Synthetic HTTP/SQLite regression
+also checks combined canonical cost report parity. Exact-head CI and
+production deployment pending. Archived work remains locked; no
+production job, price, payment, workbook or customer-facing write.
+The current black Kia has no verified canonical native job identity.
+Actual encrypted recovery and bounded historical import still require
+separate owner approval; no domain newly reconciled or authoritative.
