@@ -107,6 +107,8 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 {% if request.args.get("voided") == "1" %}<p class="success" role="status">Time entry reversed and retained in the audit history.</p>{% endif %}
 {% if request.args.get("rate_corrected") == "1" %}<p class="success" role="status">Internal hourly cost corrected. Recorded minutes are unchanged; original entry retained.</p>{% endif %}
 {% if request.args.get("rate_invalid") == "1" %}<p class="error" role="alert">Rate correction not saved. Confirm an active entry, a changed rate (up to two decimal places, or blank for unknown), and a reason.</p>{% endif %}
+{% if request.args.get("minutes_corrected") == "1" %}<p class="success" role="status">Saved minutes reduced. The original entry, measured timer evidence and hourly cost are retained.</p>{% endif %}
+{% if request.args.get("minutes_invalid") == "1" %}<p class="error" role="alert">Minutes correction not saved. Enter fewer positive whole minutes and a reason on an active entry.</p>{% endif %}
 {% if request.args.get("conflict") == "1" %}<p class="error" role="alert">This job changed. Review the latest revision before correcting an entry.</p>{% endif %}
 {% if work.can_edit_time and (not timer or (timer.state == "review" and 1 <= timer.active_seconds // 60)) %}
 <form id="timeEntryForm" class="panel" method="post" action="/hq/work/{{ work.id }}/time">
@@ -162,8 +164,9 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 <li>
 <strong>{{ entry.minutes }} minutes</strong> · {{ stages.get(entry.stage,'Historical activity') }}
 {% if entry.voided_at %}<strong> · VOIDED</strong>{% endif %}
-{% if entry.replaced_by %}<p>Rate corrected by entry {{ entry.replaced_by[-8:] }}; original evidence retained.</p>{% endif %}
+{% if entry.replaced_by %}<p>Entry corrected by {{ entry.replaced_by[-8:] }}; original evidence retained.</p>{% endif %}
 {% if entry.corrected_from %}<p>Rate correction of entry {{ entry.corrected_from[-8:] }}: {{ entry.rate_correction_reason }}</p>{% endif %}
+{% if entry.minutes_corrected_from %}<p>Minutes correction of entry {{ entry.minutes_corrected_from[-8:] }}: {{ entry.minute_correction_reason }}</p>{% endif %}
 {% if entry.note %}<p>{{ entry.note }}</p>{% endif %}
 <p><time datetime="{{ entry.created_at }}">{{ entry.created_at }}</time>
 · {% if entry.hourly_cost_pence is none %}internal hourly cost unknown{% else %}£{{ '%.2f'|format(entry.hourly_cost_pence/100) }}/hour recorded{% endif %}</p>
@@ -178,6 +181,18 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 <label>Correction reason<input name="reason" required maxlength="160"></label>
 <button class="secondary" type="submit">Save corrected rate</button>
 </form></details>
+{% if entry.minutes > 1 %}
+<details><summary>Reduce saved working minutes</summary>
+<form method="post" action="/hq/work/{{ work.id }}/time/{{ entry.entry_id }}/minutes">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="revision" value="{{ work.revision }}">
+<input type="hidden" name="operation_id" value="{{ entry.minute_operation }}">
+<label>Corrected actual minutes<input name="minutes" type="number" inputmode="numeric" min="1" max="{{ entry.minutes - 1 }}" step="1" required></label>
+<p class="hint">Only reduce time accidentally over-recorded. Hourly cost, activity, customer price and original measured evidence are preserved.</p>
+<label>Correction reason<input name="reason" required maxlength="160"></label>
+<button class="secondary" type="submit">Save corrected minutes</button>
+</form></details>
+{% endif %}
 <form method="post" action="/hq/work/{{ work.id }}/time/{{ entry.entry_id }}/void">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <input type="hidden" name="revision" value="{{ work.revision }}">
