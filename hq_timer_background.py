@@ -19,6 +19,12 @@ def run(stop, logger):
         except Exception as exc:
             # Never log customer records or exception details containing private data.
             logger.warning("Private timer alert scan failed (%s); retrying", type(exc).__name__)
+        else:
+            try:
+                import hq_timer_push_preview
+                hq_timer_push_preview.refresh()
+            except Exception as exc:
+                logger.warning("Private timer preview refresh failed (%s); retrying", type(exc).__name__)
         stop.wait(INTERVAL_SECONDS)
 
 
