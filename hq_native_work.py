@@ -926,4 +926,6 @@ def timer_jobs():
     except (OSError, sqlite3.Error, RuntimeError):
         current_app.logger.exception('Timer recovery unavailable')
         abort(503)
-    return render_template('timer_jobs.html',page=page,query=query,unfinished=unfinished)
+    response = current_app.make_response(render_template('timer_jobs.html',page=page,query=query,unfinished=unfinished))
+    response.headers["Cache-Control"] = "no-store"
+    return response
