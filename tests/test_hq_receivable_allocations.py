@@ -134,6 +134,20 @@ class AllocationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             save_invoice(changed)
 
+    def test_lost_response_replay_without_evidence_reference(self):
+        self.login()
+        claim = self.payload(amount_pence=1000, evidence_ref="")
+        # The first commit succeeds, but imagine the browser never receives it.
+        self.assertEqual(self.post(claim).json["revision"], 1)
+        self.assertEqual(self.post(claim).json["revision"], 1)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_receivable_allocations").fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_receivable_allocation_events").fetchone()[0], 1)
+        result = self.client.get("/api/hq/finance/receipt-allocations").json
+        self.assertEqual(result["invoices"][0]["owner_reported_allocated_pence"], 1000)
+        self.assertFalse(result["bank_verified"])
+        self.assertIsNone(result["collected_income"])
+
     def test_duplicate_evidence_guard_and_reversed_correction(self):
         self.login()
         first = self.payload(amount_pence=5000, evidence_ref=" SYNTH-EXACT ")

@@ -2438,3 +2438,28 @@ Synthetic HTTP and concurrent distinct-operation regressions added. CI/deploymen
 pending. No new historical import or domain authority, no actual jobs, payments,
 financial data or workbook writes. Recovery snapshot and first bounded import
 still require exact preview and owner approval.
+
+
+### 2026-11-27 — exact receipt guard deployed; uncertain browser-save retry
+
+PR #339 exact head 083f3a18e0ba6a1782f4ab753f8f76f6bd7036f2 passed
+Actions 46067425291 (127 + 719 Python tests and 19 JavaScript tests).
+Squash merged as bd6dc2dddc672a9bbe2136f84ca2143d01f2a5b0.
+Railway deployment 00dbbb59-78f8-41b9-8b0e-b2ce8c1f2711 SUCCESS at
+21:58:35 UTC; original /data 1024 MB volume attached, no pending work.
+Workbook metadata confirms 48 tabs, read only. Synthetic owner/customer quote,
+appointment handoff and account isolation, job timer pause and device sleep
+regressions passed. Direct production /book and /hq/timer still fail DNS from
+the development environment. Current Kia identity and authenticated acceptance
+remain unverified.
+
+Next proposed slice: keep an identical allocation ID and operation token in
+memory if a browser save has an uncertain response, including a lost response
+after successful server commit and no-reference claims. Lock edits while
+outcome unknown; retry same request; distinguish confirmed save with failed
+refresh and require reload instead of resubmission. No personal information is
+persisted in browser storage; cross-page/restart recovery still requires
+checking saved entries before retrying. Synthetic JS and SQLite replay tests
+added; CI/deployment pending. Owner-reported entries remain unverified; no
+new domain authority, historical data import, payment or workbook writes.
+Next: actual source-evidence matching and approval-gated recovery/import.
