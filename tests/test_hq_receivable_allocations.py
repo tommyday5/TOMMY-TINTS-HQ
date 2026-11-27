@@ -134,6 +134,53 @@ class AllocationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             save_invoice(changed)
 
+    def test_duplicate_evidence_guard_and_reversed_correction(self):
+        self.login()
+        first = self.payload(amount_pence=5000, evidence_ref=" SYNTH-EXACT ")
+        self.assertEqual(self.post(first).status_code, 200)
+        self.assertEqual(self.post(first).json["revision"], 1)
+        duplicate = self.payload(amount_pence=5000, evidence_ref="synth-exact",
+                                 method="cash_reported")
+        response = self.post(duplicate)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("already has the same date", response.json["error"])
+        next_day = self.payload(amount_pence=5000, evidence_ref="synth-exact",
+                                received_on="2026-11-23")
+        self.assertEqual(self.post(next_day).status_code, 200)
+        different = self.payload(amount_pence=6000, evidence_ref="SYNTH-EXACT")
+        self.assertEqual(self.post(different).status_code, 200)
+        # An edit may not turn another active entry into an exact duplicate.
+        other = self.payload(amount_pence=5000, evidence_ref="OTHER")
+        self.assertEqual(self.post(other).status_code, 200)
+        self.assertEqual(self.post(dict(other, revision=1, operation_id=uuid.uuid4().hex,
+                                        evidence_ref="synth-exact")).status_code, 400)
+        reverse = dict(first, revision=1, operation_id=uuid.uuid4().hex, status="reversed")
+        self.assertEqual(self.post(reverse).status_code, 200)
+        self.assertEqual(self.post(duplicate).status_code, 200)
+        result = self.client.get("/api/hq/finance/receipt-allocations").json
+        self.assertEqual(result["invoices"][0]["owner_reported_allocated_pence"], 21000)
+        self.assertEqual(result["invoices"][0]["unallocated_owner_reported_pence"], 14000)
+        self.assertFalse(result["bank_verified"])
+        self.assertIsNone(result["collected_income"])
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_receivable_allocations").fetchone()[0], 5)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_receivable_allocation_events").fetchone()[0], 6)
+
+    def test_duplicate_evidence_concurrent_distinct_operations(self):
+        first = self.payload(amount_pence=1000, evidence_ref="RACE-EXACT")
+        second = self.payload(amount_pence=1000, evidence_ref="race-exact")
+        def attempt(payload):
+            try:
+                return save_allocation(payload)
+            except ValueError as exc:
+                return str(exc)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(attempt, (first, second)))
+        self.assertEqual(results.count(1), 1)
+        self.assertTrue(any(isinstance(r, str) and "already has the same date" in r for r in results))
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_receivable_allocations").fetchone()[0], 1)
+
     def test_concurrent_retry_is_atomic_and_draft_is_not_payable(self):
         payload = self.payload()
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -440,7 +487,9 @@ class AllocationTests(unittest.TestCase):
         url = "/hq/finance/square-invoice-evidence"
         bank = self.payload(amount_pence=100, evidence_ref="bank-test")
         card = self.payload(method="card_reported", amount_pence=100, evidence_ref="card-test")
-        other = self.payload(method="card_reported", amount_pence=100, evidence_ref="card-test")
+        # Different date is not an exact manual duplicate, but the provider ID remains exclusive.
+        other = self.payload(method="card_reported", amount_pence=100, evidence_ref="card-test",
+                             received_on="2026-11-23")
         self.assertEqual(self.post(bank).status_code, 200)
         self.assertEqual(self.post(card).status_code, 200)
         form = dict(allocation=card["id"], csrf="test", action="review")

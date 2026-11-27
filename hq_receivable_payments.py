@@ -152,6 +152,19 @@ def save(data):
                 SELECT 1 FROM hq_square_invoice_observations WHERE payment_id=? COLLATE NOCASE""",
                 (fields["evidence_ref"],)).fetchone():
                 raise ValueError("Square payment reference already has retained provider evidence")
+        # A second form submission with a new UUID can still describe the same
+        # payment. Reject exact evidence duplicates on the same invoice while
+        # allowing separate dated instalments and explicitly reversed corrections.
+        # This is not a claim that the evidence is authentic or globally unique.
+        if fields["status"] == "reported" and fields["evidence_ref"]:
+            duplicate = db.execute("""SELECT 1 FROM hq_receivable_allocations
+                WHERE invoice_id=? AND status='reported' AND id<>?
+                AND amount_pence=? AND received_on=?
+                AND TRIM(evidence_ref)=? COLLATE NOCASE LIMIT 1""",
+                (fields["invoice_id"], fields["id"], fields["amount_pence"],
+                 fields["received_on"], fields["evidence_ref"])).fetchone()
+            if duplicate:
+                raise ValueError("An active allocation on this invoice already has the same date, amount and evidence reference. Review the existing entry before recording another.")
         counted = db.execute("""SELECT COALESCE(SUM(amount_pence),0) FROM hq_receivable_allocations
             WHERE invoice_id=? AND status='reported' AND id<>?""",
             (fields["invoice_id"], fields["id"])).fetchone()[0]
