@@ -501,3 +501,56 @@ class PersistentTimerTests(unittest.TestCase):
         entries = {row["entry_id"]: row for row in ledger["entries"]}
         self.assertEqual(entries[successor]["replaced_by"], corrected_rate)
         self.assertEqual(entries[corrected_rate]["replaced_by"], corrected_minutes)
+
+
+    def test_timer_cost_allocations_edit_in_pounds_and_reload(self):
+        from hq_work_materials import append_work_material, material_ledger_snapshot
+        from hq_work_expenses import append_work_expense, expense_ledger_snapshot
+        from hq_work_cost_overview import cost_overview_snapshot
+        with connect() as db:
+            db.execute("UPDATE hq_work_records SET price_pence=55000 WHERE id=?", (self.job,))
+        c = app.test_client()
+        url = "/hq/work/" + self.job
+        self.assertEqual(c.get(url + "/time").status_code, 302)
+        with c.session_transaction() as s, auth_db() as db:
+            s["hq_sid"] = issue_session(db, "owner")
+            s["google_sub"] = "owner"
+            s["csrf"] = "test"
+        append_work_time(self.job, {"operation_id": uuid.uuid4().hex, "minutes": "60",
+            "stage": "repair", "hourly_cost_pounds": "18.25"}, 0, "owner")
+        page = c.get(url + "/time")
+        self.assertEqual(page.headers["Cache-Control"], "no-store")
+        self.assertIn(b"Combined total and price less costs are unknown", page.data)
+        self.assertIn(b'name="actual_cost_pounds"', c.get(url + "/materials").data)
+        self.assertIn(b'name="allocated_cost_pounds"', c.get(url + "/expenses").data)
+        material = {"operation_id": uuid.uuid4().hex, "revision": "1", "csrf": "test",
+                    "material_name": "Synthetic primer", "unit": "ml", "quantity": "150",
+                    "actual_cost_pounds": "12.34"}
+        expense = {"operation_id": uuid.uuid4().hex, "revision": "2", "csrf": "test",
+                   "expense_type": "overhead", "description": "Synthetic allocation",
+                   "allocated_cost_pounds": "5.01"}
+        for invalid in ("12.345", "-1", "1000000.01"):
+            self.assertEqual(c.post(url + "/materials", data=dict(material, actual_cost_pounds=invalid)).status_code, 400)
+        self.assertEqual(c.post(url + "/materials", data=dict(material, actual_cost_pence="1234")).status_code, 400)
+        self.assertEqual(c.post(url + "/materials", data=material).status_code, 303)
+        legacy = dict(material, actual_cost_pence="1234")
+        del legacy["actual_cost_pounds"]
+        append_work_material(self.job, legacy, 1, "owner")
+        self.assertEqual(c.post(url + "/expenses", data=dict(expense, allocated_cost_pounds="5.001")).status_code, 400)
+        self.assertEqual(c.post(url + "/expenses", data=expense).status_code, 303)
+        legacy_expense = dict(expense, allocated_cost_pence="501")
+        del legacy_expense["allocated_cost_pounds"]
+        append_work_expense(self.job, legacy_expense, 2, "owner")
+        self.assertEqual(cost_overview_snapshot(self.job)["recorded_three_ledger_total_pence"], 3560)
+        page = c.get(url + "/time").get_data(as_text=True)
+        self.assertIn("£12.34", page)
+        self.assertIn("£5.01", page)
+        self.assertIn("£35.60", page)
+        self.assertIn("£514.40", page)
+        self.assertIn("not final profit", page)
+        with patch("hq_native_work.cost_overview_snapshot", return_value={"revision": 999}):
+            page = c.get(url + "/time").get_data(as_text=True)
+            self.assertIn("Combined cost snapshot unavailable", page)
+            self.assertNotIn("£514.40", page)
+        with patch("hq_native_work.cost_overview_snapshot", side_effect=OSError("synthetic")):
+            self.assertEqual(c.get(url + "/time").status_code, 200)

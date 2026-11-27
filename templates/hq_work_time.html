@@ -102,6 +102,28 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 </section>
 <p class="notice">Actual time is not billable hours, a final job cost, an invoice, an approved price, a receipt or a confirmed booking. Missing labour rates and other costs remain unknown. No Google Sheets, bank, customer messages or appointments are changed here.</p>
 </section>
+<section class="panel" id="timerCombinedCosts"><h2>Job cost allocations</h2>
+{% if combined_costs is defined and combined_costs is not none %}
+{% set c=combined_costs %}
+{% if c.approved_sale_price is not none %}<p>Approved selling price: <strong>£{{ '%.2f'|format(c.approved_sale_price/100) }}</strong> (not a receipt).</p>{% elif c.price_pence is not none %}<p>Unapproved price: £{{ '%.2f'|format(c.price_pence/100) }}.</p>{% else %}<p>Approved selling price not recorded.</p>{% endif %}
+<ul>
+{% for label,amount,count,unknown,href in [
+('Internal labour',c.labour_recorded_total_pence,c.labour_entry_count,c.labour_unknown_count,'time'),
+('Materials consumed',c.material_recorded_total_pence,c.material_entry_count,c.material_unknown_count,'materials'),
+('Expenses / overhead',c.expense_recorded_total_pence,c.expense_entry_count,c.expense_unknown_count,'expenses')] %}
+<li>{{ label }}: <strong>{% if amount is not none %}£{{ '%.2f'|format(amount/100) }}{% elif count %}Unknown ({{ unknown }} missing costs){% else %}Not recorded{% endif %}</strong> · <a href="/hq/work/{{ work.id }}/{{ href }}">Edit {{ label|lower }}</a></li>
+{% endfor %}
+</ul>
+{% if c.recorded_three_ledger_complete %}
+<p>Combined recorded allocations: <strong>£{{ '%.2f'|format(c.recorded_three_ledger_total_pence/100) }}</strong>.</p>
+{% if c.approved_sale_price is not none %}<p>Approved price less recorded allocations: <strong>£{{ '%.2f'|format((c.approved_sale_price-c.recorded_three_ledger_total_pence)/100) }}</strong> — not final profit.</p>{% endif %}
+{% elif c.partial_known_three_ledger_pence is not none %}
+<p>Known portion only: <strong>£{{ '%.2f'|format(c.partial_known_three_ledger_pence/100) }}</strong>. Combined total and price less costs are unknown.</p>
+{% else %}<p>Combined cost not yet determinable.</p>{% endif %}
+<p class="hint">Saved active allocations only; excludes current unsaved session and historical aggregate costs. Unrecorded expenses, VAT treatment and reconciliation can change the result. Not profit, payment or cash balance.</p>
+{% else %}<p>Combined cost snapshot unavailable or job revision changed. Reload to review current amounts.</p>{% endif %}
+<p><a href="/hq/work/{{ work.id }}/materials">Record materials</a> · <a href="/hq/work/{{ work.id }}/expenses">Record expenses / overhead</a> · <a href="/hq/work/{{ work.id }}/costs">Open full private cost report</a></p>
+</section>
 {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
 {% if request.args.get("saved") == "1" %}<p class="success" role="status">Time entry saved to HQ. Reload to inspect its history.</p>{% endif %}
 {% if request.args.get("voided") == "1" %}<p class="success" role="status">Time entry reversed and retained in the audit history.</p>{% endif %}
