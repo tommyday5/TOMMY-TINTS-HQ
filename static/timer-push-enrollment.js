@@ -33,7 +33,7 @@
       const subscription = await registration.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: keyBytes});
       const data = subscription.toJSON();
       const body = new URLSearchParams({csrf: panel.dataset.csrf, action: "enroll", consent: "yes",
-        application_key: key, endpoint: data.endpoint, p256dh: data.keys.p256dh, auth_key: data.keys.auth});
+        operation_id: panel.dataset.operationId, application_key: key, endpoint: data.endpoint, p256dh: data.keys.p256dh, auth_key: data.keys.auth});
       const response = await fetch("/hq/timer/alerts/push/", {method: "POST", credentials: "same-origin",
         cache: "no-store", body, redirect: "error"});
       if (!response.ok || !(await response.json()).enrolled) throw new Error("Registration not saved");
