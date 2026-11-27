@@ -68,6 +68,9 @@ def _tables(db):
         device_id TEXT NOT NULL, owner_sub TEXT NOT NULL, revision INTEGER NOT NULL,
         action TEXT NOT NULL CHECK(action IN ('enroll','revoke')),
         recorded_at INTEGER NOT NULL, PRIMARY KEY(device_id,revision))""")
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_timer_push_operations(
+        operation_id TEXT PRIMARY KEY, device_id TEXT NOT NULL, owner_sub TEXT NOT NULL,
+        revision INTEGER NOT NULL, fingerprint TEXT NOT NULL)""")
 
 
 def devices(actor):
@@ -79,8 +82,10 @@ def devices(actor):
             ORDER BY enrolled_at DESC,id""", (actor,))]
 
 
-def enroll(actor, *, endpoint, p256dh, auth_key, application_key, consent):
+def enroll(actor, *, endpoint, p256dh, auth_key, application_key, consent, operation_id):
     actor = _actor(actor)
+    if not isinstance(operation_id, str) or not re.fullmatch(r"[0-9a-f]{32}", operation_id):
+        raise ValueError("Invalid enrollment operation")
     key = public_key()
     if consent != "yes" or not key or key != application_key:
         raise ValueError("Explicit consent and current application key required")
@@ -88,14 +93,24 @@ def enroll(actor, *, endpoint, p256dh, auth_key, application_key, consent):
     _point(p256dh)
     _bytes(auth_key, 16)
     identifier = hashlib.sha256(endpoint.encode()).hexdigest()
+    fingerprint = hashlib.sha256(("|".join((identifier,p256dh,auth_key,key))).encode()).hexdigest()
     with connect() as db:
         _tables(db)
         db.execute("BEGIN IMMEDIATE")
         old = db.execute("SELECT * FROM hq_timer_push_devices WHERE id=?", (identifier,)).fetchone()
+        replay = db.execute("SELECT * FROM hq_timer_push_operations WHERE operation_id=?", (operation_id,)).fetchone()
+        if replay:
+            if (replay["owner_sub"], replay["device_id"], replay["fingerprint"]) != (actor, identifier, fingerprint):
+                raise ValueError("Enrollment operation already used")
+            if old and old["revoked_at"] is None and old["revision"] == replay["revision"]:
+                return identifier
+            raise ValueError("Enrollment superseded; refresh and consent again")
         if old and old["owner_sub"] != actor:
             raise ValueError("Device belongs to another owner")
         if old and old["revoked_at"] is None:
             if (old["p256dh"], old["auth_key"], old["application_key"]) == (p256dh, auth_key, key):
+                db.execute("INSERT INTO hq_timer_push_operations VALUES (?,?,?,?,?)",
+                           (operation_id, identifier, actor, old["revision"], fingerprint))
                 return identifier
             raise ValueError("Revoke the previous registration before replacing its keys")
         if db.execute("SELECT COUNT(*) FROM hq_timer_push_devices WHERE owner_sub=? AND revoked_at IS NULL", (actor,)).fetchone()[0] >= MAX_DEVICES:
@@ -111,6 +126,8 @@ def enroll(actor, *, endpoint, p256dh, auth_key, application_key, consent):
             (identifier, actor, endpoint, p256dh, auth_key, key, timestamp, revision))
         db.execute("INSERT INTO hq_timer_push_events VALUES (?,?,?,?,?)",
                    (identifier, actor, revision, "enroll", timestamp))
+        db.execute("INSERT INTO hq_timer_push_operations VALUES (?,?,?,?,?)",
+                   (operation_id, identifier, actor, revision, fingerprint))
     return identifier
 
 
