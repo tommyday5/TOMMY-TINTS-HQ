@@ -136,10 +136,20 @@ def time_ledger_snapshot(work_id):
                 THEN (minutes * hourly_cost_pence + 30)/60 END) AS known_cost
             FROM hq_work_time_entries WHERE work_id=? AND voided_at IS NULL""",
             (work_id,)).fetchone()
+        stage_totals = [dict(row) for row in db.execute("""SELECT stage,
+            COUNT(*) AS entry_count, SUM(minutes) AS minutes_total,
+            SUM(CASE WHEN hourly_cost_pence IS NULL THEN 1 ELSE 0 END) AS unknown_rate_count,
+            SUM(CASE WHEN hourly_cost_pence IS NOT NULL
+                THEN (minutes * hourly_cost_pence + 30)/60 END) AS known_cost_subtotal_pence
+            FROM hq_work_time_entries WHERE work_id=? AND voided_at IS NULL
+            GROUP BY stage ORDER BY stage""", (work_id,))]
+        for stage in stage_totals:
+            stage["actual_labour_cost_pence"] = (
+                stage["known_cost_subtotal_pence"] if not stage["unknown_rate_count"] else None)
         entries = [dict(row) for row in db.execute("""SELECT
             entry_id,minutes,stage,note,hourly_cost_pence,created_at,voided_at
             FROM hq_work_time_entries WHERE work_id=?
-            ORDER BY created_at DESC,entry_id DESC LIMIT 100""", (work_id,))]
+            ORDER BY created_at DESC,entry_id DESC LIMIT 101""", (work_id,))]
     unknown = totals["unknown_rates"] or 0
     work.update({
         "entry_count": totals["entry_count"],
@@ -149,8 +159,9 @@ def time_ledger_snapshot(work_id):
         # Do not convert absent evidence into a "£0 total".
         "actual_labour_cost_pence": (totals["known_cost"] or 0)
             if totals["entry_count"] and unknown == 0 else None,
-        "entries": entries,
-        "history_truncated": totals["entry_count"] > 100,
+        "entries": entries[:100],
+        "stage_totals": stage_totals,
+        "history_truncated": len(entries) > 100,
         "can_edit_time": work["kind"] == "job" and work["status"] in _ALLOWED,
         "payment_verified": False,
     })
