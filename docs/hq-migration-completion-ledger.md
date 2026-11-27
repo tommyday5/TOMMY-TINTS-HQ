@@ -1960,3 +1960,33 @@ production job, price, payment, workbook or customer-facing write.
 The current black Kia has no verified canonical native job identity.
 Actual encrypted recovery and bounded historical import still require
 separate owner approval; no domain newly reconciled or authoritative.
+
+
+### 2026-11-27 — saved rate correction deployed; saved minutes correction
+
+PR #322 exact head 2965ba182c31d2dc6cbd97f06b49e264e17a2b3b passed
+Actions 45937801631 (127 + 696 Python tests, 14 JavaScript tests).
+Squash merged as 3ebe3cbd6528c06eccafdf9c206812f9ab7f1e69.
+Railway deployment a6aba68f-cbcb-4805-b84d-895a678fb78f SUCCESS
+at 05:01:05 UTC; one running replica, no warnings, criticals, failures
+or pending work. Original 1024 MB /data volume mount verified.
+Read-only workbook metadata confirmed all 48 tabs. Customer service
+request/owner conversion, customer-visible approvals, appointment
+handoff, product requests and account isolation passed in exact-head CI.
+Direct /hq/timer and /book probes failed DNS; production owner/browser
+acceptance and actual native black Kia identity remain unverified.
+
+Next slice: reduce an already saved time entry (not only pre-save timer
+review) with a mandatory reason, atomic revision-guarded reversal and
+replacement, original-to-successor audit evidence and exact replay
+protection. Preserve measured session, activity, note, hourly rate
+(including unknown), customer price, and canonical job ID. Mixed rate
+and minute correction chains preserve evidence and cost parity without
+double counting. Only positive reductions are permitted; existing
+closed/archived locks and owner authentication/CSRF remain. Synthetic
+HTTP/SQLite tests cover validation, replay, conflicts, audit, combined
+cost calculation, and unknown rates. Exact-head CI/deployment pending.
+No live jobs, times, prices, financial or customer records, Sheets cells,
+or customer-facing routes changed. No domain newly authoritative.
+Actual recovery snapshot and first bounded historical import still await
+separate owner approval and verified mapping/reconciliation.
