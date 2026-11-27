@@ -3,3 +3,33 @@ function pause(){if(state.start){state.seconds=clock();state.start=null;state.pa
 if($('clockStart')){$('clockStart').onclick=()=>{if(!state.start){if(state.pauseAt)state.paused+=Math.max(0,(Date.now()-state.pauseAt)/1000);state.pauseAt=null;state.start=Date.now();state.pendingSave=false;persist();render()}};$('clockPause').onclick=pause;$('clockFinish').onclick=()=>{const minutes=Math.floor(clock()/60);if(minutes<1||minutes>1440){$('clockNotice').textContent='Review sessions in entries of 1–1440 whole minutes.';return}$('minutes').value=minutes;$('clockNotice').textContent='Review '+minutes+' whole active minutes below, select the activity, then Save actual time. Remaining seconds are not included. Job is not marked complete.';$('timeEntryForm').scrollIntoView({behavior:'auto',block:'start'});$('minutes').focus()};$('timeEntryForm').addEventListener('submit',()=>{pause();state.pendingSave=true;persist()})}$('allowance').onchange=()=>{state.estimate=$('allowance').value;persist();render()};document.addEventListener('visibilitychange',()=>{persist();if(!document.hidden)render()});setInterval(render,1000);render()})();
 
 (()=>{const root=document.getElementById('serverTimer');if(!root)return;const get=id=>document.getElementById(id),clock=get('serverClock'),totalClock=get('serverTotalClock'),breakClock=get('serverBreakClock'),ring=get('serverAllowanceRing'),percent=get('serverPercent'),notice=get('serverAllowanceNotice'),initial=Number(root.dataset.seconds),initialBreak=Number(root.dataset.break||0),started=Date.now(),recorded=Number(root.dataset.recorded)*60,allowance=Number(root.dataset.allowance)*60;const format=s=>[Math.floor(s/3600),Math.floor(s%3600/60),Math.floor(s%60)].map(v=>String(v).padStart(2,'0')).join(':');function render(){const elapsed=Math.max(0,Math.floor((Date.now()-started)/1000)),seconds=initial+(root.dataset.running==='yes'?elapsed:0),breaks=initialBreak+(root.dataset.paused==='yes'?elapsed:0),total=seconds+recorded,ratio=allowance>0?total/allowance:0;clock.textContent=format(seconds);if(totalClock)totalClock.textContent=format(total);if(breakClock)breakClock.textContent=format(breaks);if(percent)percent.textContent=allowance>0?Math.floor(ratio*100)+'%':'—';if(ring){ring.style.setProperty('--used',Math.min(100,ratio*100)+'%');if(allowance>0){ring.setAttribute('aria-valuenow',String(Math.min(100,Math.floor(ratio*100))));ring.setAttribute('aria-valuetext',Math.floor(ratio*100)+' percent used')}else{ring.removeAttribute('aria-valuenow');ring.setAttribute('aria-valuetext','Allowance unknown')}}const message=allowance>0?(total>=allowance?'Allowance reached: '+format(total-allowance)+' over estimate. Review scope before continuing.':(total>=allowance*.9?'90% allowance used · ':total>=allowance*.75?'75% allowance used · ':'')+format(allowance-total)+' remaining'):'No allowance recorded.';if(notice.textContent!==message)notice.textContent=message}render();setInterval(render,1000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)render()})})();
+
+
+;(()=>{'use strict';
+  const panel=document.getElementById('labourCostPreview');
+  if(!panel)return;
+  const minutes=document.getElementById('minutes'),rate=document.getElementById('rate');
+  const entry=document.getElementById('entryCostPreview'),total=document.getElementById('totalCostPreview');
+  const saved=Number(panel.dataset.savedCost),unknown=Number(panel.dataset.unknownRates),max=Number(panel.dataset.maxMinutes);
+  const currency=pence=>'£'+(Math.floor(pence/100))+'.'+String(pence%100).padStart(2,'0');
+  function render(){
+    const rawMinutes=String(minutes.value),rawRate=String(rate.value);
+    const m=Number(rawMinutes);
+    if(!/^[0-9]{1,4}$/.test(rawMinutes)||m<1||m>max){
+      entry.textContent='Enter valid reviewed minutes';total.textContent='Unknown';return;
+    }
+    if(!rawRate){entry.textContent='Unknown — no internal rate entered';total.textContent='Unknown';return;}
+    if(!/^[0-9]{1,5}(?:\.[0-9]{1,2})?$/.test(rawRate)){
+      entry.textContent='Enter a valid pounds-and-pence rate';total.textContent='Unknown';return;
+    }
+    const [whole,fraction='']=rawRate.split('.');
+    const pence=Number(whole)*100+Number(fraction.padEnd(2,'0'));
+    if(pence>1000000){entry.textContent='Enter a rate no higher than £10000';total.textContent='Unknown';return;}
+    // Same half-up per-entry rounding as the authoritative SQLite ledger.
+    const cost=Math.floor((m*pence+30)/60);
+    entry.textContent=currency(cost);
+    total.textContent=unknown===0&&Number.isSafeInteger(saved)&&saved>=0&&Number.isSafeInteger(saved+cost)?currency(saved+cost):'Unknown — previous labour rates missing';
+  }
+  for(const input of [minutes,rate])for(const event of ['input','change','focus'])input.addEventListener(event,render);
+  panel.hidden=false;render();
+})();
