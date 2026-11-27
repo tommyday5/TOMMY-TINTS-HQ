@@ -289,6 +289,56 @@ class NativeWorkTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_work_audit WHERE work_id=? AND action='native_workshop_plan'",
                                         (work_id,)).fetchone()[0], 1)
 
+    def test_workshop_plan_comparison_keeps_missing_and_partial_actuals_distinct(self):
+        self.login()
+        created = self.post({**self.payload, "kind": "job", "customer_tier": "trade"})
+        work_id = created.headers["Location"].split("/")[3]
+        url = "/hq/work/" + work_id + "/review"
+        for action, revision, extra in (
+            ("plan", "0", {"planned_minutes": "390", "planned_material": "54", "planned_sale_rate": "70"}),
+            ("amounts", "1", {"price": "550", "deposit": "0"}),
+            ("review", "2", {}), ("approve", "3", {"confirm": "yes"}),
+        ):
+            self.assertEqual(self.client.post(url, data={"csrf": "test-csrf", "action": action,
+                "revision": revision, **extra}).status_code, 303)
+        from hq_work_cost_overview import cost_overview_snapshot
+        costs_url = "/hq/work/" + work_id + "/costs"
+        self.assertEqual(app.test_client().get(costs_url).status_code, 302)
+        missing = cost_overview_snapshot(work_id)
+        plan = missing["workshop_plan_comparison"]
+        self.assertEqual((plan["pricing_basis_pence"], plan["price_minus_basis_pence"]), (50900, 4100))
+        self.assertIsNone(plan["saved_minutes_minus_plan"])
+        self.assertIsNone(plan["recorded_material_minus_plan_pence"])
+        self.assertIsNone(missing["final_profit_pence"])
+        # Synthetic stored ledger entries only: use the existing schema, without any provider.
+        with connect() as db:
+            db.execute("""INSERT INTO hq_work_time_entries
+                (entry_id,work_id,operation_id,payload_fingerprint,minutes,stage,note,
+                 hourly_cost_pence,actor_fingerprint,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (uuid.uuid4().hex, work_id, uuid.uuid4().hex, "fixture", 420, "repair", "",
+                 None, "fixture", "2026-11-27T12:00:00Z"))
+            db.execute("""INSERT INTO hq_work_material_entries
+                (entry_id,work_id,operation_id,payload_fingerprint,material_name,quantity_milli,
+                 unit,actual_cost_pence,source_note,actor_fingerprint,created_at)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (uuid.uuid4().hex, work_id, uuid.uuid4().hex, "fixture", "Synthetic material",
+                 1000, "each", 0, "", "fixture", "2026-11-27T12:00:00Z"))
+        actual = cost_overview_snapshot(work_id)
+        plan = actual["workshop_plan_comparison"]
+        self.assertEqual(plan["saved_minutes_minus_plan"], 30)
+        self.assertEqual(plan["recorded_material_minus_plan_pence"], -5400)
+        self.assertIsNone(actual["labour_recorded_total_pence"])
+        self.assertIsNone(actual["final_profit_pence"])
+        self.assertFalse(actual["payment_verified"])
+        page = self.client.get(costs_url)
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Workshop plan versus recorded work", page.data)
+        self.assertIn(b"+30 minutes", page.data)
+        self.assertIn(b"-54.00 GBP", page.data)
+        with connect() as db:
+            db.execute("UPDATE hq_work_material_entries SET actual_cost_pence=NULL WHERE work_id=?", (work_id,))
+        self.assertIsNone(cost_overview_snapshot(work_id)["workshop_plan_comparison"]["recorded_material_minus_plan_pence"])
+
     def test_native_workshop_plan_distinguishes_zero_and_unknown(self):
         self.login()
         created = self.post()

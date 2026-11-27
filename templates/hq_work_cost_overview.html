@@ -27,6 +27,18 @@ a:focus-visible,button:focus-visible{outline:2px solid #f2cb24;outline-offset:3p
 {% else %}<p>Customer selling price: <strong>not recorded or approved</strong>.</p>{% endif %}
 <p class="notice">Private internal review only. These figures represent manually recorded labour, materials and additional expense allocations, not final job costs or profit. Supplier evidence, coverage of overhead and subcontractors, historical manual logs and VAT treatment remain unreconciled. A completed job does not mean paid.</p>
 </section>
+{% if work.workshop_plan_comparison is not none %}{% set plan=work.workshop_plan_comparison %}
+<section class="panel" id="workshopPlanComparison"><h2>Workshop plan versus recorded work</h2>
+<p>Planned labour: {% if plan.planned_minutes is none %}Unknown{% else %}{{ plan.planned_minutes }} minutes{% endif %} · Saved labour: {% if work.labour_entry_count %}{{ work.labour_minutes }} minutes{% else %}Not recorded{% endif %}.</p>
+{% if plan.saved_minutes_minus_plan is not none %}<p>Saved minutes minus plan: <strong>{{ '%+d'|format(plan.saved_minutes_minus_plan) }} minutes</strong> (not a final overrun; excludes unsaved timer time).</p>{% endif %}
+<p>Planned materials: {% if plan.planned_material_pence is none %}Unknown{% else %}£{{ '%.2f'|format(plan.planned_material_pence/100) }}{% endif %} · Recorded materials: {% if work.material_recorded_total_pence is not none %}£{{ '%.2f'|format(work.material_recorded_total_pence/100) }}{% else %}Incomplete or not recorded{% endif %}.</p>
+{% if plan.recorded_material_minus_plan_pence is not none %}<p>Recorded materials minus plan: <strong>{{ '%+.2f'|format(plan.recorded_material_minus_plan_pence/100) }} GBP</strong> (entered allocations only).</p>{% endif %}
+<p>Planned hourly sale rate: {% if plan.planned_sale_rate_pence is none %}Unknown{% else %}£{{ '%.2f'|format(plan.planned_sale_rate_pence/100) }}/hour{% endif %}.</p>
+{% if plan.pricing_basis_pence is not none %}<p>Planned labour at sale rate plus estimated materials: <strong>£{{ '%.2f'|format(plan.pricing_basis_pence/100) }}</strong>.</p>{% endif %}
+{% if plan.price_minus_basis_pence is not none %}<p>{{ 'Approved price' if work.approved_sale_price is not none else 'Proposed price' }} minus pricing basis: <strong>{{ '%+.2f'|format(plan.price_minus_basis_pence/100) }} GBP</strong>.</p>{% endif %}
+<p class="notice">The sale rate is not an internal labour cost. These comparisons do not establish final profit, cash received or reconciled costs. Missing actual entries are not zero.</p>
+<p class="no-print">{% if work.status in ('draft','ready_for_review') %}<a href="/hq/work/{{ work.id }}/review">Edit workshop estimates</a> · {% endif %}<a href="/hq/work/{{ work.id }}/time">Record or correct saved labour</a> · <a href="/hq/work/{{ work.id }}/materials">Record materials</a></p>
+</section>{% endif %}
 <div class="grid">
 <section class="panel">
 <h2>Workshop labour</h2>
