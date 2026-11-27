@@ -2167,3 +2167,40 @@ Phone push requires separately verified private subscription and delivery
 controls; owner consent before any real send. Current black Kia identity
 remains unverified; no creation or start. Actual off-volume recovery and
 bounded historical import remain subject to separate approved manifests.
+
+
+### 2026-11-27 — alert triage deployed; private device enrollment proposed
+
+PR #329 exact-head bb90c7613a353957fd1ce4439ed7364d7227a5a4 passed
+Actions 45987305871 (127 + 705 Python, 16 JavaScript tests), squash
+merged as 44ce1e805b3a089fee5453da3b0f2e0fe0b3ed31. Railway deployment
+80074dae-95f7-436e-b39b-2d546d64347d SUCCESS at 12:03:41 UTC; original
+1024 MB /data volume remains attached, no staged infrastructure changes.
+Runtime log at 12:03:39 confirms first background scan of this deployment.
+Continuous heartbeat and authenticated live acceptance remain unverified
+(DNS failure for both /book and /hq/timer from the development environment).
+Read-only workbook metadata still lists 48 tabs; bounded Jobs read contains
+J0014 (bumper) and J0073 (bonnet), neither proves current black Kia identity.
+
+This proposal adds owner-only Apple Web Push device enrollment and revocation
+under Job Timer > Labour alerts > Private phone alert setup. Disabled unless
+a valid P-256 VAPID public key is configured in HQ_TIMER_PUSH_PUBLIC_KEY.
+No private key generated or configured by development. Owner must explicitly
+prepare and enroll from the installed iPhone app; no permission is requested
+automatically. No delivery implementation, no real subscription or test
+notification, no additional infrastructure. Exact Apple endpoint allowlist,
+valid P-256 keys, bounded input, CSRF, owner isolation, idempotent registration,
+revision-protected revocation with address/key removal and immutable audit
+events. The service worker is confined to the device setup path, has no fetch
+interception, and only displays a generic lock-screen message if a future
+sender delivers an event. No customer or finance information in messages.
+Separate reviewed sender implementation, production key management, owner
+delivery consent and actual device acceptance remain required. CI/deployment
+of this proposal pending; do not describe phone notifications as operational.
+
+No live job, time, financial or booking edits or workbook writes. Existing
+customer booking routes unchanged; full regression and account isolation
+checks required before merge. No domain cutover, no authorised live historical
+import or actual independent recovery snapshot. Next: complete enrollment
+validation, opt-in safe sender/outbox, and native reconciliation/import
+execution. Do not bypass owner authentication to locate the Kia.

@@ -998,3 +998,60 @@ def scan_timer_alerts_command():
     import click
     import hq_timer_alerts
     click.echo("Timer alerts created: " + str(hq_timer_alerts.scan()))
+
+
+
+@native_work.get("/hq/timer/alerts/push/")
+@required
+def timer_push_devices():
+    import hq_timer_push as push
+    try:
+        records = push.devices(session.get("google_sub"))
+    except (ValueError, OSError, sqlite3.Error, RuntimeError):
+        abort(503)
+    response = current_app.make_response(render_template("timer_push_devices.html",
+        devices=records, public_key=push.public_key(), csrf=session["csrf"], operation_id=uuid.uuid4().hex))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@native_work.post("/hq/timer/alerts/push/")
+@required
+def update_timer_push_devices():
+    import hq_timer_push as push
+    if request.content_length is None or request.content_length > 8192:
+        abort(413)
+    if not secrets.compare_digest(request.form.get("csrf", ""), session.get("csrf", "not-set")):
+        abort(403)
+    actor = session.get("google_sub")
+    try:
+        action = request.form.get("action")
+        if action == "enroll":
+            push.enroll(actor, endpoint=request.form.get("endpoint"),
+                p256dh=request.form.get("p256dh"), auth_key=request.form.get("auth_key"),
+                application_key=request.form.get("application_key"), consent=request.form.get("consent"),
+                operation_id=request.form.get("operation_id"))
+            response = jsonify(enrolled=True)
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        if action == "revoke":
+            revision = request.form.get("revision", "")
+            if not re.fullmatch(r"[0-9]{1,18}", revision):
+                abort(400)
+            push.revoke(actor, request.form.get("device_id"), int(revision))
+            return redirect(url_for(".timer_push_devices"), 303)
+        abort(400)
+    except (ValueError, LookupError):
+        abort(400)
+    except (OSError, sqlite3.Error, RuntimeError):
+        current_app.logger.warning("Private timer device enrollment unavailable")
+        abort(503)
+
+
+@native_work.get("/hq/timer/alerts/push/sw.js")
+def timer_push_worker():
+    # Public static code only. The default service worker scope is this narrow
+    # device setup path; it cannot intercept owner or customer app navigation.
+    response = current_app.send_static_file("timer-push-sw.js")
+    response.headers["Cache-Control"] = "no-store"
+    return response

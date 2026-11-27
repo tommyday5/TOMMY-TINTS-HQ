@@ -817,3 +817,79 @@ class PersistentTimerTests(unittest.TestCase):
             self.assertEqual(page.status_code,200)
             self.assertIn(b"Alert summary unavailable",page.data)
             self.assertIn(b"Open running timer",page.data)
+
+
+
+    def test_private_push_device_enrollment_revoke_and_no_delivery(self):
+        import base64
+        import hq_timer_push as push
+        from cryptography.hazmat.primitives.asymmetric.ec import generate_private_key, SECP256R1
+        from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+        def b64(raw):
+            return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+        def point():
+            return b64(generate_private_key(SECP256R1()).public_key().public_bytes(
+                Encoding.X962, PublicFormat.UncompressedPoint))
+        c = app.test_client()
+        url = "/hq/timer/alerts/push/"
+        self.assertEqual(c.get(url).status_code, 302)
+        with c.session_transaction() as s, auth_db() as db:
+            s["hq_sid"] = issue_session(db, "owner")
+            s["google_sub"] = "owner"
+            s["csrf"] = "test"
+        application_key, client_key = point(), point()
+        endpoint = "https://web.push.apple.com/synthetic-not-real"
+        data = {"action":"enroll", "consent":"yes", "operation_id":uuid.uuid4().hex, "application_key":application_key,
+                "endpoint":endpoint, "p256dh":client_key, "auth_key":b64(b"x"*16)}
+        with patch.dict(os.environ, HQ_TIMER_PUSH_PUBLIC_KEY=""):
+            self.assertIn(b"Device registration is not configured", c.get(url).data)
+            self.assertEqual(c.post(url, data={**data,"csrf":"test"}).status_code, 400)
+        with patch.dict(os.environ, HQ_TIMER_PUSH_PUBLIC_KEY=application_key):
+            self.assertEqual(c.get(url).headers["Cache-Control"], "no-store")
+            self.assertIn(b"Enable device registration", c.get(url).data)
+            self.assertEqual(c.post(url, data=data).status_code, 403)
+            data["csrf"] = "test"
+            for bad in ({"consent":"no"}, {"application_key":client_key},
+                        {"p256dh":"bad"}, {"auth_key":"bad"},
+                        {"endpoint":"https://web.push.apple.com.evil.invalid/path"},
+                        {"endpoint":"https://web.push.apple.com:443/path"},
+                        {"endpoint":"https://web.push.apple.com@evil.invalid/path"},
+                        {"endpoint":"http://web.push.apple.com/path"}):
+                self.assertEqual(c.post(url, data={**data,**bad}).status_code, 400)
+            self.assertEqual(c.post(url, data=data).json, {"enrolled":True})
+            self.assertEqual(c.post(url, data=data).json, {"enrolled":True})
+            records = push.devices("owner")
+            self.assertEqual(len(records), 1)
+            self.assertEqual(push.devices("other"), [])
+            device = records[0]["id"]
+            self.assertNotIn("endpoint", records[0])
+            page = c.get(url)
+            self.assertIn(b"Revoke HQ registration", page.data)
+            self.assertNotIn(endpoint.encode(), page.data)
+            self.assertNotIn(client_key.encode(), page.data)
+            with self.assertRaises(LookupError):
+                push.revoke("other", device, 0)
+            revoke = {"action":"revoke","device_id":device,"revision":"0","csrf":"test"}
+            self.assertEqual(c.post(url, data=revoke).status_code, 303)
+            self.assertEqual(c.post(url, data=revoke).status_code, 303)
+            self.assertEqual(push.devices("owner"), [])
+            with connect() as db:
+                row = db.execute("SELECT * FROM hq_timer_push_devices WHERE id=?", (device,)).fetchone()
+                self.assertIsNone(row["endpoint"])
+                self.assertIsNone(row["p256dh"])
+                self.assertIsNone(row["auth_key"])
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_timer_push_events").fetchone()[0], 2)
+            self.assertEqual(c.post(url, data=data).status_code, 400)
+            self.assertEqual(push.devices("owner"), [])
+            data["operation_id"] = uuid.uuid4().hex
+            self.assertEqual(c.post(url, data=data).status_code, 200)
+            self.assertEqual(c.post(url, data=revoke).status_code, 400)
+            self.assertEqual(push.devices("owner")[0]["revision"], 2)
+        sw = app.test_client().get(url+"sw.js")
+        self.assertEqual(sw.status_code, 200)
+        self.assertEqual(sw.headers["Cache-Control"], "no-store")
+        self.assertNotIn("Service-Worker-Allowed", sw.headers)
+        self.assertIn(b"showNotification", sw.data)
+        self.assertNotIn(b"fetch(", sw.data)
+        self.assertIsNone(snapshot(self.job))
+        self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"], 0)
