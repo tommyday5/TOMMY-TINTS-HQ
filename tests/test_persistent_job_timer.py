@@ -285,8 +285,12 @@ class PersistentTimerTests(unittest.TestCase):
         page = c.get(url)
         self.assertIn(b'name="timer_correction_reason"', page.data)
         self.assertIn(b'Measured 10 whole minutes', page.data)
+        # Mirror bind_session: audited writes require the authenticated owner subject.
+        with c.session_transaction() as s:
+            s["google_sub"] = "owner"
         data = dict(payload, csrf="test", revision="0")
-        self.assertEqual(c.post(url, data=data).status_code,303)
+        response = c.post(url, data=data)
+        self.assertEqual(response.status_code, 303, response.get_data(as_text=True))
         self.assertEqual(c.post(url, data=data).status_code,303)
         self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"],8)
         self.assertIsNone(time_ledger_snapshot(self.job)["actual_labour_cost_pence"])
