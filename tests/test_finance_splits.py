@@ -126,3 +126,37 @@ class FinanceSplitTests(unittest.TestCase):
         page=self.client.get("/hq/finance/classifications?month=2026-01")
         self.assertEqual(page.status_code,400)
         self.assertNotIn(b"Effective category totals",page.data)
+
+    def test_exact_classification_preserves_parent_amount_and_history(self):
+        from hq_finance_splits import classification_report
+        url=self.url.replace("/split","/classify")
+        self.assertEqual(self.client.get(url).status_code,302)
+        self.login()
+        page=self.client.get(url)
+        self.assertEqual(page.status_code,200)
+        self.assertIn("no-store",page.headers["Cache-Control"])
+        self.assertIn(b"Save classification",page.data)
+        self.assertIn(url.encode(),self.client.get("/hq/finance/classifications?month=2026-01").data)
+        form=dict(csrf="test-csrf",revision="1",category="fuel",reviewed="yes",amount="9999")
+        self.assertEqual(self.client.post(url,data={**form,"csrf":"bad"}).status_code,403)
+        self.assertEqual(self.client.post(url,data={**form,"category":"unclassified"}).status_code,400)
+        self.assertEqual(self.client.post(url,data={**form,"category":"external_funding"}).status_code,400)
+        self.assertEqual(self.client.post(url,data=form).status_code,303)
+        self.assertEqual(self.client.post(url,data=form).status_code,303)
+        self.assertEqual(self.client.post(url,data={**form,"category":"materials"}).status_code,409)
+        page=self.client.get(url)
+        self.assertIn(b'value="fuel" selected',page.data)
+        self.assertIn(b'Revision 2',page.data)
+        with connect() as db:
+            row=db.execute("SELECT * FROM finance_transactions WHERE id=?",(self.ref,)).fetchone()
+            self.assertEqual((row["amount"],row["day"],row["description"],row["category"],row["reviewed"],row["revision"]),
+                (-10000,"2026-01-01","Synthetic mixed purchase","fuel",1,2))
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_transaction_history WHERE transaction_id=?",(self.ref,)).fetchone()[0],2)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_edit_audit WHERE entity='transaction_classification'").fetchone()[0],1)
+        report=classification_report("2026-01")
+        self.assertEqual((report["outgoing"],report["unclassified"]),(10000,0))
+        self.assertEqual(self.client.post(self.url,data=self.form(revision="2")).status_code,303)
+        self.assertNotIn(b"Save classification",self.client.get(url).data)
+        self.assertEqual(self.client.post(url,data={**form,"revision":"3"}).status_code,409)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_transactions").fetchone()[0],1)
