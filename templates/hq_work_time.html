@@ -114,6 +114,11 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 <input name="hourly_cost_pounds" id="rate" type="number" inputmode="decimal" min="0" max="10000" step="0.01"
  value="{{ values.get('hourly_cost_pounds','') if 'hourly_cost_pounds' in values else ('%.2f'|format(values.get('hourly_cost_pence')|int/100) if values.get('hourly_cost_pence','').isdigit() else '') }}" placeholder="Leave blank if unknown">
 <p class="hint">For example, 18.00 means £18.00 per hour. This is your verified internal cost, not your customer hourly charge. Blank means unknown, never £0.</p>
+<div class="notice" id="labourCostPreview" data-saved-cost="{{ work.known_cost_subtotal_pence if work.known_cost_subtotal_pence is not none else 0 }}" data-unknown-rates="{{ work.unknown_rate_count }}" data-max-minutes="{{ [1440, timer.active_seconds // 60]|min if timer and timer.state == 'review' else 1440 }}" hidden>
+<p>Preview for this entry: <strong id="entryCostPreview">Unknown</strong></p>
+<p>Projected recorded job labour cost after saving: <strong id="totalCostPreview">Unknown</strong></p>
+<p class="hint">Internal labour only, not customer price or profit. Unsaved estimate; the server validates and calculates the actual entry.</p>
+</div>
 <label for="note">Internal activity note (optional)</label>
 <textarea name="note" id="note" maxlength="160" rows="2">{{ values.get('note','') }}</textarea>
 <p class="hint">Recording a time entry advances the canonical HQ job revision. Replaying the same submitted form cannot duplicate an entry.</p>

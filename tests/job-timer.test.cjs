@@ -76,3 +76,36 @@ test('persistent cumulative clock includes saved labour once and pause clock exc
   const unknown=persistentClock({allowance:0});
   assert.equal(unknown.nodes.serverPercent.textContent,'—');
 });
+
+
+function costPreview({minutes='30',rate='18.25',saved=0,unknown=0,max=1440}={}) {
+  const input=value=>({value,addEventListener(event,fn){this[event]=fn}});
+  const nodes={labourCostPreview:{dataset:{savedCost:String(saved),unknownRates:String(unknown),maxMinutes:String(max)},hidden:true},
+    minutes:input(minutes),rate:input(rate),entryCostPreview:{},totalCostPreview:{}};
+  vm.runInNewContext(source,{document:{getElementById:id=>nodes[id]}});
+  return nodes;
+}
+test('labour preview rounds each entry exactly like SQLite, and adds saved costs',()=>{
+  const n=costPreview({saved:1500});
+  assert.equal(n.labourCostPreview.hidden,false);
+  assert.equal(n.entryCostPreview.textContent,'£9.13');
+  assert.equal(n.totalCostPreview.textContent,'£24.13');
+  n.minutes.value='60';n.minutes.input();
+  assert.equal(n.totalCostPreview.textContent,'£33.25');
+  n.rate.value='0';n.rate.input();
+  assert.equal(n.entryCostPreview.textContent,'£0.00');
+  assert.equal(n.totalCostPreview.textContent,'£15.00');
+});
+test('labour preview keeps missing rates unknown and rejects invalid or excessive minutes/rates',()=>{
+  const n=costPreview({unknown:1,max:30});
+  assert.equal(n.entryCostPreview.textContent,'£9.13');
+  assert.match(n.totalCostPreview.textContent,/Unknown/);
+  for(const value of ['','18.255','-1','1e2','10000.01']){
+    n.rate.value=value;n.rate.input();
+    assert.doesNotMatch(n.entryCostPreview.textContent,/^£/);
+    assert.match(n.totalCostPreview.textContent,/Unknown/);
+  }
+  n.rate.value='18.25';n.minutes.value='31';n.minutes.input();
+  assert.match(n.entryCostPreview.textContent,/valid reviewed minutes/);
+  assert.match(n.totalCostPreview.textContent,/Unknown/);
+});
