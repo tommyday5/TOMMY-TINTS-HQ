@@ -2204,3 +2204,33 @@ checks required before merge. No domain cutover, no authorised live historical
 import or actual independent recovery snapshot. Next: complete enrollment
 validation, opt-in safe sender/outbox, and native reconciliation/import
 execution. Do not bypass owner authentication to locate the Kia.
+
+### 2026-11-27 — deployed private device enrollment; local alert preview
+
+PR #330 exact head dc5ed24c52e7c6f7dd6d0d1c377b80c0a55cfb7a passed
+Actions 45995996307 (127 + 706 Python tests and 19 JavaScript tests).
+Squash merged as 22fa96617df8097b95c6ff8bed3fea348a6c501e.
+Railway deployment d6531dba-753a-441e-8e82-d07dae960a09 SUCCESS at
+13:06:46 UTC, original 1024 MB /data volume attached, no pending
+infrastructure work. Read-only workbook metadata confirms 48 tabs;
+bounded Jobs read still does not establish current CV Motors black Kia
+identity. Direct /book, /hq/timer and device setup HTTP probes failed DNS.
+Synthetic customer profile, vehicle, service request, quote conversion,
+appointment handoff, product order and account isolation passed in CI.
+Authenticated production acceptance and live database contents unverified.
+
+Next slice: owner-only device-specific consent to local future-alert
+preview (not permission to send), revision-checked enable/disable controls
+and immutable consent history. After successful background scan, a separate
+transaction queues eligible new unacknowledged open-session observations
+within 15 minutes, after a consent watermark; deduplicates per device
+registration and alert. Cancels stale, acknowledged, superseded, revoked
+or disabled entries. Preview failures do not block timer scanning. The UI
+shows saved preview counts, not sent/delivered notifications. No transport,
+credentials, external communication or customer data payload. Separate
+explicit delivery consent and secure key configuration remain required
+before any real send. Synthetic authenticated regression added; exact-head
+CI and deployment pending. No live job, time, customer, finance or workbook
+record changes. Recovery snapshot and first bounded historical import
+still need separate owner approval and verified mappings; no new historical
+authority or domain reconciliation.
