@@ -112,7 +112,7 @@ def list_work_records(limit=100):
 
 
 
-def search_work_records(query="", kind="", status="", limit=25, offset=0, archived=False):
+def search_work_records(query="", kind="", status="", limit=25, offset=0, archived=False, match_all_terms=False):
     """Search all linked internal work records, with bounded stable pagination.
 
     This is read-only and deliberately does not consult external Sheets, Square,
@@ -131,11 +131,14 @@ def search_work_records(query="", kind="", status="", limit=25, offset=0, archiv
     if type(archived) is not bool:
         raise ValueError("Invalid archive filter")
 
+    if type(match_all_terms) is not bool:
+        raise ValueError("Invalid search mode")
+
     where, args = [], []
     where.append(("EXISTS" if archived else "NOT EXISTS") +
         " (SELECT 1 FROM hq_work_archive_state a WHERE a.work_id=w.id AND a.is_archived=1)")
     term = query.strip()
-    if term:
+    if term and not match_all_terms:
         # instr treats % and _ literally, unlike unescaped SQL LIKE patterns.
         columns = ("c.name", "c.email", "c.phone", "v.registration",
                    "v.make", "v.model", "w.service")
@@ -160,9 +163,25 @@ def search_work_records(query="", kind="", status="", limit=25, offset=0, archiv
         db.execute("BEGIN")
         # Imported J references are immutable provenance, independent of notes.
         # Older databases need not have created the migration table yet.
-        if term and db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_historical_created_work'").fetchone():
+        has_history = bool(term and db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_historical_created_work'").fetchone())
+        if term and not match_all_terms and has_history:
             where[1] = "(" + text_predicate + " OR EXISTS (SELECT 1 FROM hq_historical_created_work h WHERE h.work_id=w.id AND h.job_ref=? COLLATE NOCASE))"
             args.insert(len(columns), term)
+        if term and match_all_terms:
+            # Every token must match this SAME canonical record. Keep wildcard
+            # characters literal; no external lookup or fuzzy identity linking.
+            columns = ("c.name", "c.email", "c.phone", "v.registration",
+                       "v.make", "v.model", "w.service", "w.notes", "w.id")
+            for token in term.split():
+                parts = [f"instr(lower({col}), lower(?)) > 0" for col in columns]
+                values = [token] * len(columns)
+                parts.append("instr(lower(replace(v.registration,' ','')), lower(?)) > 0")
+                values.append(token)
+                if has_history:
+                    parts.append("EXISTS (SELECT 1 FROM hq_historical_created_work h WHERE h.work_id=w.id AND h.job_ref=? COLLATE NOCASE)")
+                    values.append(token)
+                where.append("(" + " OR ".join(parts) + ")")
+                args.extend(values)
         predicate = " WHERE " + " AND ".join(where) if where else ""
         total = db.execute("SELECT COUNT(*)" + joins + predicate, args).fetchone()[0]
         rows = db.execute("""SELECT w.id,w.source_request_id,w.kind,w.service,

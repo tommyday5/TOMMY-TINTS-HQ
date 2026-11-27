@@ -2234,3 +2234,30 @@ CI and deployment pending. No live job, time, customer, finance or workbook
 record changes. Recovery snapshot and first bounded historical import
 still need separate owner approval and verified mappings; no new historical
 authority or domain reconciliation.
+
+### 2026-11-27 — local preview deployed; canonical timer job lookup
+
+PR #331 exact head 01e88636a7e8e099ef086d47851824d729666b77 passed
+Actions 46004448015 (127 + 707 Python tests; 19 JavaScript tests).
+Merged as b387ada2fa209ba4caf315d741ddd05ca9b32292; Railway deployment
+825d25b5-ed86-4ffb-896b-7ad9daf76e8e SUCCESS at 14:01:09 UTC.
+Original 1024 MB /data volume attached, one running replica, no staged
+changes; timer background scan startup confirmed in logs. Actual phone
+delivery remains disabled, pending secure transport configuration and
+separate owner consent. Read-only workbook metadata confirms 48 tabs;
+bounded Jobs A1:Z1000 Kia search returned J0014 and J0073, neither
+establishes the current repair identity. Direct /book, /hq/timer and
+/hq/timer/alerts/push/ probes failed local DNS resolution. CI synthetic
+customer vehicle, service request, quote conversion, owner approval,
+customer-visible product order and account isolation passed.
+
+Next owner-facing slice: opt-in combined-term lookup on /hq/timer searches
+customer, vehicle, literal registration (including compact form), service,
+repair notes and canonical ID on the same record; existing historical
+J references remain searchable if linked. Results display repair scope
+and full canonical ID to distinguish similar work. Existing generic
+search semantics remain unchanged. Owner-only no-store route and synthetic
+regression verify scope, no wildcard expansion, escaping and no timer
+start or labour write. No identity inference, live job creation or
+migration. Exact-head CI and deployment pending. Recovery and bounded
+historical imports remain separate approvals; no domain authority changed.

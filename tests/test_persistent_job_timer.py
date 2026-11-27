@@ -965,3 +965,40 @@ class PersistentTimerTests(unittest.TestCase):
                 self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_timer_push_consent_events").fetchone()[0],3)
             self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"],0)
             self.assertEqual(snapshot(self.job)["state"],"running")
+
+    def test_timer_search_combines_customer_vehicle_scope_and_literal_identity(self):
+        from hq_core_records import search_work_records
+        other = create_test_job()
+        with connect() as db:
+            db.execute("UPDATE hq_customers SET name='Synthetic Motors' WHERE id=(SELECT customer_id FROM hq_work_records WHERE id=?)", (self.job,))
+            db.execute("UPDATE hq_vehicles SET make='Kia', model='Example', registration='AB12 XYZ' WHERE id=(SELECT vehicle_id FROM hq_work_records WHERE id=?)", (self.job,))
+            db.execute("UPDATE hq_work_records SET notes='Black front wing repair <example>' WHERE id=?", (self.job,))
+            db.execute("UPDATE hq_customers SET name='Synthetic Motors' WHERE id=(SELECT customer_id FROM hq_work_records WHERE id=?)", (other,))
+            db.execute("UPDATE hq_vehicles SET make='Kia' WHERE id=(SELECT vehicle_id FROM hq_work_records WHERE id=?)", (other,))
+            db.execute("UPDATE hq_work_records SET notes='Bonnet respray' WHERE id=?", (other,))
+        def matches(q):
+            return {row["id"] for row in search_work_records(query=q, kind="job", match_all_terms=True)["records"]}
+        self.assertEqual(matches("motors kia black wing"), {self.job})
+        self.assertEqual(matches("synthetic kia bonnet"), {other})
+        self.assertEqual(matches("AB12XYZ"), {self.job})
+        self.assertEqual(matches("AB12 XYZ"), {self.job})
+        self.assertEqual(matches(self.job), {self.job})
+        self.assertEqual(matches("black bonnet"), set())
+        self.assertEqual(matches("%"), set())
+        self.assertEqual(matches("_"), set())
+        self.assertEqual(search_work_records(query="motors kia", kind="job")["total"], 0)
+        c = app.test_client()
+        url = "/hq/timer?q=motors+kia+black+wing"
+        self.assertEqual(c.get(url).status_code, 302)
+        with c.session_transaction() as session, auth_db() as db:
+            session["hq_sid"] = issue_session(db, "owner")
+            session["csrf"] = "test"
+        page = c.get(url)
+        self.assertEqual(page.status_code, 200)
+        self.assertEqual(page.headers["Cache-Control"], "no-store")
+        self.assertIn(self.job.encode(), page.data)
+        self.assertNotIn(other.encode(), page.data)
+        self.assertIn(b"Black front wing repair &lt;example&gt;", page.data)
+        self.assertIsNone(snapshot(self.job))
+        self.assertIsNone(snapshot(other))
+        self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"], 0)

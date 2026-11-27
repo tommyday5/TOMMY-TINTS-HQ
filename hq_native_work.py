@@ -932,7 +932,7 @@ def timer_jobs():
     from hq_core_records import search_work_records
     query=request.args.get('q','')
     try:
-        page=search_work_records(query=query,kind='job',limit=50)
+        page=search_work_records(query=query,kind='job',limit=50,match_all_terms=True)
     except ValueError:
         abort(400)
     try:
