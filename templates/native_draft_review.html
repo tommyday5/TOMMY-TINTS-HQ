@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow">
+<title>Review HQ work — Tommy Tints</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#090a0f;color:#f4f5f7}*{box-sizing:border-box}body{margin:0;padding:clamp(12px,4vw,32px)}main{max-width:720px;margin:auto}section{background:#181b21;border:1px solid #41434a;border-radius:12px;padding:18px;margin:16px 0}p{line-height:1.5}a{color:#ff727c}label{display:block;margin:12px 0 6px}input:not([type=checkbox]){display:block;width:100%;padding:12px;background:#0d1118;color:white;border:1px solid #555962;border-radius:8px;font:inherit}button{background:#a51c29;color:white;border:1px solid #ff727c;border-radius:8px;padding:12px;font:inherit;font-weight:700;margin-top:14px;cursor:pointer}.notice{color:#f3d576}.error{color:#ff949b}code{overflow-wrap:anywhere}
+</style></head>
+<body><main>
+<p><a href="{{ url_for('.edit_work',work_id=record.id) }}">Edit scope &amp; tier</a> · <a href="{{ url_for('.timer_jobs') }}">Job timer</a></p>
+<h1>Review native HQ {{ record.kind }}</h1>
+<p>{{ record.customer_name }} · {{ record.make }} {{ record.model }} · {{ record.registration }}<br>{{ record.service }} · {{ record.customer_tier }} · {{ record.status.replace('_',' ') }}</p>
+<p>{{ record.notes }}</p><p>HQ ID <code>{{ record.id }}</code> · revision {{ record.revision }}</p>
+{% if error %}<p class="error" role="alert">{{ error }}. Review the current saved values before trying again.</p>{% endif %}
+<section><h2>Saved amounts</h2>
+<p>Price: {% if record.price_pence is none %}Not recorded{% else %}£{{ '%d.%02d'|format(record.price_pence // 100,record.price_pence % 100) }}{% endif %}</p>
+<p>Planned deposit: £{{ '%d.%02d'|format(record.deposit_pence // 100,record.deposit_pence % 100) }} — not money received.</p>
+{% if record.price_pence is not none %}<p>Price less planned deposit: £{{ '%d.%02d'|format((record.price_pence-record.deposit_pence)//100,(record.price_pence-record.deposit_pence)%100) }} — not a verified balance due.</p>{% endif %}
+</section>
+{% if not record.is_archived and record.status in ('draft','ready_for_review') %}
+<section><h2>Save proposed amounts</h2>
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="revision" value="{{ record.revision }}"><input type="hidden" name="action" value="amounts">
+<label for="price">Proposed customer price (£)</label><input id="price" name="price" inputmode="decimal" maxlength="10" required value="{% if record.price_pence is not none %}{{ '%d.%02d'|format(record.price_pence//100,record.price_pence%100) }}{% endif %}">
+<label for="deposit">Planned deposit (£; enter 0 if none planned)</label><input id="deposit" name="deposit" inputmode="decimal" maxlength="10" required value="{{ '%d.%02d'|format(record.deposit_pence//100,record.deposit_pence%100) }}">
+<button>Save proposed amounts</button></form>
+<p class="notice">Saving is not agreement, payment, invoicing or booking.</p></section>
+{% if record.price_pence is not none %}
+<section><h2>Internal review</h2><form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="revision" value="{{ record.revision }}">
+{% if record.status == 'draft' %}<input type="hidden" name="action" value="review"><button>Mark ready for review</button>
+{% else %}<input type="hidden" name="action" value="approve"><label><input type="checkbox" name="confirm" value="yes" required> I confirm the saved price and scope are approved for internal work.</label><button>{% if record.kind == 'quote' %}Approve quote into same job{% else %}Approve job{% endif %}</button>{% endif %}
+</form><p class="notice">Internal approval does not send a quote, book an appointment, collect a payment or start the timer.</p></section>
+{% endif %}
+{% elif not record.is_archived and record.kind == 'job' and record.status in ('approved','in_progress') %}
+<section><h2>Approved job</h2><p><a href="/hq/work/{{ record.id }}/time">Open this exact job timer</a>. Starting requires a separate owner action.</p></section>
+{% else %}<p>This record is not editable in this review workspace.</p>{% endif %}
+</main></body></html>
