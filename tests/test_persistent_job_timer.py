@@ -1002,3 +1002,31 @@ class PersistentTimerTests(unittest.TestCase):
         self.assertIsNone(snapshot(self.job))
         self.assertIsNone(snapshot(other))
         self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"], 0)
+
+    def test_timer_job_search_pages_keep_query_and_do_not_start_sessions(self):
+        from hq_core_records import search_work_records
+        ids = [self.job] + [create_test_job() for _ in range(50)]
+        with connect() as db:
+            db.executemany("UPDATE hq_work_records SET notes='Synthetic pagination marker' WHERE id=?",
+                           [(job,) for job in ids])
+        c = app.test_client()
+        with c.session_transaction() as session, auth_db() as db:
+            session["hq_sid"] = issue_session(db, "owner")
+            session["csrf"] = "test"
+        first = c.get("/hq/timer?q=pagination+marker")
+        second = c.get("/hq/timer?q=pagination+marker&offset=50")
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertIn(b"51 matching jobs", first.data)
+        self.assertIn(b"Next jobs", first.data)
+        self.assertIn(b"Previous jobs", second.data)
+        self.assertNotIn(b"Next jobs", second.data)
+        tail = search_work_records(query="pagination marker", kind="job", limit=50,
+                                   offset=50, match_all_terms=True)["records"]
+        self.assertEqual(len(tail), 1)
+        self.assertNotIn(tail[0]["id"].encode(), first.data)
+        self.assertIn(tail[0]["id"].encode(), second.data)
+        for offset in ("-1", "abc", "100001"):
+            self.assertEqual(c.get("/hq/timer?offset=" + offset).status_code, 400)
+        self.assertIsNone(snapshot(self.job))
+        self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"], 0)
