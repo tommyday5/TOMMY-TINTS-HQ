@@ -636,3 +636,70 @@ class PersistentTimerTests(unittest.TestCase):
         self.assertIn(b'data-work-revision="1"', page.data)
         self.assertIn(b'data-status-url=', page.data)
         self.assertIn(b'id="serverSyncNotice"', page.data)
+
+
+    def test_durable_timer_alerts_scan_acknowledge_and_no_live_job_changes(self):
+        from hq_timer_alerts import scan, inbox
+        c = app.test_client()
+        url = "/hq/timer/alerts"
+        self.assertEqual(c.get(url).status_code, 302)
+        self.assertEqual(c.post(url, data={"action":"scan"}).status_code, 302)
+        with c.session_transaction() as s, auth_db() as db:
+            s["hq_sid"] = issue_session(db, "owner")
+            s["google_sub"] = "owner"
+            s["csrf"] = "test"
+        self.assertEqual(c.post(url, data={"action":"scan"}).status_code, 403)
+        self.command("start", allowance="10")
+        sid = snapshot(self.job)["id"]
+        self.now.return_value += 479
+        self.assertEqual(scan(), 0)
+        self.now.return_value += 1
+        self.assertEqual(scan(), 1)
+        self.assertEqual(scan(), 0)
+        pending = inbox()["pending"]
+        self.assertEqual(len(pending), 1)
+        near = pending[0]["id"]
+        self.assertEqual((pending[0]["level"], pending[0]["observed_seconds"]), ("near",480))
+        page = c.get(url)
+        self.assertEqual(page.headers["Cache-Control"], "no-store")
+        self.assertIn(b"Approaching labour allowance", page.data)
+        self.assertIn(b"Labour alerts", c.get("/hq/timer").data)
+        data = {"action":"acknowledge","alert_id":near,"csrf":"test"}
+        self.assertEqual(c.post(url,data=data).status_code,303)
+        self.now.return_value += 1
+        self.assertEqual(c.post(url,data=data).status_code,303)
+        self.assertEqual(inbox()["pending"], [])
+        ack = inbox()["recent"][0]
+        self.assertEqual((ack["acknowledged_by"],ack["acknowledged_at"]),("owner",100480))
+        self.command("pause",0,sid)
+        self.now.return_value += 86400
+        self.assertEqual(scan(),0)
+        self.command("resume",1,sid)
+        self.now.return_value += 119
+        # CLI exercises the same scanner without a browser session.
+        cli = app.test_cli_runner().invoke(args=["native_work","scan-timer-alerts"])
+        self.assertEqual(cli.exit_code,0,cli.output)
+        self.assertIn("Timer alerts created: 1",cli.output)
+        limit = inbox()["pending"][0]
+        self.assertEqual((limit["level"],limit["observed_seconds"]),("limit",600))
+        self.assertEqual(c.post(url,data={"action":"scan","csrf":"test"}).status_code,303)
+        self.assertEqual(len(inbox()["pending"]),1)
+        self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"],0)
+        self.assertEqual(snapshot(self.job)["state"],"running")
+        self.command("allowance",2,sid,allowance="20")
+        self.assertFalse(inbox()["pending"][0]["same_open_allowance"])
+        self.assertEqual(scan(),0)
+        self.assertEqual(c.post(url,data={"action":"acknowledge","alert_id":uuid.uuid4().hex,"csrf":"test"}).status_code,400)
+
+    def test_timer_alert_scan_includes_saved_minutes_skips_unknown_and_does_not_backfill_near(self):
+        from hq_timer_alerts import scan, inbox
+        append_work_time(self.job, {"operation_id":uuid.uuid4().hex,"minutes":"9",
+            "stage":"repair","hourly_cost_pounds":""},0,"owner")
+        self.command("start")
+        sid = snapshot(self.job)["id"]
+        self.now.return_value += 60
+        self.assertEqual(scan(),0)
+        self.command("allowance",0,sid,allowance="10")
+        self.assertEqual(scan(),1)
+        self.assertEqual([(x["level"],x["observed_seconds"]) for x in inbox()["pending"]],[("limit",600)])
+        self.assertEqual(scan(),0)

@@ -943,3 +943,50 @@ def timer_jobs():
     response = current_app.make_response(render_template('timer_jobs.html',page=page,query=query,unfinished=unfinished))
     response.headers["Cache-Control"] = "no-store"
     return response
+
+
+@native_work.get("/hq/timer/alerts")
+@required
+def timer_alert_inbox():
+    import hq_timer_alerts
+    try:
+        alerts = hq_timer_alerts.inbox()
+    except (OSError, sqlite3.Error, RuntimeError):
+        current_app.logger.exception("Timer alert inbox unavailable")
+        abort(503)
+    response = current_app.make_response(render_template("timer_alerts.html",
+        alerts=alerts, csrf=session["csrf"]))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@native_work.post("/hq/timer/alerts")
+@required
+def update_timer_alert_inbox():
+    import hq_timer_alerts
+    if request.content_length is None or request.content_length > 2048:
+        abort(413)
+    if not secrets.compare_digest(request.form.get("csrf", ""), session.get("csrf", "not-set")):
+        abort(403)
+    try:
+        action = request.form.get("action")
+        if action == "scan":
+            hq_timer_alerts.scan()
+        elif action == "acknowledge":
+            hq_timer_alerts.acknowledge(request.form.get("alert_id", ""), session.get("google_sub"))
+        else:
+            abort(400)
+    except (ValueError, LookupError):
+        abort(400)
+    except (OSError, sqlite3.Error, RuntimeError):
+        current_app.logger.exception("Timer alert update unavailable")
+        abort(503)
+    return redirect(url_for(".timer_alert_inbox"), 303)
+
+
+@native_work.cli.command("scan-timer-alerts")
+def scan_timer_alerts_command():
+    """One local scan; no network or messages. Invoke from a trusted worker."""
+    import click
+    import hq_timer_alerts
+    click.echo("Timer alerts created: " + str(hq_timer_alerts.scan()))
