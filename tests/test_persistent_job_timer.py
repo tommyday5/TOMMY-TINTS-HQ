@@ -596,3 +596,43 @@ class PersistentTimerTests(unittest.TestCase):
         transition(other, "start", -1, uuid.uuid4().hex)
         self.assertEqual(open_timer_jobs()["records"][0]["budget_state"], "unknown")
         self.assertIn(b"Labour allowance not recorded", c.get("/hq/timer").data)
+
+
+    def test_live_status_cross_device_revision_and_breaks(self):
+        c = app.test_client()
+        url = "/hq/work/" + self.job + "/timer/status"
+        self.assertEqual(c.get(url).status_code, 302)
+        with c.session_transaction() as s, auth_db() as db:
+            s["hq_sid"] = issue_session(db, "owner")
+            s["google_sub"] = "owner"
+            s["csrf"] = "test"
+        standby = c.get(url)
+        self.assertEqual(standby.status_code, 200)
+        self.assertEqual(standby.headers["Cache-Control"], "no-store")
+        self.assertEqual(standby.json["state"], "standby")
+        self.assertIsNone(standby.json["session_id"])
+        self.assertEqual(c.get("/hq/work/" + uuid.uuid4().hex + "/timer/status").status_code, 404)
+        self.command("start", allowance="390")
+        sid = snapshot(self.job)["id"]
+        self.now.return_value += 121
+        running = c.get(url).json
+        self.assertEqual((running["active_seconds"], running["break_seconds"], running["timer_revision"]), (121, 0, 0))
+        self.assertEqual(set(running), {"work_revision", "saved_minutes", "session_id",
+            "timer_revision", "state", "active_seconds", "break_seconds", "allowance_minutes"})
+        self.command("pause", 0, sid)
+        self.now.return_value += 86400
+        paused = c.get(url).json
+        self.assertEqual((paused["active_seconds"], paused["break_seconds"], paused["timer_revision"]), (121, 86400, 1))
+        self.command("resume", 1, sid)
+        self.now.return_value += 59
+        self.command("finish", 2, sid)
+        self.assertEqual(c.get(url).json["state"], "review")
+        append_work_time(self.job, {"operation_id": sid, "minutes": "3",
+            "stage": "repair", "hourly_cost_pounds": ""}, 0, "owner")
+        saved = c.get(url).json
+        self.assertEqual((saved["state"], saved["saved_minutes"], saved["work_revision"]), ("standby", 3, 1))
+        self.assertIsNone(saved["session_id"])
+        page = c.get("/hq/work/" + self.job + "/time")
+        self.assertIn(b'data-work-revision="1"', page.data)
+        self.assertIn(b'data-status-url=', page.data)
+        self.assertIn(b'id="serverSyncNotice"', page.data)

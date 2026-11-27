@@ -12,13 +12,13 @@ import sqlite3
 import uuid
 from datetime import date, datetime, timezone
 
-from flask import Blueprint, abort, current_app, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, current_app, jsonify, redirect, render_template, request, session, url_for
 from customer_request_store import SERVICES, connect
 from hq_auth import required
 from hq_core_records import _audit_work, _schema, StaleWorkRecordError
 from hq_work_progress import WORK_STAGES, work_progress_snapshot, record_work_progress
 from hq_work_time import time_ledger_snapshot, append_work_time, void_work_time, correct_work_time_rate, correct_work_time_minutes
-from hq_work_timer import snapshot as timer_snapshot, transition as timer_transition, history as timer_history, open_timer_jobs
+from hq_work_timer import snapshot as timer_snapshot, transition as timer_transition, history as timer_history, open_timer_jobs, live_status as timer_live_status
 from hq_work_materials import material_ledger_snapshot, append_work_material, void_work_material, UNITS
 from hq_work_expenses import expense_ledger_snapshot, append_work_expense, void_work_expense, EXPENSE_TYPES
 from hq_work_archive import archived_work_snapshot, set_work_archived, list_archived_work
@@ -623,6 +623,20 @@ def edit_work_time(work_id):
         values={"minutes": str(timer["active_seconds"] // 60)} if review else {},
         error=None, timer=timer, timer_operation=uuid.uuid4().hex, allowance_operation=uuid.uuid4().hex,
         timer_history=timer_history(work_id), combined_costs=costs))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@native_work.get("/hq/work/<work_id>/timer/status")
+@required
+def job_timer_live_status(work_id):
+    try:
+        response = jsonify(timer_live_status(work_id))
+    except (ValueError, LookupError):
+        abort(404)
+    except (OSError, sqlite3.Error, RuntimeError):
+        current_app.logger.exception("Timer live status unavailable")
+        abort(503)
     response.headers["Cache-Control"] = "no-store"
     return response
 

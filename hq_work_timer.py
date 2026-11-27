@@ -39,6 +39,31 @@ def snapshot(work_id):
         row["display_break"] = row["break_seconds"] + (elapsed if row["state"] == "paused" else 0)
     return row
 
+def live_status(work_id):
+    """Read a consistent clock and work revision, without exposing customer data."""
+    _validate_id(work_id)
+    with connect() as db:
+        _schema(db)
+        tables(db)
+        time_tables(db)
+        db.execute("BEGIN")
+        work = _read_work(db, work_id)
+        timer = _open(db, work_id)
+        saved = db.execute("""SELECT COALESCE(SUM(minutes),0) FROM hq_work_time_entries
+            WHERE work_id=? AND voided_at IS NULL""", (work_id,)).fetchone()[0]
+        checked_at = now()
+    elapsed = max(0, checked_at - timer["changed_at"]) if timer else 0
+    return {
+        "work_revision": work["revision"], "saved_minutes": saved,
+        "session_id": timer["id"] if timer else None,
+        "timer_revision": timer["revision"] if timer else -1,
+        "state": timer["state"] if timer else "standby",
+        "active_seconds": timer["active_seconds"] + (elapsed if timer["state"] == "running" else 0) if timer else 0,
+        "break_seconds": timer["break_seconds"] + (elapsed if timer["state"] == "paused" else 0) if timer else 0,
+        "allowance_minutes": timer["allowance_minutes"] if timer else None,
+    }
+
+
 def open_timer_jobs():
     """Owner-only recovery queue, independent of job search and pagination."""
     with connect() as db:

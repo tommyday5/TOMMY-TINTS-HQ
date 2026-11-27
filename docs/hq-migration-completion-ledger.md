@@ -2048,3 +2048,31 @@ owner-only access. Exact-head CI/deployment pending. No live data
 writes, customer app changes, price changes, auth changes, migration
 authority changes or workbook writes. Actual recovery snapshot and
 bounded historical import remain subject to explicit owner approval.
+
+
+### 2026-11-27 — deployed recovery allowance warnings; cross-device clock verification
+
+PR #325 exact head b7ed6db8f1fffe6fcc2b6553a579867b08414d49 passed
+Actions 45956040531 (127 + 699 Python tests and 14 JavaScript tests),
+including synthetic authenticated recovery threshold and customer
+request/approval/appointment handoff/account isolation regressions.
+Squash merged as 6193a780b2de9ffb1ab7a20dfb3d7050bfc1808e.
+Railway deployment fe0f3542-33dd-411e-9c76-2283c935144c SUCCESS at
+08:00:46 UTC; existing /data 1024 MB volume attached, no pending
+infrastructure changes. Read-only workbook metadata confirms 48 tabs.
+No authenticated production browser acceptance or database record
+inspection; no new domain declared authoritative.
+
+Next slice: private no-store minimal timer status endpoint reads current
+timer and saved active ledger minutes in one SQLite read transaction.
+Foreground timer rechecks every 15 seconds and on returning to the page;
+uses monotonic local interpolation between server reads, labels failed
+verification as an estimate, and freezes stale screens if a different
+session, timer revision, or job revision is detected. Explicit reload
+preserves the choice about unsaved form edits; no automatic resume/pause,
+no live data changes, no external communication. Align 80% threshold
+and exact/over-limit display with recovery queue. Synthetic HTTP and
+JavaScript regression added; exact-head CI/deployment pending. This is
+foreground verification only, not background push. Actual recovery
+snapshot, bounded historical import, production job identity and
+customer browser acceptance still require verification/approval.

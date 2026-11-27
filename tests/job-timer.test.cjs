@@ -39,12 +39,12 @@ test('invalid stored data cannot inflate time; unknown allowance stays unknown',
   assert.equal(t.nodes.clockFinish.disabled,true);
 });
 
-function persistentClock({seconds=0,recorded=0,running='yes',allowance=100,paused='no',breakSeconds=0}={}) {
-  let now=1000000,tick,foreground;
-  const nodes={serverTimer:{dataset:{seconds:String(seconds),recorded:String(recorded),running,allowance:String(allowance),paused,break:String(breakSeconds)}},serverClock:{},serverAllowanceNotice:{},serverTotalClock:{},serverBreakClock:{},serverPercent:{},serverAllowanceRing:{style:{setProperty(){}},setAttribute(){},removeAttribute(){}}};
-  const script='(()=>{const root=document.getElementById(\'serverTimer\');'+source.split("(()=>{const root=document.getElementById('serverTimer');")[1];
-  vm.runInNewContext(script,{document:{getElementById:id=>nodes[id],hidden:false,addEventListener:(_,fn)=>{foreground=fn}},Date:{now:()=>now},setInterval:fn=>{tick=fn}});
-  return {nodes,wake(seconds){now+=seconds*1000;foreground()},tick(){tick()}};
+function persistentClock({seconds=0,recorded=0,running='yes',allowance=100,paused='no',breakSeconds=0,live=false,reply=null}={}) {
+  let now=1000000,foreground,fetches=0;
+  const ticks={},button={disabled:false};
+  const nodes={serverTimer:{dataset:{seconds:String(seconds),recorded:String(recorded),running,allowance:String(allowance),paused,break:String(breakSeconds),statusUrl:live?'/hq/test/status':'',workRevision:'2',timerRevision:'0',sessionId:'synthetic'},querySelectorAll:()=>[button]},serverClock:{},serverAllowanceNotice:{},serverSyncNotice:{},serverReload:{hidden:true},serverTotalClock:{},serverBreakClock:{},serverPercent:{},serverAllowanceRing:{style:{setProperty(){}},setAttribute(){},removeAttribute(){}}};
+  vm.runInNewContext(source,{document:{getElementById:id=>nodes[id],hidden:false,addEventListener:(_,fn)=>{foreground=fn}},performance:{now:()=>now},window:{addEventListener(){}},setInterval:(fn,delay)=>{ticks[delay]=fn},fetch:async()=>{fetches++;if(reply instanceof Error)throw reply;return {ok:true,json:async()=>reply}}});
+  return {nodes,button,wake(seconds){now+=seconds*1000;foreground()},tick(){ticks[1000]()},poll(){ticks[15000]()},setReply(value){reply=value},fetchCount:()=>fetches};
 }
 test('persistent timer catches up after device sleep without counting paused breaks',()=>{
   const running=persistentClock({seconds:60});running.wake(3600);
@@ -52,12 +52,12 @@ test('persistent timer catches up after device sleep without counting paused bre
   const paused=persistentClock({seconds:60,running:'no'});paused.wake(3600);
   assert.equal(paused.nodes.serverClock.textContent,'00:01:00');
 });
-test('persistent allowance distinguishes 75, 90, and 100 percent including saved labour',()=>{
-  const t=persistentClock({recorded:75,running:'yes'});
-  assert.match(t.nodes.serverAllowanceNotice.textContent,/75%/);
-  t.wake(15*60);assert.match(t.nodes.serverAllowanceNotice.textContent,/90%/);
-  t.wake(10*60);assert.match(t.nodes.serverAllowanceNotice.textContent,/Allowance reached/);
-  t.wake(60);assert.match(t.nodes.serverAllowanceNotice.textContent,/00:01:00 over/);
+test('persistent allowance matches recovery queue 80 percent and exact limit',()=>{
+  const t=persistentClock({recorded:79,running:'yes'});
+  assert.doesNotMatch(t.nodes.serverAllowanceNotice.textContent,/Approaching/);
+  t.wake(60);assert.match(t.nodes.serverAllowanceNotice.textContent,/Approaching labour allowance/);
+  t.wake(20*60);assert.match(t.nodes.serverAllowanceNotice.textContent,/Allowance reached/);
+  t.wake(60);assert.match(t.nodes.serverAllowanceNotice.textContent,/Allowance exceeded by 00:01:00/);
 });
 
 test('persistent cumulative clock includes saved labour once and pause clock excludes breaks',()=>{
@@ -108,4 +108,33 @@ test('labour preview keeps missing rates unknown and rejects invalid or excessiv
   n.rate.value='18.25';n.minutes.value='31';n.minutes.input();
   assert.match(n.entryCostPreview.textContent,/valid reviewed minutes/);
   assert.match(n.totalCostPreview.textContent,/Unknown/);
+});
+
+
+test('foreground verification refreshes clock and stops stale display after another device changes timer',async()=>{
+  const reply={work_revision:2,timer_revision:0,session_id:'synthetic',saved_minutes:30,active_seconds:90,break_seconds:0};
+  const t=persistentClock({recorded:30,seconds:60,live:true,reply});
+  const flush=()=>new Promise(resolve=>setImmediate(resolve));
+  await flush();
+  assert.equal(t.nodes.serverClock.textContent,'00:01:30');
+  assert.match(t.nodes.serverSyncNotice.textContent,/checked against server/);
+  t.setReply({...reply,timer_revision:1});
+  t.wake(60);await flush();
+  assert.match(t.nodes.serverSyncNotice.textContent,/changed on another screen/);
+  assert.equal(t.nodes.serverReload.hidden,false);
+  assert.equal(t.button.disabled,true);
+  const frozen=t.nodes.serverClock.textContent;
+  t.wake(600);t.tick();assert.equal(t.nodes.serverClock.textContent,frozen);
+  assert.equal(t.fetchCount(),2);
+});
+test('failed live verification identifies estimate and retries without changing records',async()=>{
+  const t=persistentClock({live:true,reply:new Error('offline')});
+  const flush=()=>new Promise(resolve=>setImmediate(resolve));
+  await flush();
+  assert.match(t.nodes.serverSyncNotice.textContent,/estimated from the last known/);
+  assert.equal(t.button.disabled,false);
+  t.setReply({work_revision:2,timer_revision:0,session_id:'synthetic',saved_minutes:0,active_seconds:42,break_seconds:0});
+  t.poll();await flush();
+  assert.equal(t.nodes.serverClock.textContent,'00:00:42');
+  assert.match(t.nodes.serverSyncNotice.textContent,/checked against server/);
 });
