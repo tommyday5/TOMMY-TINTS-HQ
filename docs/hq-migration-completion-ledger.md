@@ -2137,3 +2137,33 @@ owner acceptance pending. Phone push remains unimplemented; no
 new migration or live job/price/payment/booking changes.
 Recovery snapshot and first bounded import still need separately
 reviewed counts, mapping, conflicts and rollback before approval.
+
+
+### 2026-11-27 — automatic private timer scan deployed; owner alert triage
+
+PR #328 exact-head 7dd37999faaf1c8e214bb15a405802f7e40fe2fc passed
+Actions 45979221255 (127 + 704 Python tests and 16 JavaScript tests).
+Squash merged as 731238c0a8aa1200548cc413bc2f49befbe56552.
+Railway deployment 54967706-6438-4130-8cef-1043dcf7f453 SUCCESS at
+11:02:26 UTC, original 1024 MB /data volume attached, no staged changes.
+Runtime log at 11:02:25 UTC confirms "Private timer alert background scan
+operational" (first successful scan). Continuous heartbeat over subsequent
+intervals and authenticated production browser acceptance not independently
+verified. Read-only workbook metadata confirms all 48 tabs. Exact-head CI
+confirmed synthetic customer request, quote conversion, customer approval,
+appointment confirmation, maintenance pricing isolation, and product
+deposit review. No historical reconciliation or authority change.
+
+Next slice: owner timer landing displays exact count of all unacknowledged
+observations (not just visible rows), distinguishes observations matching
+open sessions and allowances from historical ones, prioritizes matching
+limit observations, and lets the owner acknowledge directly with existing
+CSRF-protected action. Alert storage failure does not prevent timer recovery.
+Observations do not represent the current clock. No new external delivery,
+real booking, job/time/price/payment edits, or workbook writes by development.
+Synthetic regression covers >50 observations, prioritization, authenticated
+acknowledgment and failure isolation. Exact-head CI/deployment pending.
+Phone push requires separately verified private subscription and delivery
+controls; owner consent before any real send. Current black Kia identity
+remains unverified; no creation or start. Actual off-volume recovery and
+bounded historical import remain subject to separate approved manifests.
