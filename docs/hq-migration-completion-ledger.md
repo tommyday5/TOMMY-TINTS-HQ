@@ -2020,3 +2020,31 @@ domain newly reconciled/authoritative. Actual recovery snapshot and bounded
 import approval remain separate. Next owner acceptance: select existing
 job, save actual labour, open Record materials and Record expenses, then
 reload timer to verify corrected amounts and job revision.
+
+
+### 2026-11-27 — integrated cost allocation deployment and recovery allowance warnings
+
+PR #324 exact head 81a53c10ee29a3f7c1770840877fc63cfcfe69c8 passed
+Actions 45948994634 (127 + 698 Python tests and 14 JavaScript tests).
+Squash merged as e30ab8660d0d9dac14cdbfd453f08368adfdd22d.
+Railway deployment b84d2a26-c52f-4415-8ea0-d87ea49cc8ea SUCCESS at
+07:04:22 UTC. Existing /data 1024 MB volume verified attached, no
+pending infrastructure changes. Read-only workbook metadata confirms
+48 tabs. Synthetic authenticated timer cost allocation save/reload,
+legacy replay, stale-cost withholding, customer request conversion,
+customer approval status and account isolation passed in CI.
+No production database contents or authenticated UI independently
+verified; current black Kia native ID remains unverified.
+
+Next slice: recovery list shows saved active ledger minutes plus
+current server-measured session time and allowance remaining, approaching
+at 80%, reached or exceeded. Paused and review states freeze active
+time, voided labour excluded, missing allowance explicitly unknown.
+Private recovery page is no-store; opening it changes no timer or job
+state. Snapshot on page load, not a background push notification.
+Correct stale material pounds-entry example. Synthetic HTTP and SQLite
+regression covers threshold boundaries, multi-day break, review and
+owner-only access. Exact-head CI/deployment pending. No live data
+writes, customer app changes, price changes, auth changes, migration
+authority changes or workbook writes. Actual recovery snapshot and
+bounded historical import remain subject to explicit owner approval.

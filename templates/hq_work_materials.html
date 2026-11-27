@@ -59,7 +59,7 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 <label for="actualCost">Actual allocated cost for the quantity used (£, optional)</label>
 <input id="actualCost" name="actual_cost_pounds" type="number" inputmode="decimal" min="0" max="1000000" step="0.01"
  value="{{ values.get('actual_cost_pounds','') if 'actual_cost_pounds' in values else ('%.2f'|format(values.get('actual_cost_pence')|int/100) if values.get('actual_cost_pence','').isdigit() else '') }}" placeholder="Blank means unknown">
-<p class="hint">Example: 861 means £8.61 actual consumption cost. Enter 0 only if you have verified the allocated material cost is genuinely zero. Do not enter retail selling price.</p>
+<p class="hint">Example: 8.61 means £8.61 actual consumption cost. Enter 0 only if you have verified the allocated material cost is genuinely zero. Do not enter retail selling price.</p>
 <label for="sourceNote">Private source / measurement note (optional)</label>
 <input id="sourceNote" name="source_note" maxlength="160" value="{{ values.get('source_note','') }}" placeholder="e.g. 300ml mixed; weighed / supplier invoice reviewed">
 <p class="hint">A save advances the canonical HQ work revision. Re-submitting the same operation cannot duplicate an entry.</p>
