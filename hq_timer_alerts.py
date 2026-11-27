@@ -66,12 +66,20 @@ def inbox():
             datetime(a.acknowledged_at,'unixepoch') AS acknowledged_utc,
             w.service, c.name, v.registration,
             CASE WHEN t.state IN ('running','paused','review')
-                 AND t.allowance_minutes=a.allowance_minutes THEN 1 ELSE 0 END AS same_open_allowance
+                 AND t.allowance_minutes=a.allowance_minutes
+                 AND w.kind='job' AND w.status IN ('approved','in_progress')
+                 THEN 1 ELSE 0 END AS same_open_allowance
             FROM hq_timer_alerts a JOIN hq_work_records w ON w.id=a.work_id
             JOIN hq_customers c ON c.id=w.customer_id JOIN hq_vehicles v ON v.id=w.vehicle_id
             LEFT JOIN hq_timer_sessions t ON t.id=a.session_id"""
+        counts = db.execute("""SELECT COUNT(*) AS pending_count,
+            COALESCE(SUM(same_open_allowance),0) AS matching_count,
+            COALESCE(SUM(CASE WHEN same_open_allowance=1 AND level='limit' THEN 1 ELSE 0 END),0)
+                AS matching_limit_count
+            FROM (""" + base + " WHERE a.acknowledged_at IS NULL)").fetchone()
         pending = [dict(r) for r in db.execute(base + """ WHERE a.acknowledged_at IS NULL
-            ORDER BY a.observed_at DESC,a.id DESC LIMIT 51""")]
+            ORDER BY same_open_allowance DESC, CASE WHEN a.level='limit' THEN 0 ELSE 1 END,
+            a.observed_at DESC,a.id DESC LIMIT 51""")]
         recent = [dict(r) for r in db.execute(base + """ WHERE a.acknowledged_at IS NOT NULL
             ORDER BY a.acknowledged_at DESC,a.id DESC LIMIT 20""")]
         health = db.execute("""SELECT checked_at, datetime(checked_at,'unixepoch') AS checked_utc
@@ -79,7 +87,10 @@ def inbox():
         age = timer.now() - health["checked_at"] if health else None
     return {"pending":pending[:50], "has_more":len(pending)>50, "recent":recent,
             "automatic_checked_utc": health["checked_utc"] if health else None,
-            "automatic_recent": age is not None and 0 <= age <= 180}
+            "automatic_recent": age is not None and 0 <= age <= 180,
+            "pending_count": counts["pending_count"], "matching_count": counts["matching_count"],
+            "matching_limit_count": counts["matching_limit_count"],
+            "historical_count": counts["pending_count"]-counts["matching_count"]}
 
 def acknowledge(alert_id, actor):
     timer._validate_id(alert_id)

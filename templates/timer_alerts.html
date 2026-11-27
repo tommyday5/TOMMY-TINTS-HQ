@@ -5,12 +5,12 @@
 <p>Private saved observations when a job reaches 80% or 100% of its labour allowance. Breaks are excluded. Alerts show the time they were detected, not the exact threshold crossing time. Phone push notifications are not enabled.</p>
 {% if alerts.automatic_checked_utc %}<p role="status">Last successful automatic scan: {{ alerts.automatic_checked_utc }} UTC. {% if alerts.automatic_recent %}Background scan recently verified.{% else %}Background scan is stale or clock changed; check manually.{% endif %}</p>{% else %}<p role="status">Automatic background scanning has not yet been verified. Check manually if needed.</p>{% endif %}
 <form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="scan"><button>Check for new alerts</button></form>
-<h2>Unacknowledged alerts</h2>
+<h2>Unacknowledged alerts</h2><p>{{ alerts.pending_count }} observations · {{ alerts.matching_count }} match open sessions ({{ alerts.matching_limit_count }} limit alerts) · {{ alerts.historical_count }} historical. Open matching sessions appear first, with limit observations before approaching warnings. These are saved observations, not current clock values.</p>
 {% for a in alerts.pending %}
 <article class="timer-job"><div><h3>{{ 'Allowance reached or exceeded' if a.level == 'limit' else 'Approaching labour allowance' }}</h3>
 <p>{{ a.name }} · {{ a.registration }} · {{ a.service }}</p>
 <p>Observed {{ a.observed_seconds // 60 }}m {{ a.observed_seconds % 60 }}s against {{ a.allowance_minutes }} min allowance · {{ a.observed_utc }} UTC.</p>
-{% if not a.same_open_allowance %}<p>Historical observation: timer closed or allowance changed.</p>{% endif %}
+{% if not a.same_open_allowance %}<p>Historical observation: job, session or allowance changed.</p>{% endif %}
 <p><a href="/hq/work/{{ a.work_id }}/time">Open job timer</a></p>
 <form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="acknowledge"><input type="hidden" name="alert_id" value="{{ a.id }}"><button>Acknowledge alert</button></form>
 </div></article>{% else %}<p>No unacknowledged alerts.</p>{% endfor %}

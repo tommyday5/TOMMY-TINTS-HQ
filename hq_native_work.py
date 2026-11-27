@@ -940,7 +940,15 @@ def timer_jobs():
     except (OSError, sqlite3.Error, RuntimeError):
         current_app.logger.exception('Timer recovery unavailable')
         abort(503)
-    response = current_app.make_response(render_template('timer_jobs.html',page=page,query=query,unfinished=unfinished))
+    # Alert storage failure must not prevent recovering or stopping a timer.
+    import hq_timer_alerts
+    try:
+        alerts = hq_timer_alerts.inbox()
+    except (OSError, sqlite3.Error, RuntimeError):
+        current_app.logger.warning("Timer alert summary unavailable")
+        alerts = None
+    response = current_app.make_response(render_template('timer_jobs.html',page=page,query=query,
+        unfinished=unfinished,alerts=alerts,csrf=session["csrf"]))
     response.headers["Cache-Control"] = "no-store"
     return response
 
