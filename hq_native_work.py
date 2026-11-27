@@ -41,6 +41,12 @@ def _tables(db):
         work_id TEXT PRIMARY KEY REFERENCES hq_work_records(id),
         customer_tier TEXT NOT NULL CHECK(customer_tier IN ('retail','trade','maintenance')),
         created_at TEXT NOT NULL)""")
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_native_workshop_plans (
+        work_id TEXT PRIMARY KEY REFERENCES hq_work_records(id),
+        planned_minutes INTEGER CHECK(planned_minutes BETWEEN 1 AND 30000),
+        planned_material_pence INTEGER CHECK(planned_material_pence BETWEEN 0 AND 100000000),
+        planned_sale_rate_pence INTEGER CHECK(planned_sale_rate_pence BETWEEN 0 AND 1000000)
+    )""")
     db.execute("""CREATE TABLE IF NOT EXISTS hq_native_work_operations(
         operation_id TEXT PRIMARY KEY, work_id TEXT NOT NULL UNIQUE,
         payload_fingerprint TEXT NOT NULL, created_at TEXT NOT NULL)""")
@@ -227,10 +233,12 @@ def native_work_record(work_id):
         _schema(db)
         _tables(db)
         row = db.execute("""SELECT w.*,d.customer_tier,COALESCE(a.is_archived,0) AS is_archived,
+            p.planned_minutes,p.planned_material_pence,p.planned_sale_rate_pence,
             c.name AS customer_name,
             c.email,c.phone,v.make,v.model,v.model_year,v.registration
             FROM hq_work_records w
             JOIN hq_native_work_details d ON d.work_id=w.id
+            LEFT JOIN hq_native_workshop_plans p ON p.work_id=w.id
             LEFT JOIN hq_work_archive_state a ON a.work_id=w.id
             JOIN hq_customers c ON c.id=w.customer_id
             JOIN hq_vehicles v ON v.id=w.vehicle_id
@@ -428,6 +436,61 @@ def _draft_pence(raw):
     return int(whole) * 100 + int(fraction.ljust(2, "0"))
 
 
+def save_workshop_plan(work_id, form, expected_revision):
+    """Save draft-only estimates, never actual costs, labour or agreed prices."""
+    if not HEX_ID.fullmatch(work_id):
+        raise ValueError("Invalid native work ID")
+    if type(expected_revision) is not int or not 0 <= expected_revision < 2**63 - 1:
+        raise ValueError("Invalid draft revision")
+    raw = form.get("planned_minutes", "")
+    if raw and (not re.fullmatch(r"[0-9]{1,5}", raw) or not 1 <= int(raw) <= 30000):
+        raise ValueError("Estimated labour must be 1–30000 whole minutes or blank")
+    def money(key, maximum):
+        raw = form.get(key, "")
+        value = _draft_pence(raw) if raw else None
+        if value is not None and value > maximum:
+            raise ValueError("Estimated amount exceeds allowed range")
+        return value
+    fields = {"planned_minutes": int(raw) if raw else None,
+              "planned_material_pence": money("planned_material", 100000000),
+              "planned_sale_rate_pence": money("planned_sale_rate", 1000000)}
+    with connect() as db:
+        _schema(db)
+        _tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("""SELECT w.status,w.revision,COALESCE(a.is_archived,0) AS is_archived,
+            p.planned_minutes,p.planned_material_pence,p.planned_sale_rate_pence
+            FROM hq_work_records w JOIN hq_native_work_details d ON d.work_id=w.id
+            LEFT JOIN hq_native_workshop_plans p ON p.work_id=w.id
+            LEFT JOIN hq_work_archive_state a ON a.work_id=w.id
+            WHERE w.id=? AND w.source_request_id=?""", (work_id, "HQ-" + work_id)).fetchone()
+        if row is None:
+            raise LookupError("Native work record not found")
+        if row["is_archived"] or row["status"] not in ("draft", "ready_for_review"):
+            raise ValueError("Only unarchived drafts can have their workshop plan edited here")
+        if (db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_historical_created_work'").fetchone()
+                and db.execute("SELECT 1 FROM hq_historical_created_work WHERE work_id=?", (work_id,)).fetchone()):
+            raise ValueError("Historical work requires separate reconciliation before planning")
+        before = {key: row[key] for key in fields}
+        if before == fields:
+            return row["revision"]
+        if row["revision"] != expected_revision:
+            raise StaleWorkRecordError("This work record changed. Refresh before editing.")
+        db.execute("""INSERT INTO hq_native_workshop_plans
+            (work_id,planned_minutes,planned_material_pence,planned_sale_rate_pence)
+            VALUES (?,?,?,?) ON CONFLICT(work_id) DO UPDATE SET
+            planned_minutes=excluded.planned_minutes,
+            planned_material_pence=excluded.planned_material_pence,
+            planned_sale_rate_pence=excluded.planned_sale_rate_pence""",
+            (work_id, fields["planned_minutes"], fields["planned_material_pence"],
+             fields["planned_sale_rate_pence"]))
+        db.execute("UPDATE hq_work_records SET revision=revision+1 WHERE id=? AND revision=?",
+                   (work_id, expected_revision))
+        revision = expected_revision + 1
+        _audit_work(db, work_id, revision, "native_workshop_plan", before, fields)
+        return revision
+
+
 @native_work.route("/hq/work/<work_id>/review", methods=["GET", "POST"])
 @required
 def review_native_draft(work_id):
@@ -449,7 +512,9 @@ def review_native_draft(work_id):
             action = request.form.get("action", "")
             if record["is_archived"] or record["status"] not in ("draft", "ready_for_review"):
                 raise ValueError("Only unarchived drafts can be reviewed here")
-            if action == "amounts":
+            if action == "plan":
+                save_workshop_plan(work_id, request.form, int(raw))
+            elif action == "amounts":
                 set_draft_financials(work_id, _draft_pence(request.form.get("price", "")),
                                      _draft_pence(request.form.get("deposit", "")), int(raw))
             elif action == "review":
