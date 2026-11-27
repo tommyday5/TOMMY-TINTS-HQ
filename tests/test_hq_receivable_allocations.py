@@ -487,7 +487,9 @@ class AllocationTests(unittest.TestCase):
         url = "/hq/finance/square-invoice-evidence"
         bank = self.payload(amount_pence=100, evidence_ref="bank-test")
         card = self.payload(method="card_reported", amount_pence=100, evidence_ref="card-test")
-        other = self.payload(method="card_reported", amount_pence=100, evidence_ref="card-test")
+        # Different date is not an exact manual duplicate, but the provider ID remains exclusive.
+        other = self.payload(method="card_reported", amount_pence=100, evidence_ref="card-test",
+                             received_on="2026-11-23")
         self.assertEqual(self.post(bank).status_code, 200)
         self.assertEqual(self.post(card).status_code, 200)
         form = dict(allocation=card["id"], csrf="test", action="review")
