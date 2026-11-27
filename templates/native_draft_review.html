@@ -16,6 +16,19 @@
 <p>Planned deposit: £{{ '%d.%02d'|format(record.deposit_pence // 100,record.deposit_pence % 100) }} — not money received.</p>
 {% if record.price_pence is not none %}<p>Price less planned deposit: £{{ '%d.%02d'|format((record.price_pence-record.deposit_pence)//100,(record.price_pence-record.deposit_pence)%100) }} — not a verified balance due.</p>{% endif %}
 </section>
+<section><h2>Workshop plan — estimates only</h2>
+<p>Estimated labour: {% if record.planned_minutes is none %}Unknown{% else %}{{ record.planned_minutes // 60 }}h {{ record.planned_minutes % 60 }}m{% endif %}.</p>
+<p>Estimated materials: {% if record.planned_material_pence is none %}Unknown{% else %}£{{ '%d.%02d'|format(record.planned_material_pence//100,record.planned_material_pence%100) }}{% endif %}.</p>
+<p>Planned hourly sale rate: {% if record.planned_sale_rate_pence is none %}Unknown{% else %}£{{ '%d.%02d'|format(record.planned_sale_rate_pence//100,record.planned_sale_rate_pence%100) }}{% endif %} per hour.</p>
+{% if not record.is_archived and record.status in ('draft','ready_for_review') and not record.historical_job_ref %}
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="revision" value="{{ record.revision }}"><input type="hidden" name="action" value="plan">
+<label for="planned_minutes">Estimated total job minutes (e.g. 390 for 6h 30m)</label><input id="planned_minutes" name="planned_minutes" inputmode="numeric" type="number" min="1" max="30000" step="1" value="{{ record.planned_minutes if record.planned_minutes is not none else '' }}">
+<label for="planned_material">Estimated materials (£)</label><input id="planned_material" name="planned_material" inputmode="decimal" maxlength="10" value="{% if record.planned_material_pence is not none %}{{ '%d.%02d'|format(record.planned_material_pence//100,record.planned_material_pence%100) }}{% endif %}">
+<label for="planned_sale_rate">Planned hourly sale rate (£/h)</label><input id="planned_sale_rate" name="planned_sale_rate" inputmode="decimal" maxlength="10" value="{% if record.planned_sale_rate_pence is not none %}{{ '%d.%02d'|format(record.planned_sale_rate_pence//100,record.planned_sale_rate_pence%100) }}{% endif %}">
+<button>Save workshop plan</button></form>
+<p class="notice">Blank means unknown; 0 is an explicit zero amount. The planned minutes are suggested when starting the first timer, not recorded time. This does not change the proposed customer price, internal labour cost, actual materials, invoice or payment.</p>
+{% endif %}</section>
 {% if not record.is_archived and record.status in ('draft','ready_for_review') %}
 <section><h2>Save proposed amounts</h2>
 <form method="post">
