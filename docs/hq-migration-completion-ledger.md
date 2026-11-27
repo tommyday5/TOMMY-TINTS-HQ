@@ -2076,3 +2076,35 @@ JavaScript regression added; exact-head CI/deployment pending. This is
 foreground verification only, not background push. Actual recovery
 snapshot, bounded historical import, production job identity and
 customer browser acceptance still require verification/approval.
+
+
+### 2026-11-27 — cross-device timer deployment; durable private alert inbox
+
+PR #326 exact head a4ec0aecb4f745d91845990e3d26bed70e57a3bd passed
+Actions 45962597049 (127 + 700 Python tests and 16 JavaScript tests).
+Squash merged as f73ced044bf056685b056ee16a3f85d3b6dea15c.
+Railway deployment 9baf468b-927f-4051-9ffd-ee23f01282a5 SUCCESS at
+09:05:28 UTC; one running replica, original /data 1024 MB volume,
+zero warnings/criticals and no pending changes. Read-only workbook
+metadata confirms 48 tabs. Exact-head CI confirms customer-to-HQ
+service requests, quote conversion, customer-visible approval and
+account isolation. Live database content and authenticated owner
+and customer browser acceptance remain unverified. No new domain
+reconciled or declared authoritative.
+
+Next slice: private durable alert inbox with explicit Check for new
+alerts and Acknowledge alert controls. Scanner uses an atomic SQLite
+transaction, saved unvoided minutes plus active timer seconds,
+excluding breaks, and deduplicates per session, allowance and threshold
+(80% and limit); skips missing allowances and avoids retroactive near
+alerts after detecting limit. Records detection time, not inferred
+crossing time; acknowledgment preserves first owner and timestamp.
+Historical observations remain visible after allowance changes or
+session closure. CLI native_work scan-timer-alerts provides a local
+one-shot worker entry point; no automatic scheduling, push credentials
+or outbound messages enabled. Synthetic HTTP and SQLite tests cover
+authorization, CSRF, thresholds, replay, paused breaks, CLI and
+acknowledgment. Exact-head CI and deployment pending. No live job,
+price, payment, spreadsheet or customer-facing route changes.
+Actual recovery snapshot and bounded historical import still require
+separate approval with verified mappings and reconciliation.
