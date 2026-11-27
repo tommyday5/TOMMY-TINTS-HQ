@@ -1007,10 +1007,12 @@ def timer_push_devices():
     import hq_timer_push as push
     try:
         records = push.devices(session.get("google_sub"))
+        import hq_timer_push_preview as preview
+        readiness = preview.summary(session.get("google_sub"))
     except (ValueError, OSError, sqlite3.Error, RuntimeError):
         abort(503)
     response = current_app.make_response(render_template("timer_push_devices.html",
-        devices=records, public_key=push.public_key(), csrf=session["csrf"], operation_id=uuid.uuid4().hex))
+        devices=records, readiness=readiness, public_key=push.public_key(), csrf=session["csrf"], operation_id=uuid.uuid4().hex))
     response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -1034,6 +1036,17 @@ def update_timer_push_devices():
             response = jsonify(enrolled=True)
             response.headers["Cache-Control"] = "no-store"
             return response
+        if action == "preview_consent":
+            import hq_timer_push_preview as preview
+            revision = request.form.get("revision", "")
+            consent_revision = request.form.get("consent_revision", "")
+            choice = request.form.get("choice")
+            if (not re.fullmatch(r"[0-9]{1,18}", revision) or
+                    not re.fullmatch(r"[0-9]{1,18}", consent_revision) or choice not in ("enable", "disable")):
+                abort(400)
+            preview.set_consent(actor, request.form.get("device_id"), int(revision),
+                                int(consent_revision), choice == "enable")
+            return redirect(url_for(".timer_push_devices"), 303)
         if action == "revoke":
             revision = request.form.get("revision", "")
             if not re.fullmatch(r"[0-9]{1,18}", revision):
