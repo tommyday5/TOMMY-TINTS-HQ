@@ -74,7 +74,7 @@ def devices(actor):
     actor = _actor(actor)
     with connect() as db:
         _tables(db)
-        return [dict(row) for row in db.execute("""SELECT id,enrolled_at,revoked_at,revision
+        return [dict(row) for row in db.execute("""SELECT id,datetime(enrolled_at,'unixepoch') AS enrolled_utc,revoked_at,revision
             FROM hq_timer_push_devices WHERE owner_sub=? AND revoked_at IS NULL
             ORDER BY enrolled_at DESC,id""", (actor,))]
 
