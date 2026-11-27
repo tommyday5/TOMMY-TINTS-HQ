@@ -27,7 +27,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports={receiptSubmission
 if(typeof document!=='undefined')
 (()=>{'use strict';
 const $=id=>document.getElementById(id), form=$('allocation'), notice=$('notice');
-let state=null, saving=false, dirty=false, refreshRequired=false;
+let state=null, saving=false, searching=false, dirty=false, refreshRequired=false, activeQuery='';
 const submission=receiptSubmission(), submit=form.querySelector('button[type=submit]');
 let lockedControls=[];
 function freeze(){
@@ -59,14 +59,14 @@ function limit(){
  $('allocation-limit').textContent=r?'Owner-reported unallocated portion: '+gbp(r.unallocated_owner_reported_pence)+' (not bank verified)':'Choose an issued invoice.';
 }
 function clear(){
- if(submission.pending||saving||refreshRequired)return;
+ if(submission.pending||saving||searching||refreshRequired)return;
  form.reset();form.elements.id.value='';form.elements.revision.value='0';
  form.elements.invoice_id.disabled=false;form.elements.amount_pounds.readOnly=false;
  form.querySelector('button[type=submit]').disabled=false;
  invoiceOptions();limit();dirty=false;
 }
 function edit(r){
- if(submission.pending||saving||refreshRequired)return;
+ if(submission.pending||saving||searching||refreshRequired)return;
  const invoice=$('invoice');if(![...invoice.options].some(o=>o.value===r.invoice_id)){
   const opt=node('option',r.invoice_ref);opt.value=r.invoice_id;invoice.append(opt);
  }
@@ -76,12 +76,20 @@ function edit(r){
  form.querySelector('button[type=submit]').disabled=r.status==='reversed';
  limit();dirty=false;form.scrollIntoView({block:'start'});
 }
-async function load(){
- const response=await fetch('/api/hq/finance/receipt-allocations',{credentials:'same-origin',cache:'no-store'});
+async function load(query=activeQuery){
+ const base='/api/hq/finance/receipt-allocations';
+ const options={credentials:'same-origin',cache:'no-store'};
+ const response=await fetch(query?base+'/search':base,query?{...options,method:'POST',
+  headers:{'Content-Type':'application/json','X-HQ-CSRF':document.querySelector('meta[name=hq-csrf]').content},
+  body:JSON.stringify({query})}:options);
  if(response.redirected||!response.ok)throw Error('Sign into HQ to access allocation records');
- state=await response.json();
- // A confirmed save may reload while the submit handler still holds the lock.
- const wasSaving=saving;saving=false;clear();saving=wasSaving;
+ state=await response.json();activeQuery=query;
+ $('allocation-query').value=query;
+ $('allocation-search-status').textContent=(query?'Search results: ':'Recent records: ')+
+  state.invoices.length+' invoices · '+state.allocations.length+' allocations'+
+  (state.display_limited?' · Display limit reached; refine by exact reference or record ID to find older entries.':'');
+ // Only clear the editor after a successful response.
+ const wasSaving=saving,wasSearching=searching;saving=false;searching=false;thaw();clear();saving=wasSaving;searching=wasSearching;
  const records=$('records');records.replaceChildren();
  for(const r of state.allocations){
   const card=node('article','');
@@ -98,7 +106,7 @@ async function load(){
   }
   records.append(card);
  }
- if(!state.allocations.length)records.append(node('p','No allocation reports yet.'));
+ if(!state.allocations.length)records.append(node('p',query?'No allocations match this search.':'No allocation reports yet.'));
  const history=$('history');history.replaceChildren();
  for(const event of state.history){
   const r=JSON.parse(event.snapshot),card=node('article','');
@@ -106,15 +114,27 @@ async function load(){
     node('small',event.occurred_at+' · allocation '+event.allocation_id.slice(0,8)));
   history.append(card);
  }
- if(!state.history.length)history.append(node('p','No allocation revisions recorded.'));
+ if(!state.history.length)history.append(node('p',query?'No matching allocation revisions.':'No allocation revisions recorded.'));
  notice.textContent='HQ allocation records loaded. No bank or payment-provider reconciliation performed.';
  dirty=false;
 }
+async function runSearch(query){
+ if(saving||searching||submission.pending||refreshRequired||dirty){
+  $('allocation-search-status').textContent='Resolve or discard the current allocation edit before changing the search.';
+  return;
+ }
+ searching=true;const previousDisabled=submit.disabled;freeze();submit.disabled=true;
+ try{await load(query.trim())}
+ catch(error){thaw();submit.disabled=previousDisabled;$('allocation-search-status').textContent='Search not completed. Existing records are unchanged.'}
+ finally{searching=false}
+}
+$('allocation-search').onsubmit=event=>{event.preventDefault();runSearch($('allocation-query').value)};
+$('allocation-search-reset').onclick=()=>runSearch('');
 $('invoice').onchange=()=>{limit();dirty=true};
 form.addEventListener('input',()=>dirty=true);
 $('newRecord').onclick=clear;
 form.onsubmit=async event=>{
- event.preventDefault();if(saving||refreshRequired||!state)return;
+ event.preventDefault();if(saving||searching||refreshRequired||!state)return;
  const fields=form.elements;
  try{
   submission.prepare(()=>({
@@ -142,7 +162,7 @@ form.onsubmit=async event=>{
   // Do not allow another submission from the stale form.
   dirty=false;submit.disabled=true;
   try{
-   thaw();await load();
+   await load();
    notice.textContent='Allocation saved and reloaded from HQ. No external payment, message or booking occurred.';
   }catch(error){
    refreshRequired=true;freeze();submit.disabled=true;
@@ -151,5 +171,5 @@ form.onsubmit=async event=>{
  }finally{saving=false}
 };
 window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue=''}});
-load().catch(error=>{notice.textContent=error.message});
+runSearch('').catch(error=>{notice.textContent=error.message});
 })();
