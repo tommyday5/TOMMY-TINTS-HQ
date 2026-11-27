@@ -554,3 +554,45 @@ class PersistentTimerTests(unittest.TestCase):
             self.assertNotIn("£514.40", page)
         with patch("hq_native_work.cost_overview_snapshot", side_effect=OSError("synthetic")):
             self.assertEqual(c.get(url + "/time").status_code, 200)
+
+
+    def test_recovery_budget_uses_saved_active_minutes_and_excludes_breaks(self):
+        entry = append_work_time(self.job, {"operation_id": uuid.uuid4().hex,
+            "minutes": "60", "stage": "repair", "hourly_cost_pounds": "18.25"}, 0, "owner")
+        self.command("start", allowance="100")
+        sid = snapshot(self.job)["id"]
+        c = app.test_client()
+        self.assertEqual(c.get("/hq/timer").status_code, 302)
+        with c.session_transaction() as s, auth_db() as db:
+            s["hq_sid"] = issue_session(db, "owner")
+            s["google_sub"] = "owner"
+            s["csrf"] = "test"
+        self.now.return_value += 1199
+        row = open_timer_jobs()["records"][0]
+        self.assertEqual((row["budget_state"], row["remaining_seconds"]), ("within", 1201))
+        self.now.return_value += 1
+        page = c.get("/hq/timer?q=unmatched-synthetic")
+        self.assertEqual(page.headers["Cache-Control"], "no-store")
+        self.assertIn(b"Approaching labour allowance", page.data)
+        self.assertIn(b"20m 0s remaining", page.data)
+        self.command("pause", 0, sid)
+        self.now.return_value += 86400
+        row = open_timer_jobs()["records"][0]
+        self.assertEqual((row["total_seconds"], row["budget_state"]), (4800, "near"))
+        self.command("resume", 1, sid)
+        self.now.return_value += 1200
+        self.assertIn(b"Allowance reached", c.get("/hq/timer").data)
+        self.now.return_value += 61
+        self.assertIn(b"Allowance exceeded</strong> by 1m 1s", c.get("/hq/timer").data)
+        self.command("finish", 2, sid)
+        self.now.return_value += 5000
+        self.assertEqual(open_timer_jobs()["records"][0]["remaining_seconds"], -61)
+        self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"], 60)
+        self.assertEqual(snapshot(self.job)["state"], "review")
+        # A second job without an allowance cannot generate an overrun.
+        other = create_test_job()
+        with connect() as db:
+            db.execute("UPDATE hq_work_records SET status='approved' WHERE id=?", (other,))
+        transition(other, "start", -1, uuid.uuid4().hex)
+        self.assertEqual(open_timer_jobs()["records"][0]["budget_state"], "unknown")
+        self.assertIn(b"Labour allowance not recorded", c.get("/hq/timer").data)
