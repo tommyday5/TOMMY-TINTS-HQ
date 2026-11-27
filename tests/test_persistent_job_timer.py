@@ -893,3 +893,75 @@ class PersistentTimerTests(unittest.TestCase):
         self.assertNotIn(b"fetch(", sw.data)
         self.assertIsNone(snapshot(self.job))
         self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"], 0)
+
+    def test_push_preview_explicit_consent_future_alerts_dedupe_and_cancellation(self):
+        import base64
+        import hq_timer_push as push
+        import hq_timer_push_preview as preview
+        from hq_timer_alerts import scan, inbox, acknowledge
+        from cryptography.hazmat.primitives.asymmetric.ec import generate_private_key, SECP256R1
+        from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+        def b64(raw):
+            return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+        key = b64(generate_private_key(SECP256R1()).public_key().public_bytes(
+            Encoding.X962, PublicFormat.UncompressedPoint))
+        c = app.test_client()
+        url = "/hq/timer/alerts/push/"
+        self.assertEqual(c.get(url).status_code, 302)
+        with c.session_transaction() as s, auth_db() as db:
+            s["hq_sid"] = issue_session(db, "owner")
+            s["google_sub"] = "owner"
+            s["csrf"] = "test"
+        with patch.dict(os.environ, HQ_TIMER_PUSH_PUBLIC_KEY=key):
+            device = push.enroll("owner", endpoint="https://web.push.apple.com/synthetic-preview",
+                p256dh=key, auth_key=b64(b"x"*16), application_key=key,
+                consent="yes", operation_id=uuid.uuid4().hex)
+            self.command("start", allowance="10")
+            self.now.return_value += 480
+            self.assertEqual(scan(),1)
+            self.assertEqual(preview.refresh(),0)
+            self.assertFalse(preview.summary("owner")[device]["enabled"])
+            data = {"action":"preview_consent","choice":"enable","device_id":device,
+                    "revision":"0","consent_revision":"0"}
+            self.assertEqual(c.post(url,data=data).status_code,403)
+            self.assertEqual(c.post(url,data={**data,"csrf":"test"}).status_code,303)
+            self.assertEqual(c.post(url,data={**data,"csrf":"test"}).status_code,400)
+            self.assertEqual(preview.summary("other"),{})
+            with self.assertRaises(ValueError):
+                preview.set_consent("other",device,0,1,False)
+            self.assertEqual(preview.refresh(),0) # no retroactive near alert
+            self.now.return_value += 120
+            self.assertEqual(scan(),1)
+            self.assertEqual(preview.refresh(),1)
+            self.assertEqual(preview.refresh(),0)
+            self.assertEqual(preview.summary("owner")[device]["preview_count"],1)
+            self.assertIn(b"Disable local alert preview",c.get(url).data)
+            limit = next(a for a in inbox()["pending"] if a["level"]=="limit")
+            acknowledge(limit["id"],"owner")
+            self.assertEqual(preview.refresh(),0)
+            self.assertEqual(preview.summary("owner")[device]["preview_count"],0)
+            sid = snapshot(self.job)["id"]
+            self.command("allowance",0,sid,allowance="12")
+            self.assertEqual(scan(),1)
+            self.assertEqual(preview.refresh(),1)
+            self.assertEqual(c.post(url,data={**data,"choice":"disable","consent_revision":"1","csrf":"test"}).status_code,303)
+            self.assertEqual(preview.summary("owner")[device]["preview_count"],0)
+            self.assertEqual(preview.refresh(),0)
+            self.assertEqual(c.post(url,data={**data,"consent_revision":"2","csrf":"test"}).status_code,303)
+            self.assertEqual(preview.refresh(),0)
+            self.command("allowance",1,sid,allowance="11")
+            self.assertEqual(scan(),1)
+            self.assertEqual(preview.refresh(),1)
+            push.revoke("owner",device,0)
+            self.assertEqual(preview.refresh(),0)
+            self.assertEqual(preview.summary("owner"),{})
+            push.enroll("owner", endpoint="https://web.push.apple.com/synthetic-preview",
+                p256dh=key, auth_key=b64(b"x"*16), application_key=key,
+                consent="yes", operation_id=uuid.uuid4().hex)
+            self.assertFalse(preview.summary("owner")[device]["enabled"])
+            self.assertEqual(preview.refresh(),0)
+            with connect() as db:
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_timer_push_preview WHERE cancelled_at IS NULL").fetchone()[0],0)
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_timer_push_consent_events").fetchone()[0],3)
+            self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"],0)
+            self.assertEqual(snapshot(self.job)["state"],"running")
