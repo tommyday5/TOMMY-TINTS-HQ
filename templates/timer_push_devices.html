@@ -12,6 +12,6 @@
 <script defer src="/static/timer-push-enrollment.js"></script>
 {% else %}<p role="status">Device registration is not configured. No browser permission will be requested. Keep using in-app labour alerts.</p>{% endif %}
 <h2>Registered devices</h2>
-{% for d in devices %}<article class="timer-job"><div><strong>Device {{ d.id[:8] }}</strong><p>Enrolled (UTC): {{ d.enrolled_at | int }} Unix seconds. No delivery enabled.</p><form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="revoke"><input type="hidden" name="device_id" value="{{ d.id }}"><input type="hidden" name="revision" value="{{ d.revision }}"><button>Revoke HQ registration</button></form></div></article>{% else %}<p>No registered devices.</p>{% endfor %}
+{% for d in devices %}<article class="timer-job"><div><strong>Device {{ d.id[:8] }}</strong><p>Enrolled: {{ d.enrolled_utc }} UTC. No delivery enabled.</p><form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="revoke"><input type="hidden" name="device_id" value="{{ d.id }}"><input type="hidden" name="revision" value="{{ d.revision }}"><button>Revoke HQ registration</button></form></div></article>{% else %}<p>No registered devices.</p>{% endfor %}
 <p>Revoking removes the saved address and keys from HQ. Browser notification permission can separately be removed from your device settings.</p>
 </main></body></html>
