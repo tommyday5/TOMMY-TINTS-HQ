@@ -15,7 +15,8 @@ from datetime import date, datetime, timezone
 from flask import Blueprint, abort, current_app, jsonify, redirect, render_template, request, session, url_for
 from customer_request_store import SERVICES, connect
 from hq_auth import required
-from hq_core_records import _audit_work, _schema, StaleWorkRecordError
+from hq_core_records import (_audit_work, _schema, StaleWorkRecordError,
+                             set_draft_financials, change_work_status)
 from hq_work_progress import WORK_STAGES, work_progress_snapshot, record_work_progress
 from hq_work_time import time_ledger_snapshot, append_work_time, void_work_time, correct_work_time_rate, correct_work_time_minutes
 from hq_work_timer import snapshot as timer_snapshot, transition as timer_transition, history as timer_history, open_timer_jobs, live_status as timer_live_status
@@ -417,6 +418,61 @@ def edit_work(work_id):
         return redirect(url_for(".edit_work", work_id=work_id, saved="1"), 303)
     return render_template("native_work.html", new=False, record=current, values={},
         csrf=session["csrf"], services=sorted(SERVICES), tiers=TIERS, error=None)
+
+
+def _draft_pence(raw):
+    """Parse explicit GBP values exactly, without floats or implicit zeros."""
+    if not isinstance(raw, str) or not re.fullmatch(r"[0-9]{1,7}(?:\.[0-9]{1,2})?", raw):
+        raise ValueError("Enter pounds with up to two decimal places")
+    whole, _, fraction = raw.partition(".")
+    return int(whole) * 100 + int(fraction.ljust(2, "0"))
+
+
+@native_work.route("/hq/work/<work_id>/review", methods=["GET", "POST"])
+@required
+def review_native_draft(work_id):
+    try:
+        record = native_work_record(work_id)
+    except (ValueError, LookupError):
+        abort(404)
+    error = None
+    status = 200
+    if request.method == "POST":
+        if request.content_length is None or request.content_length > 12000:
+            abort(413)
+        if not secrets.compare_digest(request.form.get("csrf", ""), session.get("csrf", "not-set")):
+            abort(403)
+        raw = request.form.get("revision", "")
+        if not re.fullmatch(r"[0-9]{1,18}", raw):
+            abort(400)
+        try:
+            action = request.form.get("action", "")
+            if record["is_archived"] or record["status"] not in ("draft", "ready_for_review"):
+                raise ValueError("Only unarchived drafts can be reviewed here")
+            if action == "amounts":
+                set_draft_financials(work_id, _draft_pence(request.form.get("price", "")),
+                                     _draft_pence(request.form.get("deposit", "")), int(raw))
+            elif action == "review":
+                if record["status"] != "draft" or record["price_pence"] is None:
+                    raise ValueError("Save a proposed price before marking this draft ready")
+                change_work_status(work_id, "ready_for_review", int(raw))
+            elif action == "approve":
+                if record["status"] != "ready_for_review" or request.form.get("confirm") != "yes":
+                    raise ValueError("Review the saved amounts and explicitly confirm internal approval")
+                change_work_status(work_id, "approved", int(raw))
+            else:
+                abort(400)
+            return redirect(url_for(".review_native_draft", work_id=work_id), 303)
+        except StaleWorkRecordError as exc:
+            error, status = str(exc), 409
+        except (ValueError, LookupError) as exc:
+            error, status = str(exc), 400
+        except (OSError, sqlite3.Error):
+            current_app.logger.exception("Native draft review unavailable")
+            abort(503)
+        record = native_work_record(work_id)
+    return render_template("native_draft_review.html", record=record,
+                           csrf=session["csrf"], error=error), status
 
 
 # Vehicle details are edited in their own versioned operation, rather than
