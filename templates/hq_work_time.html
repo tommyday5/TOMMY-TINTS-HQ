@@ -110,10 +110,10 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 </select></div>
 </div>
 {% if timer and timer.state == "review" %}<label for="timerCorrection">Timer correction reason (required if reducing measured minutes)</label><textarea id="timerCorrection" name="timer_correction_reason" maxlength="160" rows="2">{{ values.get("timer_correction_reason","") }}</textarea><p id="timerCorrectionHint" class="hint">Measured {{ timer.active_seconds // 60 }} whole minutes. Only reduce if the timer included time you did not work; increases are not permitted. The original measured time and reason are retained.</p>{% endif %}
-<label for="rate">Actual internal hourly cost, in pence (optional)</label>
-<input name="hourly_cost_pence" id="rate" type="number" min="0" max="1000000" step="1"
- value="{{ values.get('hourly_cost_pence','') }}" placeholder="Leave blank if unknown">
-<p class="hint">For example, 1800 means £18.00 per hour. This is your verified internal cost, not your customer hourly charge. Blank means unknown, never £0.</p>
+<label for="rate">Actual internal hourly cost (£/hour, optional)</label>
+<input name="hourly_cost_pounds" id="rate" type="number" inputmode="decimal" min="0" max="10000" step="0.01"
+ value="{{ values.get('hourly_cost_pounds','') if 'hourly_cost_pounds' in values else ('%.2f'|format(values.get('hourly_cost_pence')|int/100) if values.get('hourly_cost_pence','').isdigit() else '') }}" placeholder="Leave blank if unknown">
+<p class="hint">For example, 18.00 means £18.00 per hour. This is your verified internal cost, not your customer hourly charge. Blank means unknown, never £0.</p>
 <label for="note">Internal activity note (optional)</label>
 <textarea name="note" id="note" maxlength="160" rows="2">{{ values.get('note','') }}</textarea>
 <p class="hint">Recording a time entry advances the canonical HQ job revision. Replaying the same submitted form cannot duplicate an entry.</p>

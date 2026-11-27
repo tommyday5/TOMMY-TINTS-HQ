@@ -306,3 +306,32 @@ class PersistentTimerTests(unittest.TestCase):
             append_work_time(self.job,dict(payload,minutes="7"),0,"owner")
         with self.assertRaises(ValueError):
             append_work_time(self.job,dict(payload,operation_id=uuid.uuid4().hex),1,"owner")
+
+    def test_timer_review_pounds_rate_posts_exact_pence_and_legacy_replay(self):
+        self.command("start")
+        sid = snapshot(self.job)["id"]
+        self.now.return_value += 1800
+        self.command("finish", 0, sid)
+        c = app.test_client()
+        with c.session_transaction() as s, auth_db() as db:
+            s["hq_sid"] = issue_session(db, "owner")
+            s["csrf"] = "test"
+            s["google_sub"] = "owner"
+        url = "/hq/work/" + self.job + "/time"
+        self.assertIn(b'name="hourly_cost_pounds"', c.get(url).data)
+        data = {"operation_id": sid, "minutes": "30", "stage": "repair",
+                "hourly_cost_pounds": "18.25", "note": "", "csrf": "test", "revision": "0"}
+        for invalid in ("18.255", "-1", "1e2", "10000.01"):
+            self.assertEqual(c.post(url, data=dict(data, hourly_cost_pounds=invalid)).status_code, 400)
+        self.assertEqual(c.post(url, data=dict(data, hourly_cost_pence="1825")).status_code, 400)
+        self.assertEqual(time_ledger_snapshot(self.job)["entry_count"], 0)
+        response = c.post(url, data=data)
+        self.assertEqual(response.status_code, 303, response.get_data(as_text=True))
+        legacy = dict(data, hourly_cost_pence="1825")
+        del legacy["hourly_cost_pounds"]
+        self.assertEqual(c.post(url, data=legacy).status_code, 303)
+        ledger = time_ledger_snapshot(self.job)
+        self.assertEqual(ledger["entry_count"], 1)
+        self.assertEqual(ledger["entries"][0]["hourly_cost_pence"], 1825)
+        self.assertEqual(ledger["actual_labour_cost_pence"], 913)
+        self.assertIn("£9.13", c.get(url).get_data(as_text=True))
