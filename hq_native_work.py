@@ -17,7 +17,7 @@ from customer_request_store import SERVICES, connect
 from hq_auth import required
 from hq_core_records import _audit_work, _schema, StaleWorkRecordError
 from hq_work_progress import WORK_STAGES, work_progress_snapshot, record_work_progress
-from hq_work_time import time_ledger_snapshot, append_work_time, void_work_time, correct_work_time_rate
+from hq_work_time import time_ledger_snapshot, append_work_time, void_work_time, correct_work_time_rate, correct_work_time_minutes
 from hq_work_timer import snapshot as timer_snapshot, transition as timer_transition, history as timer_history, open_timer_jobs
 from hq_work_materials import material_ledger_snapshot, append_work_material, void_work_material, UNITS
 from hq_work_expenses import expense_ledger_snapshot, append_work_expense, void_work_expense, EXPENSE_TYPES
@@ -689,6 +689,29 @@ def correct_time_entry_rate(work_id, entry_id):
         current_app.logger.exception("Work time rate correction unavailable")
         abort(503)
     return redirect(url_for(".edit_work_time", work_id=work_id, rate_corrected="1"), 303)
+
+
+@native_work.post("/hq/work/<work_id>/time/<entry_id>/minutes")
+@required
+def correct_time_entry_minutes(work_id, entry_id):
+    if request.content_length is None or request.content_length > 2048:
+        abort(413)
+    if not secrets.compare_digest(request.form.get("csrf", ""), session.get("csrf", "not-set")):
+        abort(403)
+    revision = request.form.get("revision", "")
+    if not re.fullmatch(r"[0-9]{1,18}", revision):
+        abort(400)
+    try:
+        correct_work_time_minutes(work_id, entry_id, request.form.to_dict(flat=True),
+                                  int(revision), session.get("google_sub"))
+    except StaleWorkRecordError:
+        return redirect(url_for(".edit_work_time", work_id=work_id, conflict="1"), 303)
+    except (ValueError, LookupError):
+        return redirect(url_for(".edit_work_time", work_id=work_id, minutes_invalid="1"), 303)
+    except (OSError, sqlite3.Error, RuntimeError):
+        current_app.logger.exception("Work time minutes correction unavailable")
+        abort(503)
+    return redirect(url_for(".edit_work_time", work_id=work_id, minutes_corrected="1"), 303)
 
 
 @native_work.route("/hq/work/<work_id>/materials", methods=["GET", "POST"])
