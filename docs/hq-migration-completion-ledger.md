@@ -1990,3 +1990,33 @@ No live jobs, times, prices, financial or customer records, Sheets cells,
 or customer-facing routes changed. No domain newly authoritative.
 Actual recovery snapshot and first bounded historical import still await
 separate owner approval and verified mapping/reconciliation.
+
+
+### 2026-11-27 — saved-minute correction deployed; integrated cost allocation editing
+
+PR #323 exact head 11fb7c88b38e0b102fc76faf51a55c0be09fc433 passed
+Actions 45943347557 (127 + 697 Python tests, 14 JavaScript tests),
+squash merged as 6d036266a4de78bee4a07022e6a2a09365d7e739.
+Railway deployment 1d9f6f2a-a9b2-4e44-b6db-d885c6e04901 reported
+SUCCESS at 05:58:01 UTC; original /data volume 1024 MB remains
+attached, no pending infrastructure work. Read-only workbook metadata
+confirmed 48 tabs. Exact-head CI confirms service quote conversion,
+customer-visible approvals, combined quote appointment handoff,
+maintenance pricing privacy and customer isolation. Authenticated
+production UI and current black Kia native job identity remain unverified.
+
+Next slice: actual material and expense/overhead allocation forms accept
+normal pounds and pence, with exact integer-pence storage and equivalent
+legacy replay fingerprints, rejecting ambiguous dual amounts and fractions
+of a penny. The owner-only timer links directly to these versioned editors
+and shows a consistent three-ledger snapshot for the same work revision.
+Missing allocations remain unknown, historical aggregates and unsaved
+timer time are excluded, and approved selling price less recorded
+allocations is expressly not final profit. Stale/unavailable costing is
+withheld without disabling the timer. Synthetic authenticated save/reload,
+validation, replay and combined-cost regression added. Exact-head CI and
+deployment pending. No live record writes or Sheets changes; no historical
+domain newly reconciled/authoritative. Actual recovery snapshot and bounded
+import approval remain separate. Next owner acceptance: select existing
+job, save actual labour, open Record materials and Record expenses, then
+reload timer to verify corrected amounts and job revision.
