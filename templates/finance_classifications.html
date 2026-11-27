@@ -21,6 +21,7 @@
 <article><h3>{{ entry.description }}</h3><p>{{ entry.day }} · £{{ "%.2f"|format(entry.amount/100) }}</p>
 <p>{% if entry.split %}Active split proposal (not bank verified){% elif entry.reviewed %}Owner-reviewed classification (not bank verified){% else %}Needs owner review{% endif %}</p>
 {% for line in entry.lines %}<p>{{ line.category|replace("_"," ") }} · £{{ "%.2f"|format(line.pence/100) }}</p>{% endfor %}
+{% if not entry.split %}<a href="{{ url_for('native_finance.transaction_classification_page',ref=entry.id) }}">Edit classification</a>{% endif %}
 <a href="{{ url_for('native_finance.transaction_split_page',ref=entry.id) }}">{{ 'Edit / withdraw split' if entry.split else 'Create split / view history' }}</a>
 <a href="{{ url_for('native_finance.transaction_archive_page',ref=entry.id) }}">Archive / history</a>
 </article>
