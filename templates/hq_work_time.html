@@ -74,7 +74,7 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 <p class="timer-storage">Running session is stored on this device until you review and save it to HQ. Keep this page available; no background notification is guaranteed.</p>
 {% if work.can_edit_time %}<div class="timer-actions"><button id="clockStart" type="button">▶ Start / resume</button><button id="clockPause" type="button" class="secondary">Ⅱ Pause job</button><button id="clockFinish" type="button" class="secondary">✓ Finish &amp; review</button></div>{% endif %}
 <p id="clockWarning" role="status">Enter the job's time allowance to track progress.</p><p id="clockNotice" role="status"></p>
-<section class="timer-stages"><h2>Work stages</h2>{% for key,label in stages.items() %}{% set total = work.entries|rejectattr('voided_at')|selectattr('stage','equalto',key)|sum(attribute='minutes') %}<div><span>{{ label }}</span><strong>{{ total }} min recorded{% if work.history_truncated %} · visible history only{% endif %}</strong></div>{% endfor %}</section><a class="timer-log" href="#timeHistory">◷ Work log · View saved sessions ›</a>
+<a class="timer-log" href="#timeHistory">◷ Work log · View saved sessions ›</a>
 </section></details>
 <section class="panel">
 <p><strong>{{ work.customer_name }}</strong> · {{ work.make }} {{ work.model }} · {{ work.registration }}</p>
@@ -90,6 +90,16 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 {% if work.known_cost_subtotal_pence is not none and work.unknown_rate_count %}
 <p>Partial known-rate subtotal only: £{{ '%.2f'|format(work.known_cost_subtotal_pence/100) }}. This is <strong>not</strong> the total job labour cost.</p>
 {% endif %}
+<section class="timer-stages" id="recordedStageTotals"><h2>Saved labour by activity</h2>
+<p>All active ledger entries, excluding breaks, unsaved sessions and reversed entries. Internal costs are not selling prices.</p>
+{% if work.stage_totals %}
+<ul>{% for stage in work.stage_totals %}
+<li><strong>{{ stages.get(stage.stage,'Historical activity') }}</strong> · {{ stage.minutes_total }} min · {{ stage.entry_count }} entries
+{% if stage.actual_labour_cost_pence is not none %}<p>Internal labour cost: £{{ '%.2f'|format(stage.actual_labour_cost_pence/100) }}</p>
+{% else %}<p>Internal labour cost unknown ({{ stage.unknown_rate_count }} missing rates).{% if stage.known_cost_subtotal_pence is not none %} Known-rate subtotal only: £{{ '%.2f'|format(stage.known_cost_subtotal_pence/100) }}.{% endif %}</p>{% endif %}
+</li>{% endfor %}</ul>
+{% else %}<p>No saved labour by activity yet.</p>{% endif %}
+</section>
 <p class="notice">Actual time is not billable hours, a final job cost, an invoice, an approved price, a receipt or a confirmed booking. Missing labour rates and other costs remain unknown. No Google Sheets, bank, customer messages or appointments are changed here.</p>
 </section>
 {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}

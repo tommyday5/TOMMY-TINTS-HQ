@@ -11,7 +11,7 @@ from hq_auth_store import auth_db
 from hq_core_records import create_test_job, change_work_status, StaleWorkRecordError
 from hq_work_archive import set_work_archived
 from hq_work_timer import snapshot, transition, history, open_timer_jobs
-from hq_work_time import time_ledger_snapshot, append_work_time
+from hq_work_time import time_ledger_snapshot, append_work_time, void_work_time
 
 class PersistentTimerTests(unittest.TestCase):
     def setUp(self):
@@ -339,3 +339,52 @@ class PersistentTimerTests(unittest.TestCase):
         self.assertEqual(ledger["entries"][0]["hourly_cost_pence"], 1825)
         self.assertEqual(ledger["actual_labour_cost_pence"], 913)
         self.assertIn("£9.13", c.get(url).get_data(as_text=True))
+
+
+    def test_visible_activity_totals_include_older_entries_and_exclude_reversals(self):
+        # Seed via the actual immutable ledger, including explicit zero and unknown costs.
+        def add(rev, stage, minutes, rate):
+            return append_work_time(self.job, {
+                "operation_id": uuid.uuid4().hex, "minutes": str(minutes),
+                "stage": stage, "hourly_cost_pence": rate, "note": "",
+            }, rev, "owner")
+
+        old = add(0, "repair", 30, "1825")
+        for revision in range(1, 102):
+            add(revision, "paint", 1, "0")
+        missing = add(102, "repair", 15, "")
+        ledger = time_ledger_snapshot(self.job)
+        by_stage = {row["stage"]: row for row in ledger["stage_totals"]}
+        self.assertEqual(len(ledger["entries"]), 100)
+        self.assertTrue(ledger["history_truncated"])
+        self.assertNotIn(old, [row["entry_id"] for row in ledger["entries"]])
+        self.assertEqual(by_stage["repair"]["minutes_total"], 45)
+        self.assertEqual(by_stage["repair"]["known_cost_subtotal_pence"], 913)
+        self.assertIsNone(by_stage["repair"]["actual_labour_cost_pence"])
+        self.assertEqual(by_stage["paint"]["actual_labour_cost_pence"], 0)
+        self.assertEqual(sum(row["minutes_total"] for row in by_stage.values()), ledger["minutes_total"])
+
+        c = app.test_client()
+        url = "/hq/work/" + self.job + "/time"
+        self.assertEqual(c.get(url).status_code, 302)
+        with c.session_transaction() as s, auth_db() as db:
+            s["hq_sid"] = issue_session(db, "owner")
+            s["csrf"] = "test"
+        page = c.get(url).get_data(as_text=True)
+        self.assertIn('id="recordedStageTotals"', page)
+        self.assertIn('Repair / bodywork</strong> · 45 min · 2 entries', page)
+        self.assertIn('Known-rate subtotal only: £9.13', page)
+        void_work_time(self.job, missing, 103, "owner")
+        # Reverse enough entries that the active count drops below 100;
+        # history still contains older immutable evidence.
+        paint_entries = [row["entry_id"] for row in ledger["entries"] if row["stage"] == "paint"]
+        for revision, entry_id in enumerate(paint_entries[:4], start=104):
+            void_work_time(self.job, entry_id, revision, "owner")
+        ledger = time_ledger_snapshot(self.job)
+        by_stage = {row["stage"]: row for row in ledger["stage_totals"]}
+        self.assertEqual(ledger["entry_count"], 98)
+        self.assertTrue(ledger["history_truncated"])
+        self.assertEqual(by_stage["repair"]["minutes_total"], 30)
+        self.assertEqual(by_stage["repair"]["actual_labour_cost_pence"], 913)
+        self.assertEqual(by_stage["paint"]["minutes_total"], 97)
+        self.assertIn('Repair / bodywork</strong> · 30 min · 1 entries', c.get(url).get_data(as_text=True))

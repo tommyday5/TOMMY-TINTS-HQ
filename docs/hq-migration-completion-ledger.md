@@ -1906,3 +1906,32 @@ slice pending. Customer-to-HQ service request, mixed-quote conversion,
 appointment handoff and isolation passed in prior CI. No new historical
 authority, reconciliation or production record writes; original owner
 approval gates for encrypted recovery and bounded historical import remain.
+
+
+### 2026-11-27 — labour preview deployed and complete activity cost ledger
+
+PR #320 exact head ccbb48810c5b4638ed510d423b9b891ad268cefc passed
+Actions 45925760558 (127 + 694 Python tests; 14 JavaScript tests).
+Squash merged as 05720232984ec311307525aa98c42d381076e51d.
+Railway deployment 5d7c5f10-711a-4d17-8fb7-dfe4af70341c SUCCESS at
+03:04:54 UTC; one replica running, zero warnings or criticals, no
+pending work. Original 1024 MB /data volume confirmed before merge.
+All 48 workbook tabs confirmed read-only; Jobs A1:Z1000 Kia search
+returned J0014 and J0073 only, neither matching current black Kia scope.
+No native job identity confirmed, timer started or live data written.
+
+Next slice: make saved activity minutes, entry counts and internal labour
+costs visible in the persistent timer (not the hidden legacy cockpit).
+Aggregate all active entries from SQLite, not the latest 100 visible
+history rows; exclude reversals, preserve per-entry penny rounding and
+unknown rates, disclose partial known-cost subtotals. Fix history truncation
+detection when reversed entries reduce the active count below 100.
+Synthetic regression covers 103 entries, owner-only page, unknown and
+explicit zero rates, reversals and exact total parity. Exact-head CI and
+deployment pending. No changes to public booking routes, prices, payments,
+authentication or production data. Prior CI confirms canonical customer
+service/combined quote conversions, approvals, appointment handoff and
+customer isolation. Direct /book and /hq/timer HTTP probes again failed DNS
+in this environment; authenticated production UI remains unverified.
+Historical domain authority unchanged; approved actual recovery snapshot
+and bounded historical import still outstanding.
