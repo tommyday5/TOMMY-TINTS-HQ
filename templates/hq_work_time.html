@@ -40,7 +40,7 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 {% elif timer.state == 'running' %}<button name="action" value="pause">Pause / break</button> <button name="action" value="finish">Finish &amp; review</button>
 {% elif timer.state == 'paused' %}<button name="action" value="resume">Resume</button> <button name="action" value="finish">Finish &amp; review</button>{% endif %}
 </form>
-{% elif timer and timer.state == 'review' %}<p class="notice">Review {{ timer.active_seconds // 60 }} whole minutes below and select the activity. Remaining seconds are retained in the session but not billed or posted. Save actual time to finish; the job status and price do not change.</p>{% endif %}
+{% elif timer and timer.state == 'review' %}<p class="notice">Review {{ timer.active_seconds // 60 }} measured whole minutes below and select the activity. You may reduce the posted minutes with a required correction reason; the original measured seconds and breaks remain in the audit history. Remaining seconds are retained in the session but not billed or posted. Save actual time to finish; the job status and price do not change.</p>{% endif %}
 {% if timer and timer.state == 'review' and work.can_edit_time %}
 <form method="post" action="/hq/work/{{ work.id }}/timer">
 <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -50,7 +50,7 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 <label>Correction reason (only if discarding this timer without posting labour)<input name="reason" maxlength="160" required></label>
 <button class="secondary" name="action" value="discard">Retain timer as corrected, do not post labour</button>
 </form>
-{% if timer.active_seconds // 60 < 1 or timer.active_seconds // 60 > 1440 %}<p class="notice">Outside the 1–1440 minute ledger limit. Retain the session with a correction reason, then record reviewed manual entries as appropriate.</p>{% endif %}
+{% if timer.active_seconds // 60 < 1 %}<p class="notice">Less than one whole minute. Retain the session as corrected without posting labour.</p>{% elif timer.active_seconds // 60 > 1440 %}<p class="notice">Above the 1440-minute entry limit. If the timer genuinely overran, enter corrected minutes with a reason; otherwise retain the session with a correction reason and record reviewed manual entries as appropriate.</p>{% endif %}
 {% endif %}
 {% if timer and timer.state in ('running','paused') and work.can_edit_time %}
 <form method="post" action="/hq/work/{{ work.id }}/timer">
@@ -96,19 +96,20 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 {% if request.args.get("saved") == "1" %}<p class="success" role="status">Time entry saved to HQ. Reload to inspect its history.</p>{% endif %}
 {% if request.args.get("voided") == "1" %}<p class="success" role="status">Time entry reversed and retained in the audit history.</p>{% endif %}
 {% if request.args.get("conflict") == "1" %}<p class="error" role="alert">This job changed. Review the latest revision before reversing an entry.</p>{% endif %}
-{% if work.can_edit_time and (not timer or (timer.state == "review" and 1 <= timer.active_seconds // 60 <= 1440)) %}
+{% if work.can_edit_time and (not timer or (timer.state == "review" and 1 <= timer.active_seconds // 60)) %}
 <form id="timeEntryForm" class="panel" method="post" action="/hq/work/{{ work.id }}/time">
 <h2>Record actual time</h2>
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <input type="hidden" name="revision" value="{{ work.revision }}">
 <input type="hidden" name="operation_id" value="{{ operation_id }}">
 <div class="grid">
-<div><label for="minutes">Actual minutes</label><input id="minutes" name="minutes" type="number" min="1" max="1440" step="1" required {% if timer and timer.state == "review" %}readonly{% endif %} value="{{ values.get('minutes','') }}"></div>
+<div><label for="minutes">Actual minutes</label><input id="minutes" name="minutes" type="number" min="1" max="1440" step="1" required {% if timer and timer.state == "review" %}aria-describedby="timerCorrectionHint"{% endif %} value="{{ values.get('minutes','') }}"></div>
 <div><label for="stage">Activity</label><select name="stage" id="stage" required>
 <option value="" disabled {% if not values.get('stage') %}selected{% endif %}>Select workshop activity</option>
 {% for key,label in stages.items() %}<option value="{{ key }}" {% if values.get('stage') == key %}selected{% endif %}>{{ label }}</option>{% endfor %}
 </select></div>
 </div>
+{% if timer and timer.state == "review" %}<label for="timerCorrection">Timer correction reason (required if reducing measured minutes)</label><textarea id="timerCorrection" name="timer_correction_reason" maxlength="160" rows="2">{{ values.get("timer_correction_reason","") }}</textarea><p id="timerCorrectionHint" class="hint">Measured {{ timer.active_seconds // 60 }} whole minutes. Only reduce if the timer included time you did not work; increases are not permitted. The original measured time and reason are retained.</p>{% endif %}
 <label for="rate">Actual internal hourly cost, in pence (optional)</label>
 <input name="hourly_cost_pence" id="rate" type="number" min="0" max="1000000" step="1"
  value="{{ values.get('hourly_cost_pence','') }}" placeholder="Leave blank if unknown">
