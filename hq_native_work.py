@@ -186,6 +186,13 @@ def create_native_work(payload):
             if owner is None or owner["customer_id"] != customer_id:
                 raise ValueError("This vehicle does not belong to the selected customer")
         else:
+            # A second job on the same customer's registered vehicle should
+            # reuse the existing vehicle record, never silently clone it.
+            registration = fields["registration"].replace(" ", "")
+            if registration and db.execute("""SELECT 1 FROM hq_vehicles
+                WHERE customer_id=? AND upper(replace(registration,' ',''))=?
+                LIMIT 1""", (customer_id, registration)).fetchone():
+                raise ValueError("This registration already belongs to a vehicle for this customer. Select the existing vehicle.")
             vehicle_id = uuid.uuid4().hex
             db.execute("""INSERT INTO hq_vehicles
                 (id,customer_id,make,model,model_year,registration,created_at)
@@ -335,6 +342,9 @@ def new_work():
     if request.method == "GET":
         search = request.args.get("q", "")
         preferred_customer = request.args.get("customer_id", "")
+        preferred_kind = request.args.get("kind", "")
+        if preferred_kind not in ("", "job", "quote"):
+            abort(400)
         if preferred_customer and not HEX_ID.fullmatch(preferred_customer):
             abort(404)
         try:
@@ -344,7 +354,7 @@ def new_work():
         except LookupError:
             abort(404)
         return render_template("native_work.html", new=True,
-                               values={"customer_id": preferred_customer} if preferred_customer else {},
+                               values={"customer_id": preferred_customer, "kind": preferred_kind or "quote"},
                                csrf=session["csrf"],
                                operation_id=uuid.uuid4().hex, customers=customers,
                                vehicles=vehicles, search=search, services=sorted(SERVICES),
@@ -357,7 +367,13 @@ def new_work():
     try:
         work_id = create_native_work(values)
     except (ValueError, StaleWorkRecordError) as exc:
-        customers, vehicles = _choices()
+        # Preserve a selected customer beyond the default first 100 after
+        # a validation failure, without trusting a nonexistent/invalid ID.
+        selected = values.get("customer_id", "")
+        try:
+            customers, vehicles = _choices("", selected if HEX_ID.fullmatch(selected) else "")
+        except LookupError:
+            customers, vehicles = _choices()
         status = 409 if isinstance(exc, StaleWorkRecordError) else 400
         return render_template("native_work.html", new=True, values=values,
             csrf=session["csrf"], operation_id=values.get("operation_id", ""),
@@ -931,10 +947,16 @@ def void_work_expense_entry(work_id, entry_id):
 def timer_jobs():
     from hq_core_records import search_work_records
     query=request.args.get('q','')
+    offset=request.args.get('offset','0')
+    if not re.fullmatch(r"[0-9]{1,6}", offset):
+        abort(400)
     try:
-        page=search_work_records(query=query,kind='job',limit=50,match_all_terms=True)
+        page=search_work_records(query=query,kind='job',limit=50,offset=int(offset),match_all_terms=True)
     except ValueError:
         abort(400)
+    except (OSError, sqlite3.Error, RuntimeError):
+        current_app.logger.exception('Timer job lookup unavailable')
+        abort(503)
     try:
         unfinished = open_timer_jobs()
     except (OSError, sqlite3.Error, RuntimeError):
