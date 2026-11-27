@@ -48,6 +48,10 @@ def _tables(db):
         replacement_entry_id TEXT PRIMARY KEY REFERENCES hq_work_time_entries(entry_id),
         original_entry_id TEXT NOT NULL UNIQUE REFERENCES hq_work_time_entries(entry_id),
         reason TEXT NOT NULL, created_at TEXT NOT NULL)""")
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_work_time_minute_corrections (
+        replacement_entry_id TEXT PRIMARY KEY REFERENCES hq_work_time_entries(entry_id),
+        original_entry_id TEXT NOT NULL UNIQUE REFERENCES hq_work_time_entries(entry_id),
+        reason TEXT NOT NULL, created_at TEXT NOT NULL)""")
 
 
 def _validate_payload(payload):
@@ -155,15 +159,21 @@ def time_ledger_snapshot(work_id):
         entries = [dict(row) for row in db.execute("""SELECT
             e.entry_id,e.minutes,e.stage,e.note,e.hourly_cost_pence,e.created_at,e.voided_at,
             r.original_entry_id AS corrected_from, r.reason AS rate_correction_reason,
-            n.replacement_entry_id AS replaced_by
+            n.replacement_entry_id AS rate_replaced_by,
+            m.original_entry_id AS minutes_corrected_from, m.reason AS minute_correction_reason,
+            COALESCE(n.replacement_entry_id, x.replacement_entry_id) AS replaced_by
             FROM hq_work_time_entries e
             LEFT JOIN hq_work_time_rate_corrections r ON r.replacement_entry_id=e.entry_id
             LEFT JOIN hq_work_time_rate_corrections n ON n.original_entry_id=e.entry_id
+            LEFT JOIN hq_work_time_minute_corrections m ON m.replacement_entry_id=e.entry_id
+            LEFT JOIN hq_work_time_minute_corrections x ON x.original_entry_id=e.entry_id
             WHERE e.work_id=?
             ORDER BY e.created_at DESC,e.entry_id DESC LIMIT 101""", (work_id,))]
     for entry in entries:
         entry["rate_operation"] = uuid.uuid5(uuid.NAMESPACE_OID,
             f'hq-rate-correction:{entry["entry_id"]}:{work["revision"]}').hex
+        entry["minute_operation"] = uuid.uuid5(uuid.NAMESPACE_OID,
+            f'hq-minute-correction:{entry["entry_id"]}:{work["revision"]}').hex
     unknown = totals["unknown_rates"] or 0
     work.update({
         "entry_count": totals["entry_count"],
@@ -289,17 +299,28 @@ def void_work_time(work_id, entry_id, expected_revision, owner_identity):
 
 def correct_work_time_rate(work_id, entry_id, payload, expected_revision, owner_identity):
     """Atomically reverse and replace only the rate; retain original timer evidence."""
+    return _correct_work_time(work_id, entry_id, payload, expected_revision, owner_identity, "rate")
+
+
+def correct_work_time_minutes(work_id, entry_id, payload, expected_revision, owner_identity):
+    """Reduce a saved entry without altering original measured timer evidence."""
+    return _correct_work_time(work_id, entry_id, payload, expected_revision, owner_identity, "minutes")
+
+
+def _correct_work_time(work_id, entry_id, payload, expected_revision, owner_identity, kind):
     _validate_id(work_id)
     _validate_id(entry_id)
     _validate_revision(expected_revision)
     actor = _actor_fingerprint(owner_identity)
     reason = payload.get("reason", "")
     if not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 160:
-        raise ValueError("Enter a rate correction reason (1–160 characters)")
+        raise ValueError("Enter a correction reason (1–160 characters)")
     reason = reason.strip()
     # Require the field even when intentionally clearing a rate to unknown.
-    if "hourly_cost_pounds" not in payload:
+    if kind == "rate" and "hourly_cost_pounds" not in payload:
         raise ValueError("Enter a rate or explicitly leave it unknown")
+    if kind == "minutes" and "minutes" not in payload:
+        raise ValueError("Enter corrected whole minutes")
     with connect() as db:
         db.execute("PRAGMA foreign_keys=ON")
         _schema(db)
@@ -312,11 +333,14 @@ def correct_work_time_rate(work_id, entry_id, payload, expected_revision, owner_
             raise LookupError("Time entry not found")
         fields = _validate_payload({
             "operation_id": payload.get("operation_id"),
-            "minutes": str(old["minutes"]), "stage": old["stage"], "note": old["note"],
-            "hourly_cost_pounds": payload["hourly_cost_pounds"],
+            "minutes": str(old["minutes"]) if kind == "rate" else payload["minutes"],
+            "stage": old["stage"], "note": old["note"],
+            "hourly_cost_pounds": payload["hourly_cost_pounds"] if kind == "rate" else "",
+            "hourly_cost_pence": str(old["hourly_cost_pence"])
+                if kind == "minutes" and old["hourly_cost_pence"] is not None else "",
         })
         rate = fields["hourly_cost_pence"]
-        fingerprint = _fingerprint({"rate_correction": entry_id, "reason": reason,
+        fingerprint = _fingerprint({("rate_correction" if kind == "rate" else "minute_correction"): entry_id, "reason": reason,
             "revision": expected_revision, "fields": fields})
         prior = db.execute("""SELECT entry_id,work_id,payload_fingerprint
             FROM hq_work_time_entries WHERE operation_id=?""",
@@ -331,8 +355,10 @@ def correct_work_time_rate(work_id, entry_id, payload, expected_revision, owner_
             raise ValueError("Closed or archived work time is locked")
         if old["voided_at"] is not None or work["revision"] != expected_revision:
             raise StaleWorkRecordError("This entry or job changed. Reload before correcting the rate.")
-        if old["hourly_cost_pence"] == rate:
+        if kind == "rate" and old["hourly_cost_pence"] == rate:
             raise ValueError("The rate has not changed")
+        if kind == "minutes" and fields["minutes"] >= old["minutes"]:
+            raise ValueError("Corrected minutes must be less than the saved entry")
         changed = db.execute("""UPDATE hq_work_records SET revision=revision+1
             WHERE id=? AND revision=?""", (work_id, expected_revision))
         if changed.rowcount != 1:
@@ -345,12 +371,19 @@ def correct_work_time_rate(work_id, entry_id, payload, expected_revision, owner_
             (entry_id,work_id,operation_id,payload_fingerprint,minutes,stage,note,
             hourly_cost_pence,actor_fingerprint,created_at)
             VALUES(?,?,?,?,?,?,?,?,?,?)""", (replacement, work_id, fields["operation_id"],
-            fingerprint, old["minutes"], old["stage"], old["note"], rate, actor, timestamp))
-        db.execute("INSERT INTO hq_work_time_rate_corrections VALUES (?,?,?,?)",
-            (replacement, entry_id, reason, timestamp))
-        _audit_work(db, work_id, expected_revision+1, "actual_time_rate_corrected",
-            {"entry_id": entry_id, "hourly_cost_pence": old["hourly_cost_pence"]},
-            {"entry_id": replacement, "hourly_cost_pence": rate})
+            fingerprint, fields["minutes"], old["stage"], old["note"], rate, actor, timestamp))
+        if kind == "rate":
+            db.execute("INSERT INTO hq_work_time_rate_corrections VALUES (?,?,?,?)",
+                (replacement, entry_id, reason, timestamp))
+            _audit_work(db, work_id, expected_revision+1, "actual_time_rate_corrected",
+                {"entry_id": entry_id, "hourly_cost_pence": old["hourly_cost_pence"]},
+                {"entry_id": replacement, "hourly_cost_pence": rate})
+        else:
+            db.execute("INSERT INTO hq_work_time_minute_corrections VALUES (?,?,?,?)",
+                (replacement, entry_id, reason, timestamp))
+            _audit_work(db, work_id, expected_revision+1, "actual_time_minutes_corrected",
+                {"entry_id": entry_id, "minutes": old["minutes"]},
+                {"entry_id": replacement, "minutes": fields["minutes"], "reason": reason})
         # The original timer session remains linked to its original posting.
         # The correction table explicitly links that posting to its successor.
     return replacement
