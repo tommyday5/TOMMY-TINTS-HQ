@@ -26,6 +26,7 @@
 <option value="other_reported">Other (owner reported)</option>
 </select></label>
 <label>Payment reference / supporting evidence ID (optional)<input name="evidence_ref" maxlength="120" placeholder="e.g. bank reference, receipt ID, card reference"></label>
+<p>Use a specific payment reference when available. HQ rejects another active allocation on the same invoice with the same date, amount and reference (ignoring letter case). Distinct dates or amounts, and entries without references, still require your own duplicate checks. This is not bank verification.</p>
 <label>Private audit note<textarea name="memo" rows="3" maxlength="500"></textarea></label>
 <label>Allocation state<select name="status" id="status"><option value="reported">Owner reported — not verified</option><option value="reversed">Reversed — correction required</option></select></label>
 <p>To correct an amount or invoice, reverse its existing allocation and add a new one. Past revisions are retained. Reversing does not refund anyone or change an external account.</p>
