@@ -21,7 +21,7 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 </style><link rel="stylesheet" href="/static/job-timer.css"><script defer src="/static/job-timer.js"></script></head><body><main>
 <p><a href="/hq/work/{{ work.id }}/progress">← Workshop progress</a> · <a href="/?page=jobs">HQ job cards</a> · <a href="/hq/work/{{ work.id }}/materials">Record material usage</a> · <a href="/hq/work/{{ work.id }}/expenses">Expenses / overhead</a> · <a href="/hq/work/{{ work.id }}/costs">Combined job costs</a></p>
 <header class="timer-brand"><img src="/static/company-logo-header.webp" alt="Tommy Tints"><strong>TOMMY TINTS <em>HQ</em></strong></header><h1 class="timer-title">Job Timer</h1>
-<section class="panel" id="serverTimer" data-has-session="{{ 'yes' if timer else 'no' }}" data-seconds="{{ timer.display_seconds if timer else 0 }}" data-running="{{ 'yes' if timer and timer.state == 'running' else 'no' }}" data-allowance="{{ timer.allowance_minutes if timer and timer.allowance_minutes else 0 }}" data-recorded="{{ work.minutes_total }}" data-break="{{ timer.display_break if timer else 0 }}" data-paused="{{ 'yes' if timer and timer.state == 'paused' else 'no' }}">
+<section class="panel" id="serverTimer" data-status-url="{{ url_for('.job_timer_live_status', work_id=work.id) }}" data-work-revision="{{ work.revision }}" data-session-id="{{ timer.id if timer else '' }}" data-timer-revision="{{ timer.revision if timer else -1 }}" data-has-session="{{ 'yes' if timer else 'no' }}" data-seconds="{{ timer.display_seconds if timer else 0 }}" data-running="{{ 'yes' if timer and timer.state == 'running' else 'no' }}" data-allowance="{{ timer.allowance_minutes if timer and timer.allowance_minutes else 0 }}" data-recorded="{{ work.minutes_total }}" data-break="{{ timer.display_break if timer else 0 }}" data-paused="{{ 'yes' if timer and timer.state == 'paused' else 'no' }}">
 <h2>Persistent job timer</h2>
 <article class="timer-job"><div><strong>{{ work.service }}</strong><p>{{ work.customer_name }} · {{ work.make }} {{ work.model }} · {{ work.registration }}</p></div><a href="/hq/timer">Change job ›</a></article>
 <p><strong>{{ work.minutes_total }} minutes</strong> already saved against this job (excludes current session).</p>
@@ -65,6 +65,8 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 </form>
 {% endif %}
 <p id="serverAllowanceNotice" aria-live="off"></p>
+<p id="serverSyncNotice" role="status">Live clock verification pending. No background push is sent.</p>
+<a id="serverReload" href="{{ url_for('.edit_work_time', work_id=work.id) }}" hidden>Reload current job timer (unsaved form edits will be lost)</a>
 </section>
 <details id="legacyTimer"><summary>Previous device-only timer (recovery only)</summary><p>Only use this to recover previously recorded local work. Do not run both timers or save overlapping time.</p>
 <section class="timer-cockpit" id="jobCockpit" data-work="{{ work.id }}" data-recorded="{{ work.minutes_total }}" data-editable="{{ 'yes' if work.can_edit_time else 'no' }}" data-saved="{{ 'yes' if request.args.get('saved') == '1' else 'no' }}">
