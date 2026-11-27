@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from customer_request_store import connect
 from hq_core_records import _schema, StaleWorkRecordError
-from hq_work_time import _read_work, _validate_id
+from hq_work_time import _read_work, _validate_id, _tables as time_tables
 
 def now():
     return int(datetime.now(timezone.utc).timestamp())
@@ -44,7 +44,12 @@ def open_timer_jobs():
     with connect() as db:
         _schema(db)
         tables(db)
+        time_tables(db)
+        db.execute("BEGIN")
         rows = db.execute("""SELECT t.work_id AS id, t.state, t.changed_at,
+                t.active_seconds, t.allowance_minutes,
+                (SELECT COALESCE(SUM(e.minutes),0) FROM hq_work_time_entries e
+                 WHERE e.work_id=t.work_id AND e.voided_at IS NULL) AS saved_minutes,
                 w.service, c.name, v.make, v.model, v.registration
             FROM hq_timer_sessions t
             JOIN hq_work_records w ON w.id=t.work_id
@@ -53,7 +58,24 @@ def open_timer_jobs():
             WHERE t.state IN ('running','paused','review')
             ORDER BY CASE t.state WHEN 'running' THEN 0 WHEN 'review' THEN 1 ELSE 2 END,
                 t.changed_at DESC,t.id DESC LIMIT 51""").fetchall()
-    return {"records": [dict(row) for row in rows[:50]], "has_more": len(rows)>50}
+    checked_at = now()
+    records = []
+    for source in rows[:50]:
+        row = dict(source)
+        elapsed = max(0, checked_at - row["changed_at"]) if row["state"] == "running" else 0
+        row["total_seconds"] = row["saved_minutes"] * 60 + row["active_seconds"] + elapsed
+        allowance = row["allowance_minutes"]
+        row["budget_state"] = "unknown"
+        row["remaining_seconds"] = None
+        if allowance:
+            budget = allowance * 60
+            remaining = budget - row["total_seconds"]
+            row["remaining_seconds"] = remaining
+            row["budget_state"] = ("over" if remaining < 0 else "reached" if remaining == 0
+                                   else "near" if row["total_seconds"] * 5 >= budget * 4
+                                   else "within")
+        records.append(row)
+    return {"records": records, "has_more": len(rows)>50}
 
 
 def history(work_id):
