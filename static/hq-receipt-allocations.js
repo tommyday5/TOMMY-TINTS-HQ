@@ -1,6 +1,41 @@
+// Keep the same allocation ID and operation token after an uncertain response.
+// This state is intentionally in memory, not browser storage.
+function receiptSubmission(){
+ let pending=null;
+ return {
+  get pending(){return pending!==null},
+  prepare(makePayload){if(!pending)pending=Object.freeze(makePayload());return pending},
+  async send(post){
+   if(!pending)throw Error('No allocation prepared');
+   try{
+    const response=await post(pending);
+    if(response.redirected||response.status===403||response.status>=500)
+     return {kind:'uncertain'};
+    const result=await response.json();
+    if(response.ok&&result.saved===true&&Number.isInteger(result.revision)){
+     pending=null;return {kind:'saved'};
+    }
+    if([400,409].includes(response.status)&&typeof result.error==='string'){
+     pending=null;return {kind:'rejected',error:result.error};
+    }
+    return {kind:'uncertain'};
+   }catch(error){return {kind:'uncertain'}}
+  }
+ };
+}
+if(typeof module!=='undefined'&&module.exports)module.exports={receiptSubmission};
+if(typeof document!=='undefined')
 (()=>{'use strict';
 const $=id=>document.getElementById(id), form=$('allocation'), notice=$('notice');
 let state=null, saving=false, dirty=false;
+const submission=receiptSubmission(), submit=form.querySelector('button[type=submit]');
+let lockedControls=[];
+function freeze(){
+ if(lockedControls.length)return;
+ lockedControls=[...form.querySelectorAll('input,select,textarea,button')].filter(el=>el!==submit).map(el=>[el,el.disabled]);
+ for(const [el] of lockedControls)el.disabled=true;
+}
+function thaw(){for(const [el,disabled] of lockedControls)el.disabled=disabled;lockedControls=[];submit.textContent='Save reported allocation in HQ';}
 const gbp=p=>new Intl.NumberFormat('en-GB',{style:'currency',currency:'GBP'}).format(p/100);
 const node=(tag,content)=>{const el=document.createElement(tag);el.textContent=content;return el};
 const id=()=>crypto.randomUUID().replaceAll('-','');
@@ -24,12 +59,14 @@ function limit(){
  $('allocation-limit').textContent=r?'Owner-reported unallocated portion: '+gbp(r.unallocated_owner_reported_pence)+' (not bank verified)':'Choose an issued invoice.';
 }
 function clear(){
+ if(submission.pending||saving)return;
  form.reset();form.elements.id.value='';form.elements.revision.value='0';
  form.elements.invoice_id.disabled=false;form.elements.amount_pounds.readOnly=false;
  form.querySelector('button[type=submit]').disabled=false;
  invoiceOptions();limit();dirty=false;
 }
 function edit(r){
+ if(submission.pending||saving)return;
  const invoice=$('invoice');if(![...invoice.options].some(o=>o.value===r.invoice_id)){
   const opt=node('option',r.invoice_ref);opt.value=r.invoice_id;invoice.append(opt);
  }
@@ -42,7 +79,9 @@ function edit(r){
 async function load(){
  const response=await fetch('/api/hq/finance/receipt-allocations',{credentials:'same-origin',cache:'no-store'});
  if(response.redirected||!response.ok)throw Error('Sign into HQ to access allocation records');
- state=await response.json();clear();
+ state=await response.json();
+ // A confirmed save may reload while the submit handler still holds the lock.
+ const wasSaving=saving;saving=false;clear();saving=wasSaving;
  const records=$('records');records.replaceChildren();
  for(const r of state.allocations){
   const card=node('article','');
@@ -75,25 +114,41 @@ $('invoice').onchange=()=>{limit();dirty=true};
 form.addEventListener('input',()=>dirty=true);
 $('newRecord').onclick=clear;
 form.onsubmit=async event=>{
- event.preventDefault();if(saving)return;saving=true;
+ event.preventDefault();if(saving)return;
  const fields=form.elements;
  try{
-  const payload={
+  submission.prepare(()=>({
    id:fields.id.value||id(),operation_id:id(),revision:Number(fields.revision.value),
    invoice_id:fields.invoice_id.value,amount_pence:amount(fields.amount_pounds.value),
    received_on:fields.received_on.value,method:fields.method.value,
    evidence_ref:fields.evidence_ref.value,memo:fields.memo.value,status:fields.status.value
-  };
-  const res=await fetch('/api/hq/finance/receipt-allocations',{method:'POST',
+  }));
+ }catch(error){notice.textContent=error.message;return}
+ saving=true;dirty=true;freeze();submit.disabled=true;
+ try{
+  const outcome=await submission.send(payload=>fetch('/api/hq/finance/receipt-allocations',{method:'POST',
    credentials:'same-origin',headers:{'Content-Type':'application/json',
    'X-HQ-CSRF':document.querySelector('meta[name=hq-csrf]').content},
-   body:JSON.stringify(payload)});
-  if(res.redirected)throw Error('Owner session expired');
-  const result=await res.json();
-  if(!res.ok)throw Error(result.error||'No save confirmed');
-  await load();
-  notice.textContent='Allocation saved and reloaded from HQ. No external payment, message or booking occurred.';
- }catch(error){notice.textContent=error.message}finally{saving=false}
+   body:JSON.stringify(payload)}));
+  if(outcome.kind==='uncertain'){
+   submit.textContent='Retry same allocation safely';
+   notice.textContent='Save result unknown. Retry this same allocation without changing its details. If you leave this page, check saved allocations before recording it again.';
+   submit.disabled=false;return;
+  }
+  if(outcome.kind==='rejected'){
+   thaw();submit.disabled=false;notice.textContent=outcome.error;return;
+  }
+  // A successful save and an unsuccessful refresh are different outcomes.
+  // Do not allow another submission from the stale form.
+  dirty=false;thaw();freeze();submit.disabled=true;
+  try{
+   thaw();await load();
+   notice.textContent='Allocation saved and reloaded from HQ. No external payment, message or booking occurred.';
+  }catch(error){
+   freeze();submit.disabled=true;
+   notice.textContent='Allocation saved in HQ, but the refresh failed. Reload this page to review it; do not record it again.';
+  }
+ }finally{saving=false}
 };
 window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue=''}});
 load().catch(error=>{notice.textContent=error.message});
