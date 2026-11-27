@@ -17,7 +17,11 @@ def _tables(db):
     db.execute("""CREATE INDEX IF NOT EXISTS hq_timer_alerts_inbox
         ON hq_timer_alerts(acknowledged_at, observed_at)""")
 
-def scan():
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_timer_alert_scan_health (
+        id INTEGER PRIMARY KEY CHECK(id=1), checked_at INTEGER NOT NULL)""")
+
+
+def scan(*, automatic=False):
     """Run once from an owner action or a trusted local worker. Safe to repeat."""
     with connect() as db:
         _tables(db)
@@ -49,6 +53,9 @@ def scan():
                 VALUES (?,?,?,?,?,?,?) ON CONFLICT(session_id,allowance_minutes,level) DO NOTHING""",
                 (uuid.uuid4().hex,row["id"],row["work_id"],row["allowance_minutes"],level,total,checked))
             created += result.rowcount
+        if automatic:
+            db.execute("""INSERT INTO hq_timer_alert_scan_health(id,checked_at) VALUES(1,?)
+                ON CONFLICT(id) DO UPDATE SET checked_at=excluded.checked_at""", (checked,))
     return created
 
 def inbox():
@@ -67,7 +74,12 @@ def inbox():
             ORDER BY a.observed_at DESC,a.id DESC LIMIT 51""")]
         recent = [dict(r) for r in db.execute(base + """ WHERE a.acknowledged_at IS NOT NULL
             ORDER BY a.acknowledged_at DESC,a.id DESC LIMIT 20""")]
-    return {"pending":pending[:50], "has_more":len(pending)>50, "recent":recent}
+        health = db.execute("""SELECT checked_at, datetime(checked_at,'unixepoch') AS checked_utc
+            FROM hq_timer_alert_scan_health WHERE id=1""").fetchone()
+        age = timer.now() - health["checked_at"] if health else None
+    return {"pending":pending[:50], "has_more":len(pending)>50, "recent":recent,
+            "automatic_checked_utc": health["checked_utc"] if health else None,
+            "automatic_recent": age is not None and 0 <= age <= 180}
 
 def acknowledge(alert_id, actor):
     timer._validate_id(alert_id)
