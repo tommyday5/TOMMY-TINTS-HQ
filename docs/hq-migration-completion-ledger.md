@@ -2108,3 +2108,32 @@ acknowledgment. Exact-head CI and deployment pending. No live job,
 price, payment, spreadsheet or customer-facing route changes.
 Actual recovery snapshot and bounded historical import still require
 separate approval with verified mappings and reconciliation.
+
+
+### 2026-11-27 — durable alert inbox deployed; local background scanner
+
+PR #327 exact head 35806964b51f6b2725469c5682c1dbab1176994f
+passed Actions 45970970456 (127 + 702 Python tests, 16 JavaScript).
+Squash merged as 08a1d18f86031e557c4a5740ed2c2c2e05788b3f.
+Railway deployment 19dce000-42a6-4943-853d-e6a6d5d69272 SUCCESS
+at 10:05:19 UTC; Gunicorn boot, one running replica and original
+/data 1024 MB volume verified. No pending changes, warnings or
+criticals. All 48 workbook tabs verified through read-only metadata.
+Customer/quote/shop/isolation regression passed; live authenticated
+browser acceptance and live database record inspection remain
+unverified. No historical domain reconciled or declared authoritative.
+
+Next slice: run the existing idempotent local scan in the existing
+Gunicorn worker after initialization, every 60 seconds, no new service,
+no external delivery and no application-import side effects. Requires
+configured persistent storage. Retries failures without logging private
+data; interruptible shutdown. SQLite stores a last-successful automatic
+scan heartbeat in the same transaction as observations. Owner alert
+screen distinguishes recent, stale and never-verified scans; manual
+checks do not mask background failure. Synthetic tests verify alert
+creation without a browser, restart-readable heartbeat, stale detection,
+retry and worker lifecycle. Exact-head CI, production heartbeat and
+owner acceptance pending. Phone push remains unimplemented; no
+new migration or live job/price/payment/booking changes.
+Recovery snapshot and first bounded import still need separately
+reviewed counts, mapping, conflicts and rollback before approval.
