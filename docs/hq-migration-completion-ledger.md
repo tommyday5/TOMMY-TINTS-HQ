@@ -2359,3 +2359,29 @@ added; exact-head CI and deployment pending. Customer Bookings unchanged;
 owner and customer authenticated production acceptance remains unverified.
 No domain newly authoritative. Independent recovery copy, bounded historical
 import approval and reconciled native finance remain outstanding.
+
+
+### 2026-11-27 — saved-work comparison deployed; exact transaction classification
+
+PR #336 exact head 6b26e80238dc762827350dc349a28881be7f6a36 passed
+Actions 46046895472 (127 + 715 Python tests; 19 JavaScript tests).
+Squash merged as a32eeb9bc9a7ad4acb46b223d6d7d269db5b0e67.
+Railway deployment 58f1e12d-0f03-4de9-8cc7-7b6ef3c4a76c SUCCESS at
+18:59:08 UTC. Original 1024 MB /data volume attached, no staged changes.
+Gunicorn and private timer scanner startup confirmed. Workbook metadata
+read-only still lists 48 tabs. Synthetic customer service request, quote
+conversion, appointment handoff, maintenance pricing and customer isolation
+tests passed. Direct /book and /hq/timer probes fail DNS; authenticated
+production acceptance and current Kia canonical identity remain unverified.
+
+Next slice: finance monthly classification report exposes a private exact
+record category/review editor for any active unsplit manual transaction,
+including records outside the latest 200 in the command centre. Date, amount
+and description cannot be changed by this action. Existing revision, archive
+and split guards, explicit direction validation, immutable before/after
+history and audit; immediate identical retry is non-mutating. No new
+transaction or bank evidence, no settlement or workbook write. Synthetic
+HTTP regression added; exact-head CI and deployment pending. No historical
+domain becomes authoritative. Actual recovery copy, bounded import approval
+and verified allocation reconciliation remain outstanding. No live job,
+timer, price, financial or customer record edited by development.
