@@ -55,6 +55,11 @@ def cost_overview_snapshot(work_id):
             FROM hq_work_expense_entries WHERE work_id=? AND voided_at IS NULL""",
             (work_id,)).fetchone()
 
+        plan = None
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_native_workshop_plans'").fetchone():
+            plan = db.execute("""SELECT planned_minutes,planned_material_pence,planned_sale_rate_pence
+                FROM hq_native_workshop_plans WHERE work_id=?""", (work_id,)).fetchone()
+
         from hq_historical_actual_costs import baseline_snapshot
         baseline = baseline_snapshot(db, work_id)
 
@@ -119,4 +124,24 @@ def cost_overview_snapshot(work_id):
             "Historical Google Sheets and existing manual profitability logs",
         ],
     })
+    comparison = None
+    if plan is not None:
+        comparison = dict(plan)
+        minutes = plan["planned_minutes"]
+        material = plan["planned_material_pence"]
+        rate = plan["planned_sale_rate_pence"]
+        sale_labour = (minutes * rate + 30) // 60 if minutes is not None and rate is not None else None
+        basis = sale_labour + material if sale_labour is not None and material is not None else None
+        recorded_material = work_data["material_recorded_total_pence"]
+        comparison.update({
+            "planned_sale_labour_pence": sale_labour,
+            "pricing_basis_pence": basis,
+            "price_minus_basis_pence": work["price_pence"] - basis
+                if work["price_pence"] is not None and basis is not None else None,
+            "saved_minutes_minus_plan": time["minutes"] - minutes
+                if labour_count and minutes is not None else None,
+            "recorded_material_minus_plan_pence": recorded_material - material
+                if recorded_material is not None and material is not None else None,
+        })
+    work_data["workshop_plan_comparison"] = comparison
     return work_data
