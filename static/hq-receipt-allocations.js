@@ -27,7 +27,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports={receiptSubmission
 if(typeof document!=='undefined')
 (()=>{'use strict';
 const $=id=>document.getElementById(id), form=$('allocation'), notice=$('notice');
-let state=null, saving=false, dirty=false;
+let state=null, saving=false, dirty=false, refreshRequired=false;
 const submission=receiptSubmission(), submit=form.querySelector('button[type=submit]');
 let lockedControls=[];
 function freeze(){
@@ -59,14 +59,14 @@ function limit(){
  $('allocation-limit').textContent=r?'Owner-reported unallocated portion: '+gbp(r.unallocated_owner_reported_pence)+' (not bank verified)':'Choose an issued invoice.';
 }
 function clear(){
- if(submission.pending||saving)return;
+ if(submission.pending||saving||refreshRequired)return;
  form.reset();form.elements.id.value='';form.elements.revision.value='0';
  form.elements.invoice_id.disabled=false;form.elements.amount_pounds.readOnly=false;
  form.querySelector('button[type=submit]').disabled=false;
  invoiceOptions();limit();dirty=false;
 }
 function edit(r){
- if(submission.pending||saving)return;
+ if(submission.pending||saving||refreshRequired)return;
  const invoice=$('invoice');if(![...invoice.options].some(o=>o.value===r.invoice_id)){
   const opt=node('option',r.invoice_ref);opt.value=r.invoice_id;invoice.append(opt);
  }
@@ -114,7 +114,7 @@ $('invoice').onchange=()=>{limit();dirty=true};
 form.addEventListener('input',()=>dirty=true);
 $('newRecord').onclick=clear;
 form.onsubmit=async event=>{
- event.preventDefault();if(saving)return;
+ event.preventDefault();if(saving||refreshRequired||!state)return;
  const fields=form.elements;
  try{
   submission.prepare(()=>({
@@ -140,12 +140,12 @@ form.onsubmit=async event=>{
   }
   // A successful save and an unsuccessful refresh are different outcomes.
   // Do not allow another submission from the stale form.
-  dirty=false;thaw();freeze();submit.disabled=true;
+  dirty=false;submit.disabled=true;
   try{
    thaw();await load();
    notice.textContent='Allocation saved and reloaded from HQ. No external payment, message or booking occurred.';
   }catch(error){
-   freeze();submit.disabled=true;
+   refreshRequired=true;freeze();submit.disabled=true;
    notice.textContent='Allocation saved in HQ, but the refresh failed. Reload this page to review it; do not record it again.';
   }
  }finally{saving=false}
