@@ -2311,3 +2311,30 @@ owner-only access, same-ID quote conversion and no automatic timing.
 No actual job, customer, payment, appointment, message or workbook write;
 no recovery or migration approval granted; no domain authority changed.
 Exact-head CI and deployment of this slice still pending.
+
+
+### 2026-11-27 — exact-record price approval deployed; workshop estimate handoff
+
+PR #334 exact head 3e7899f75fc2675bad9ca1ee04dee88c84c6fb0e passed
+Actions 46029722541 (127 + 712 Python tests; 19 JavaScript tests).
+Squash merged as 033417e437738eae2d1a76a3c702ea6529aaa560; Railway
+20d5c0aa-0dbc-4acb-b970-a99fff081325 SUCCESS at 17:01:12 UTC.
+Original 1024 MB /data volume attached; no pending environment changes.
+Server listening and private background timer scanner startup confirmed.
+Read-only workbook metadata returned all 48 tabs. CI includes synthetic
+customer service requests, quote approval, appointment handoff, maintenance
+price privacy and account isolation. Authenticated production data and
+current Kia canonical identity remain unverified.
+
+Next slice: exact native draft review saves estimated total minutes,
+estimated materials in GBP and planned hourly sale rate separately from
+customer price, actual time, internal hourly cost, actual materials, invoices
+and receipts. Optional unknowns remain null. Explicit zero is distinguishable.
+Canonical work revision and immutable audit protect changes, identical replay
+is a no-op, archived/approved/historical drafts are protected. First timer
+suggests saved planned minutes; subsequent saved session allowances take
+precedence, including an intentional blank. Opening the timer does not start
+work. Synthetic authenticated tests added; exact-head CI/deployment pending.
+No live records, financial entries, bookings, messages, workbook cells or
+authority mapping changes. Off-volume recovery snapshot, bounded historical
+import, actual reconciliation and opt-in push delivery still outstanding.
