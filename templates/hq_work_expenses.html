@@ -50,8 +50,8 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 </select>
 <label for="description">Expense description</label>
 <input id="description" name="description" maxlength="100" required value="{{ values.get('description','') }}" placeholder="e.g. Allocated booth power, outsourced wheel repair">
-<label for="allocated_cost_pence">Actual allocated cost in pence (leave blank if unknown)</label>
-<input id="allocated_cost_pence" name="allocated_cost_pence" type="number" min="0" max="100000000" step="1" value="{{ values.get('allocated_cost_pence','') }}" placeholder="500 means £5.00">
+<label for="allocated_cost_pence">Actual allocated cost (£, leave blank if unknown)</label>
+<input id="allocated_cost_pence" name="allocated_cost_pounds" type="number" inputmode="decimal" min="0" max="1000000" step="0.01" value="{{ values.get('allocated_cost_pounds','') if 'allocated_cost_pounds' in values else ('%.2f'|format(values.get('allocated_cost_pence')|int/100) if values.get('allocated_cost_pence','').isdigit() else '') }}" placeholder="5.00 means £5.00">
 <p class="hint">An explicit zero is only for a verified free allocation. Blank means the real cost is unknown.</p>
 <label for="source_note">Private evidence or allocation method (optional)</label>
 <input id="source_note" name="source_note" maxlength="160" value="{{ values.get('source_note','') }}" placeholder="e.g. Supplier invoice reviewed or monthly cost / approved jobs">
