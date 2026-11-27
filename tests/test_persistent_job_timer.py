@@ -318,7 +318,11 @@ class PersistentTimerTests(unittest.TestCase):
             s["csrf"] = "test"
             s["google_sub"] = "owner"
         url = "/hq/work/" + self.job + "/time"
-        self.assertIn(b'name="hourly_cost_pounds"', c.get(url).data)
+        page = c.get(url)
+        self.assertIn(b'name="hourly_cost_pounds"', page.data)
+        self.assertIn(b'id="labourCostPreview" data-saved-cost="0" data-unknown-rates="0" data-max-minutes="30"', page.data)
+        self.assertIn(b'Projected recorded job labour cost after saving', page.data)
+        self.assertEqual(time_ledger_snapshot(self.job)["entry_count"], 0)
         data = {"operation_id": sid, "minutes": "30", "stage": "repair",
                 "hourly_cost_pounds": "18.25", "note": "", "csrf": "test", "revision": "0"}
         for invalid in ("18.255", "-1", "1e2", "10000.01"):
