@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Labour alerts · Tommy Tints HQ</title><link rel="stylesheet" href="/static/job-timer.css"></head>
+<body><main><header class="timer-brand"><img src="/static/company-logo-header.webp" alt="Tommy Tints"><strong>TOMMY TINTS <em>HQ</em></strong></header>
+<h1>Labour alerts</h1><p><a href="/hq/timer">← Job Timer</a></p>
+<p>Private saved observations when a job reaches 80% or 100% of its labour allowance. Breaks are excluded. Alerts show the time they were detected, not the exact threshold crossing time. No automatic scans or phone push notifications are enabled.</p>
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="scan"><button>Check for new alerts</button></form>
+<h2>Unacknowledged alerts</h2>
+{% for a in alerts.pending %}
+<article class="timer-job"><div><h3>{{ 'Allowance reached or exceeded' if a.level == 'limit' else 'Approaching labour allowance' }}</h3>
+<p>{{ a.name }} · {{ a.registration }} · {{ a.service }}</p>
+<p>Observed {{ a.observed_seconds // 60 }}m {{ a.observed_seconds % 60 }}s against {{ a.allowance_minutes }} min allowance · {{ a.observed_utc }} UTC.</p>
+{% if not a.same_open_allowance %}<p>Historical observation: timer closed or allowance changed.</p>{% endif %}
+<p><a href="/hq/work/{{ a.work_id }}/time">Open job timer</a></p>
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="acknowledge"><input type="hidden" name="alert_id" value="{{ a.id }}"><button>Acknowledge alert</button></form>
+</div></article>{% else %}<p>No unacknowledged alerts.</p>{% endfor %}
+{% if alerts.has_more %}<p>Showing 50 alerts. Acknowledge reviewed alerts to see older ones.</p>{% endif %}
+<h2>Recently acknowledged</h2>
+{% for a in alerts.recent %}<article class="timer-job"><div><strong>{{ a.name }} · {{ a.registration }} · {{ 'Limit' if a.level == 'limit' else '80% warning' }}</strong><p>Observed {{ a.observed_utc }} UTC · acknowledged {{ a.acknowledged_utc }} UTC</p><a href="/hq/work/{{ a.work_id }}/time">Open job timer</a></div></article>{% else %}<p>No acknowledged alerts yet.</p>{% endfor %}
+</main></body></html>
