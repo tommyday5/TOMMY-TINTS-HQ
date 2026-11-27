@@ -4,7 +4,7 @@
 <h1>Private phone alerts</h1><p><a href="/hq/timer/alerts">← Labour alerts</a></p>
 <p>Device registration only. HQ does not currently send phone notifications. Existing in-app alerts are unaffected. Future notifications must contain no customer or financial information on the lock screen.</p>
 {% if public_key %}
-<section id="push-enrollment" data-key="{{ public_key }}" data-csrf="{{ csrf }}">
+<section id="push-enrollment" data-key="{{ public_key }}" data-csrf="{{ csrf }}" data-operation-id="{{ operation_id }}">
 <p>Open HQ from your iPhone Home Screen. Prepare this device, then explicitly enable registration. The browser may ask for permission. HQ will store the private device delivery address until revoked; no notification is sent by this action.</p>
 <button type="button" id="push-prepare">Prepare this device</button>
 <button type="button" id="push-enable" disabled>Enable device registration</button>
