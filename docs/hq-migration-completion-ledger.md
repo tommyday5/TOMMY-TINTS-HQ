@@ -2412,3 +2412,29 @@ unclassified split review semantics and exact history. CI and deployment
 of this proposal pending. No live data or workbook writes; no domain
 authority change. Actual bank settlement, reconciled receipt allocations,
 recovery snapshot, bounded historical import and owner acceptance still open.
+
+
+### 2026-11-27 — classification queue deployed; duplicate allocation guard
+
+PR #338 exact head 0fc2d52045284d3600a7f0e908c41349efcf1671 passed
+Actions 46061133079 (127 + 717 Python tests and 19 JavaScript tests).
+Squash merged as 0f869e1adfd506d11b94db6b5afc4a366f42e2ca.
+Railway deployment 02e466a0-e794-4a72-9d11-2804d3d9cda7 SUCCESS at
+20:59:45 UTC; existing /data 1024 MB volume attached, no pending infrastructure
+changes. Runtime confirms timer alert scan operational at 20:59:43 UTC.
+Read-only workbook metadata confirms 48 tabs. Synthetic owner/customer quote,
+appointment acceptance and isolation tests pass. Direct production /book and
+/hq/timer checks could not resolve the hostname in the development environment.
+Authenticated production acceptance and canonical current Kia ID remain open.
+
+Proposed next slice: owner-reported invoice allocation save rejects another
+active allocation on the same invoice with matching date, exact pence and
+nonempty evidence reference (case-insensitive ASCII; surrounding spaces ignored).
+Atomic check inside existing BEGIN IMMEDIATE; idempotent operation replay,
+reversal and correction, distinct instalments, and provider-specific guards
+remain separate. Existing historical duplicates are not rewritten. No-reference
+payments and nonidentical records still need review; this is not bank verification.
+Synthetic HTTP and concurrent distinct-operation regressions added. CI/deployment
+pending. No new historical import or domain authority, no actual jobs, payments,
+financial data or workbook writes. Recovery snapshot and first bounded import
+still require exact preview and owner approval.
