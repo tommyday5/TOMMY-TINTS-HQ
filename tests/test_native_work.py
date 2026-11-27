@@ -201,6 +201,63 @@ class NativeWorkTests(unittest.TestCase):
         self.assertIsNone(snapshot(work_id))
         self.assertIn(b"Create a new job draft", self.client.get("/hq/timer").data)
 
+    def test_exact_native_draft_review_price_approval_and_timer_handoff(self):
+        self.login()
+        created = self.post({**self.payload, "kind": "job"})
+        work_id = created.headers["Location"].split("/")[3]
+        url = "/hq/work/" + work_id + "/review"
+        self.assertIn(url.encode(), self.client.get(created.headers["Location"]).data)
+        self.assertIn(url.encode(), self.client.get("/hq/timer").data)
+        self.assertEqual(app.test_client().get(url).status_code, 302)
+        self.assertEqual(self.client.get(url).headers["Cache-Control"], "no-store")
+        def submit(action, revision, **extra):
+            return self.client.post(url, data={"csrf": "test-csrf", "action": action,
+                                              "revision": str(revision), **extra})
+        self.assertEqual(self.client.post(url, data={"action": "amounts"}).status_code, 403)
+        self.assertEqual(submit("review", 0).status_code, 400)
+        for price, deposit in (("", "0"), ("550.001", "0"), ("5e2", "0"),
+                               ("550", ""), ("550", "551"), ("-1", "0")):
+            self.assertEqual(submit("amounts", 0, price=price, deposit=deposit).status_code, 400)
+        self.assertIsNone(read_work_record(work_id)["price_pence"])
+        self.assertEqual(submit("amounts", 0, price="550.01", deposit="0").status_code, 303)
+        self.assertEqual(submit("amounts", 0, price="550.01", deposit="0").status_code, 303)
+        self.assertEqual(submit("amounts", 0, price="551", deposit="0").status_code, 409)
+        row = read_work_record(work_id)
+        self.assertEqual((row["price_pence"], row["deposit_pence"], row["status"], row["revision"]),
+                         (55001, 0, "draft", 1))
+        self.assertIn(b"550.01", self.client.get(url).data)
+        self.assertEqual(submit("approve", 1, confirm="yes").status_code, 400)
+        self.assertEqual(submit("review", 1).status_code, 303)
+        self.assertEqual(submit("approve", 2).status_code, 400)
+        self.assertEqual(submit("approve", 1, confirm="yes").status_code, 409)
+        self.assertEqual(submit("approve", 2, confirm="yes").status_code, 303)
+        row = read_work_record(work_id)
+        self.assertEqual((row["status"], row["revision"]), ("approved", 3))
+        self.assertIn(("/hq/work/" + work_id + "/time").encode(), self.client.get(url).data)
+        self.assertEqual(submit("amounts", 3, price="551", deposit="0").status_code, 400)
+        self.assertEqual(sheet_sync_status(work_id)["state"], "not_linked")
+        from hq_work_timer import snapshot
+        self.assertIsNone(snapshot(work_id))
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_work_records").fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_work_audit WHERE work_id=?", (work_id,)).fetchone()[0], 3)
+
+    def test_exact_native_quote_review_converts_same_record(self):
+        self.login()
+        created = self.post()
+        work_id = created.headers["Location"].split("/")[3]
+        url = "/hq/work/" + work_id + "/review"
+        for action, revision, extra in (
+            ("amounts", "0", {"price": "200", "deposit": "20"}),
+            ("review", "1", {}),
+            ("approve", "2", {"confirm": "yes"}),
+        ):
+            self.assertEqual(self.client.post(url, data={"csrf": "test-csrf",
+                "action": action, "revision": revision, **extra}).status_code, 303)
+        self.assertEqual(read_work_record(work_id)["kind"], "job")
+        self.assertEqual(native_work_record(work_id)["status"], "approved")
+        self.assertEqual(len(list_work_records()), 1)
+
     def test_strict_form_validation_and_no_public_native_access(self):
         self.login()
         bad = [
