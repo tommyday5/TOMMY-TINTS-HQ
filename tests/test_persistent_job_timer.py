@@ -839,7 +839,7 @@ class PersistentTimerTests(unittest.TestCase):
             s["csrf"] = "test"
         application_key, client_key = point(), point()
         endpoint = "https://web.push.apple.com/synthetic-not-real"
-        data = {"action":"enroll", "consent":"yes", "application_key":application_key,
+        data = {"action":"enroll", "consent":"yes", "operation_id":uuid.uuid4().hex, "application_key":application_key,
                 "endpoint":endpoint, "p256dh":client_key, "auth_key":b64(b"x"*16)}
         with patch.dict(os.environ, HQ_TIMER_PUSH_PUBLIC_KEY=""):
             self.assertIn(b"Device registration is not configured", c.get(url).data)
@@ -879,6 +879,9 @@ class PersistentTimerTests(unittest.TestCase):
                 self.assertIsNone(row["p256dh"])
                 self.assertIsNone(row["auth_key"])
                 self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_timer_push_events").fetchone()[0], 2)
+            self.assertEqual(c.post(url, data=data).status_code, 400)
+            self.assertEqual(push.devices("owner"), [])
+            data["operation_id"] = uuid.uuid4().hex
             self.assertEqual(c.post(url, data=data).status_code, 200)
             self.assertEqual(c.post(url, data=revoke).status_code, 400)
             self.assertEqual(push.devices("owner")[0]["revision"], 2)
