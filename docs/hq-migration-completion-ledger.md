@@ -1882,3 +1882,27 @@ fractional pence. Synthetic authenticated timer review and replay regression
 included. Exact-head CI and deployment pending. No production record writes,
 customer price changes, public booking changes or new historical authority.
 Production browser acceptance and owner-approved recovery/import remain open.
+
+
+
+### 2026-11-27 — pounds-rate deployment and pre-save labour cost preview
+
+PR #319 exact head 3516f0c3a930f53fdb935c4acbe37f5f290fc104 passed Actions
+45919897747 (127 + 694 Python tests and 12 JavaScript tests) and squash merged
+as 198f2b72b240118f539fb4d52c721ea33eed866d. Railway deployment
+b8a2f280-3ae0-4d05-a48a-4e13d7960984 reported SUCCESS at 01:59:31 UTC.
+Existing /data 1024 MB volume verified before merge. Read-only workbook
+metadata confirmed 48 tabs; Jobs A1:Z1000 again returned J0014 and J0073,
+neither matching the current CV Motors black Kia scope. Native job ID and
+authenticated production UI not verified; no live job created or timer started.
+
+Next slice: owner-only pre-save labour preview for reviewed or manual minutes,
+with exact integer-pence half-up per-entry rounding, projected cumulative
+recorded labour cost only if all previous rates and current rate are known,
+and review-minute bounds. Preview is not a save, customer price, invoice,
+receipt or profit. Tests cover initial owner HTML, live edits, explicit zero,
+unknown/invalid rates and over-measured minutes. CI and deployment for this
+slice pending. Customer-to-HQ service request, mixed-quote conversion,
+appointment handoff and isolation passed in prior CI. No new historical
+authority, reconciliation or production record writes; original owner
+approval gates for encrypted recovery and bounded historical import remain.
