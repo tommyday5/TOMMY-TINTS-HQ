@@ -2338,3 +2338,24 @@ work. Synthetic authenticated tests added; exact-head CI/deployment pending.
 No live records, financial entries, bookings, messages, workbook cells or
 authority mapping changes. Off-volume recovery snapshot, bounded historical
 import, actual reconciliation and opt-in push delivery still outstanding.
+
+### 2026-11-27 — workshop plans deployed; saved-work variance
+
+PR #335 exact head ef314bdb1d219d4156338bb9fac1f0fd737673bd passed
+Actions 46038627825 (127 + 714 Python tests; 19 JavaScript tests).
+Squash merged as 7f3e4d50d08563f4c91f6d52f1ffd8a663a65274; Railway
+229fcbc6-3615-4985-b8e0-a861810129f4 SUCCESS at 18:05:18 UTC.
+Original 1024 MB /data volume attached; no pending environment changes.
+Gunicorn listening and private timer scanner startup confirmed. Workbook
+metadata read-only verified 48 tabs. No live records or workbook writes.
+
+Next slice compares saved plan against active recorded minutes and material
+allocations in the same private cost snapshot. Distinguishes planned sale
+rate from internal cost and approved/proposed price from receipts. Unknown
+and absent actual entries do not become zero, unsaved timer time is excluded,
+and no final profit or migration reconciliation is inferred. Direct links to
+existing editable ledgers. Synthetic HTTP access and calculation regression
+added; exact-head CI and deployment pending. Customer Bookings unchanged;
+owner and customer authenticated production acceptance remains unverified.
+No domain newly authoritative. Independent recovery copy, bounded historical
+import approval and reconciled native finance remain outstanding.
