@@ -1010,7 +1010,7 @@ def timer_push_devices():
     except (ValueError, OSError, sqlite3.Error, RuntimeError):
         abort(503)
     response = current_app.make_response(render_template("timer_push_devices.html",
-        devices=records, public_key=push.public_key(), csrf=session["csrf"]))
+        devices=records, public_key=push.public_key(), csrf=session["csrf"], operation_id=uuid.uuid4().hex))
     response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -1029,7 +1029,8 @@ def update_timer_push_devices():
         if action == "enroll":
             push.enroll(actor, endpoint=request.form.get("endpoint"),
                 p256dh=request.form.get("p256dh"), auth_key=request.form.get("auth_key"),
-                application_key=request.form.get("application_key"), consent=request.form.get("consent"))
+                application_key=request.form.get("application_key"), consent=request.form.get("consent"),
+                operation_id=request.form.get("operation_id"))
             response = jsonify(enrolled=True)
             response.headers["Cache-Control"] = "no-store"
             return response
