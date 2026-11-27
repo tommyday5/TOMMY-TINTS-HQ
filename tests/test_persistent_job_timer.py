@@ -710,10 +710,11 @@ class PersistentTimerTests(unittest.TestCase):
         from hq_timer_background import run, INTERVAL_SECONDS
         from unittest.mock import Mock
         self.command("start", allowance="10")
-        self.now.return_value += 480
+        self.now.return_value += 479
         self.assertIsNone(inbox()["automatic_checked_utc"])
-        self.assertEqual(scan(), 1)
+        self.assertEqual(scan(), 0)
         self.assertIsNone(inbox()["automatic_checked_utc"])
+        self.now.return_value += 1
         stop = Mock()
         stop.is_set.side_effect = [False, True]
         logger = Mock()
