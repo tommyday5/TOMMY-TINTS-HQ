@@ -11,7 +11,7 @@ from hq_auth_store import auth_db
 from hq_core_records import create_test_job, change_work_status, StaleWorkRecordError
 from hq_work_archive import set_work_archived
 from hq_work_timer import snapshot, transition, history, open_timer_jobs
-from hq_work_time import time_ledger_snapshot, append_work_time, void_work_time
+from hq_work_time import time_ledger_snapshot, append_work_time, void_work_time, correct_work_time_rate
 
 class PersistentTimerTests(unittest.TestCase):
     def setUp(self):
@@ -388,3 +388,56 @@ class PersistentTimerTests(unittest.TestCase):
         self.assertEqual(by_stage["repair"]["actual_labour_cost_pence"], 913)
         self.assertEqual(by_stage["paint"]["minutes_total"], 97)
         self.assertIn('Repair / bodywork</strong> · 30 min · 1 entries', c.get(url).get_data(as_text=True))
+
+
+    def test_saved_timer_rate_correction_preserves_time_and_evidence(self):
+        from hq_work_cost_overview import cost_overview_snapshot
+        self.command("start", allowance="390")
+        sid = snapshot(self.job)["id"]
+        self.now.return_value += 1800
+        self.command("finish", 0, sid)
+        original = append_work_time(self.job, {
+            "operation_id": sid, "minutes": "30", "stage": "repair",
+            "hourly_cost_pence": "", "note": "Synthetic repair",
+        }, 0, "owner")
+        c = app.test_client()
+        url = "/hq/work/" + self.job + "/time/" + original + "/rate"
+        payload = {"operation_id": uuid.uuid4().hex, "revision": "1",
+                   "hourly_cost_pounds": "18.25", "reason": "Verified labour rate"}
+        self.assertEqual(c.post(url, data=payload).status_code, 302)
+        with c.session_transaction() as s, auth_db() as db:
+            s["hq_sid"] = issue_session(db, "owner")
+            s["google_sub"] = "owner"
+            s["csrf"] = "test"
+        self.assertEqual(c.post(url, data=payload).status_code, 403)
+        payload["csrf"] = "test"
+        self.assertIn("rate_corrected=1", c.post(url, data=payload).location)
+        self.assertIn("rate_corrected=1", c.post(url, data=payload).location)
+        ledger = time_ledger_snapshot(self.job)
+        self.assertEqual((ledger["revision"], ledger["entry_count"], ledger["minutes_total"],
+                          ledger["actual_labour_cost_pence"]), (2, 1, 30, 913))
+        entries = {row["entry_id"]: row for row in ledger["entries"]}
+        successor = entries[original]["replaced_by"]
+        self.assertIsNotNone(entries[original]["voided_at"])
+        self.assertIsNone(entries[original]["hourly_cost_pence"])
+        self.assertEqual(entries[successor]["corrected_from"], original)
+        self.assertEqual(entries[successor]["rate_correction_reason"], "Verified labour rate")
+        self.assertEqual(entries[successor]["note"], "Synthetic repair")
+        self.assertEqual(history(self.job)["sessions"][0]["entry_id"], original)
+        self.assertEqual(cost_overview_snapshot(self.job)["labour_recorded_total_pence"], 913)
+        page = c.get("/hq/work/" + self.job + "/time").get_data(as_text=True)
+        self.assertIn("Correct internal hourly cost (keep minutes)", page)
+        self.assertIn("Verified labour rate", page)
+        stale = dict(payload, operation_id=uuid.uuid4().hex, hourly_cost_pounds="0")
+        with self.assertRaises(StaleWorkRecordError):
+            correct_work_time_rate(self.job, successor, stale, 1, "owner")
+        with self.assertRaises(ValueError):
+            correct_work_time_rate(self.job, successor, dict(stale, reason=""), 2, "owner")
+        zero = correct_work_time_rate(self.job, successor, stale, 2, "owner")
+        self.assertEqual(time_ledger_snapshot(self.job)["actual_labour_cost_pence"], 0)
+        unknown = dict(stale, operation_id=uuid.uuid4().hex, hourly_cost_pounds="")
+        correct_work_time_rate(self.job, zero, unknown, 3, "owner")
+        final = time_ledger_snapshot(self.job)
+        self.assertEqual((final["entry_count"], final["minutes_total"], final["revision"]), (1, 30, 4))
+        self.assertIsNone(final["actual_labour_cost_pence"])
+        self.assertIsNone(cost_overview_snapshot(self.job)["labour_recorded_total_pence"])
