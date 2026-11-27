@@ -44,6 +44,10 @@ def _tables(db):
         voided_at TEXT,
         voided_by_fingerprint TEXT)""")
     db.execute("CREATE INDEX IF NOT EXISTS idx_hq_work_time_work ON hq_work_time_entries(work_id,created_at)")
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_work_time_rate_corrections (
+        replacement_entry_id TEXT PRIMARY KEY REFERENCES hq_work_time_entries(entry_id),
+        original_entry_id TEXT NOT NULL UNIQUE REFERENCES hq_work_time_entries(entry_id),
+        reason TEXT NOT NULL, created_at TEXT NOT NULL)""")
 
 
 def _validate_payload(payload):
@@ -112,10 +116,12 @@ def _validate_revision(revision):
 
 def _read_work(db, work_id):
     work = db.execute("""SELECT w.id,w.kind,w.status,w.revision,w.service,
-        w.price_pence,c.name AS customer_name,v.make,v.model,v.registration
+        w.price_pence,c.name AS customer_name,v.make,v.model,v.registration,
+        COALESCE(a.is_archived,0) AS is_archived
         FROM hq_work_records w
         JOIN hq_customers c ON c.id=w.customer_id
-        JOIN hq_vehicles v ON v.id=w.vehicle_id WHERE w.id=?""", (work_id,)).fetchone()
+        JOIN hq_vehicles v ON v.id=w.vehicle_id
+        LEFT JOIN hq_work_archive_state a ON a.work_id=w.id WHERE w.id=?""", (work_id,)).fetchone()
     if work is None:
         raise LookupError("HQ work not found")
     return dict(work)
@@ -147,9 +153,17 @@ def time_ledger_snapshot(work_id):
             stage["actual_labour_cost_pence"] = (
                 stage["known_cost_subtotal_pence"] if not stage["unknown_rate_count"] else None)
         entries = [dict(row) for row in db.execute("""SELECT
-            entry_id,minutes,stage,note,hourly_cost_pence,created_at,voided_at
-            FROM hq_work_time_entries WHERE work_id=?
-            ORDER BY created_at DESC,entry_id DESC LIMIT 101""", (work_id,))]
+            e.entry_id,e.minutes,e.stage,e.note,e.hourly_cost_pence,e.created_at,e.voided_at,
+            r.original_entry_id AS corrected_from, r.reason AS rate_correction_reason,
+            n.replacement_entry_id AS replaced_by
+            FROM hq_work_time_entries e
+            LEFT JOIN hq_work_time_rate_corrections r ON r.replacement_entry_id=e.entry_id
+            LEFT JOIN hq_work_time_rate_corrections n ON n.original_entry_id=e.entry_id
+            WHERE e.work_id=?
+            ORDER BY e.created_at DESC,e.entry_id DESC LIMIT 101""", (work_id,))]
+    for entry in entries:
+        entry["rate_operation"] = uuid.uuid5(uuid.NAMESPACE_OID,
+            f'hq-rate-correction:{entry["entry_id"]}:{work["revision"]}').hex
     unknown = totals["unknown_rates"] or 0
     work.update({
         "entry_count": totals["entry_count"],
@@ -162,7 +176,7 @@ def time_ledger_snapshot(work_id):
         "entries": entries[:100],
         "stage_totals": stage_totals,
         "history_truncated": len(entries) > 100,
-        "can_edit_time": work["kind"] == "job" and work["status"] in _ALLOWED,
+        "can_edit_time": work["kind"] == "job" and work["status"] in _ALLOWED and not work["is_archived"],
         "payment_verified": False,
     })
     return work
@@ -257,8 +271,8 @@ def void_work_time(work_id, entry_id, expected_revision, owner_identity):
             raise LookupError("Time entry not found")
         if row["voided_at"] is not None:
             return work["revision"]  # Exact replay, no duplicate reversal.
-        if work["kind"] != "job" or work["status"] not in _ALLOWED:
-            raise ValueError("Closed work time is locked")
+        if work["kind"] != "job" or work["status"] not in _ALLOWED or work["is_archived"]:
+            raise ValueError("Closed or archived work time is locked")
         if work["revision"] != expected_revision:
             raise StaleWorkRecordError("This job changed. Reload before correcting time.")
         updated = db.execute("UPDATE hq_work_records SET revision=revision+1 WHERE id=? AND revision=?",
@@ -271,3 +285,72 @@ def void_work_time(work_id, entry_id, expected_revision, owner_identity):
                     {"entry_id": entry_id, "voided": False},
                     {"entry_id": entry_id, "voided": True})
     return expected_revision + 1
+
+
+def correct_work_time_rate(work_id, entry_id, payload, expected_revision, owner_identity):
+    """Atomically reverse and replace only the rate; retain original timer evidence."""
+    _validate_id(work_id)
+    _validate_id(entry_id)
+    _validate_revision(expected_revision)
+    actor = _actor_fingerprint(owner_identity)
+    reason = payload.get("reason", "")
+    if not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 160:
+        raise ValueError("Enter a rate correction reason (1–160 characters)")
+    reason = reason.strip()
+    # Require the field even when intentionally clearing a rate to unknown.
+    if "hourly_cost_pounds" not in payload:
+        raise ValueError("Enter a rate or explicitly leave it unknown")
+    with connect() as db:
+        db.execute("PRAGMA foreign_keys=ON")
+        _schema(db)
+        _tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        work = _read_work(db, work_id)
+        old = db.execute("""SELECT * FROM hq_work_time_entries
+            WHERE work_id=? AND entry_id=?""", (work_id, entry_id)).fetchone()
+        if old is None:
+            raise LookupError("Time entry not found")
+        fields = _validate_payload({
+            "operation_id": payload.get("operation_id"),
+            "minutes": str(old["minutes"]), "stage": old["stage"], "note": old["note"],
+            "hourly_cost_pounds": payload["hourly_cost_pounds"],
+        })
+        rate = fields["hourly_cost_pence"]
+        fingerprint = _fingerprint({"rate_correction": entry_id, "reason": reason,
+            "revision": expected_revision, "fields": fields})
+        prior = db.execute("""SELECT entry_id,work_id,payload_fingerprint
+            FROM hq_work_time_entries WHERE operation_id=?""",
+            (fields["operation_id"],)).fetchone()
+        if prior:
+            if prior["work_id"] != work_id or not hmac.compare_digest(
+                prior["payload_fingerprint"], fingerprint
+            ):
+                raise StaleWorkRecordError("This correction operation was already used")
+            return prior["entry_id"]
+        if work["kind"] != "job" or work["status"] not in _ALLOWED or work["is_archived"]:
+            raise ValueError("Closed or archived work time is locked")
+        if old["voided_at"] is not None or work["revision"] != expected_revision:
+            raise StaleWorkRecordError("This entry or job changed. Reload before correcting the rate.")
+        if old["hourly_cost_pence"] == rate:
+            raise ValueError("The rate has not changed")
+        changed = db.execute("""UPDATE hq_work_records SET revision=revision+1
+            WHERE id=? AND revision=?""", (work_id, expected_revision))
+        if changed.rowcount != 1:
+            raise StaleWorkRecordError("This job changed. Reload before correcting the rate.")
+        timestamp = _now()
+        replacement = uuid.uuid4().hex
+        db.execute("""UPDATE hq_work_time_entries SET voided_at=?,voided_by_fingerprint=?
+            WHERE entry_id=? AND voided_at IS NULL""", (timestamp, actor, entry_id))
+        db.execute("""INSERT INTO hq_work_time_entries
+            (entry_id,work_id,operation_id,payload_fingerprint,minutes,stage,note,
+            hourly_cost_pence,actor_fingerprint,created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?)""", (replacement, work_id, fields["operation_id"],
+            fingerprint, old["minutes"], old["stage"], old["note"], rate, actor, timestamp))
+        db.execute("INSERT INTO hq_work_time_rate_corrections VALUES (?,?,?,?)",
+            (replacement, entry_id, reason, timestamp))
+        _audit_work(db, work_id, expected_revision+1, "actual_time_rate_corrected",
+            {"entry_id": entry_id, "hourly_cost_pence": old["hourly_cost_pence"]},
+            {"entry_id": replacement, "hourly_cost_pence": rate})
+        # The original timer session remains linked to its original posting.
+        # The correction table explicitly links that posting to its successor.
+    return replacement
