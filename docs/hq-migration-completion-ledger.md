@@ -2385,3 +2385,30 @@ HTTP regression added; exact-head CI and deployment pending. No historical
 domain becomes authoritative. Actual recovery copy, bounded import approval
 and verified allocation reconciliation remain outstanding. No live job,
 timer, price, financial or customer record edited by development.
+
+
+### 2026-11-27 — exact classification deployed; outstanding review queue
+
+PR #337 exact head 0eb71c102c3ca9f7f00125b83792dd5e9f90255b passed
+Actions 46053528675 (127 + 716 Python tests, 19 JavaScript tests).
+Squash merged as 45769e5069b5ace3af90817dab0859c5d3c67ffc.
+Railway deployment 4f6a86ce-fca9-444f-bc01-57771b6be292 SUCCESS at
+20:04:08 UTC. Existing /data 1024 MB volume remains configured, no staged
+infrastructure changes. Read-only workbook metadata confirms 48 tabs.
+Synthetic customer service request to native work, approved combined quote
+appointment handoff and customer isolation passed. Owner/customer production
+acceptance and actual database record inspection remain unverified.
+
+Next slice: monthly manual transaction report includes a filter for
+outstanding classifications (unreviewed unsplit entries or any unclassified
+line) and stable ordering with 50-entry pages. Full month totals remain
+unfiltered, so no hidden or duplicated amounts. Exact-record classification
+editor now displays its latest 100 captured transaction states, original
+description/date/signed amount, category, review flag and revision; direct
+return to outstanding review queue. Fully categorised splits remain proposals,
+not verified receipts or a parent review. Synthetic HTTP tests cover
+pagination, persistent edit, stale/replayed saves in existing tests,
+unclassified split review semantics and exact history. CI and deployment
+of this proposal pending. No live data or workbook writes; no domain
+authority change. Actual bank settlement, reconciled receipt allocations,
+recovery snapshot, bounded historical import and owner acceptance still open.

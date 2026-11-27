@@ -2,6 +2,7 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Classify transaction · Tommy Tints HQ</title><link rel="stylesheet" href="/static/finance-command.css"></head>
 <body><main><header><a href="/hq/finance/classifications?month={{ parent.day[:7] }}">Back to monthly classification</a> · <a href="/hq/finance/command">Finance Command Centre</a></header>
 <h1>Review transaction classification</h1>
+<p><a href="{{ url_for('native_finance.classification_report_page',month=parent.day[:7],review='pending') }}">Return to outstanding classifications</a></p>
 <article><h2>{{ parent.description }}</h2><p>{{ parent.day }} · £{{ '%.2f'|format(parent.amount/100) }}</p><p>Revision {{ parent.revision }} · Manual HQ entry, not verified bank evidence.</p><p>Only the category and owner-reviewed flag can change here. Amount, date and description remain unchanged.</p></article>
 {% if error %}<p role="alert">{{ error }}</p>{% endif %}
 {% if parent.archived or split %}
@@ -13,5 +14,8 @@
 <button type="submit">Save classification</button></form>
 {% endif %}
 <p><a href="{{ url_for('native_finance.transaction_split_page',ref=parent.id) }}">Split classification / history</a> · <a href="{{ url_for('native_finance.transaction_archive_page',ref=parent.id) }}">Archive / history</a></p>
+<h2>Saved transaction revision history</h2>
+<p>Latest 100 captured transaction states for this exact record. Split and archive events are available separately above.</p>
+{% for rev in revisions %}<article><h3>Revision {{ rev.revision }} · {{ 'Previous state captured before edit' if rev.capture_kind=='before_edit' else 'Saved state' }}</h3><p>{{ rev.snapshot.day }} · {{ rev.snapshot.description }} · £{{ '%.2f'|format(rev.snapshot.amount/100) }}</p><p>{{ rev.snapshot.category|replace('_',' ') }} · {{ 'Owner reviewed' if rev.snapshot.reviewed else 'Needs review' }}</p><small>{{ rev.captured_at }}</small></article>{% else %}<p>No captured transaction states yet.</p>{% endfor %}
 <p>Saving does not verify cash received, reconcile a provider settlement, move money or change the workbook.</p>
 </main></body></html>

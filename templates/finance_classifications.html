@@ -3,7 +3,7 @@
 <body><main><header><a href="/hq/finance/command">Back to Finance Command Centre</a></header>
 <h1>Monthly transaction classifications</h1>
 <p>Owner-entered HQ records only. These are not verified bank receipts, turnover, profit, VAT or balances. Do not add these figures to the connected spreadsheet or provider totals. Transfers, loans, settlements and refunds remain separate classifications.</p>
-<form method="get"><label>Month<input type="month" name="month" value="{{ month }}" required></label><button>Show month</button></form>
+<form method="get"><label>Month<input type="month" name="month" value="{{ month }}" required></label><label>Show<select name="review"><option value="all"{% if mode=="all" %} selected{% endif %}>All entries</option><option value="pending"{% if mode=="pending" %} selected{% endif %}>Needs classification review</option></select></label><button>Show month</button></form>
 {% if error %}<p role="alert">{{ error }}</p>{% endif %}
 {% if report is not none %}
 <p>{{ report.archived_count }} archived manual entries excluded from these totals. <a href="/hq/finance/command">Review archived entries in Finance Command Centre</a>.</p>
@@ -17,7 +17,11 @@
 <h2>Effective category totals</h2>
 {% for category, amounts in report.totals %}<article><h3>{{ category|replace("_"," ") }}</h3><p>In £{{ "%.2f"|format(amounts.incoming/100) }} · Out £{{ "%.2f"|format(amounts.outgoing/100) }}</p></article>{% endfor %}
 <h2>Review individual entries</h2>
-{% for entry in report.entries %}
+<p>{{ pending_count }} entries need classification review, including splits with an unclassified line. Totals above always cover the whole month, regardless of filter.</p>
+<p><a href="{{ url_for('native_finance.classification_report_page',month=month,review='pending') }}">Review outstanding classifications</a> · <a href="{{ url_for('native_finance.classification_report_page',month=month) }}">All entries</a></p>
+<p>Page {{ page }} of {{ pages }} · Up to 50 entries per page.</p>
+{% if not visible %}<p>No entries match this review filter. This does not verify bank activity.</p>{% endif %}
+{% for entry in visible %}
 <article><h3>{{ entry.description }}</h3><p>{{ entry.day }} · £{{ "%.2f"|format(entry.amount/100) }}</p>
 <p>{% if entry.split %}Active split proposal (not bank verified){% elif entry.reviewed %}Owner-reviewed classification (not bank verified){% else %}Needs owner review{% endif %}</p>
 {% for line in entry.lines %}<p>{{ line.category|replace("_"," ") }} · £{{ "%.2f"|format(line.pence/100) }}</p>{% endfor %}
@@ -26,6 +30,7 @@
 <a href="{{ url_for('native_finance.transaction_archive_page',ref=entry.id) }}">Archive / history</a>
 </article>
 {% endfor %}
+<nav aria-label="Transaction pages">{% if page>1 %}<a href="{{ url_for('native_finance.classification_report_page',month=month,review=mode,page=page-1) }}">Previous page</a>{% endif %} {% if page<pages %}<a href="{{ url_for('native_finance.classification_report_page',month=month,review=mode,page=page+1) }}">Next page</a>{% endif %}</nav>
 {% else %}<p>No active owner-entered transactions in this month. Actual bank activity is unknown.</p>{% endif %}
 {% endif %}
 </main></body></html>

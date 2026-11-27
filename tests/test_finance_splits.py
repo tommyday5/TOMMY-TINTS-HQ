@@ -160,3 +160,45 @@ class FinanceSplitTests(unittest.TestCase):
         self.assertEqual(self.client.post(url,data={**form,"revision":"3"}).status_code,409)
         with connect() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_transactions").fetchone()[0],1)
+
+    def test_monthly_review_queue_pagination_and_exact_history(self):
+        self.login()
+        url="/hq/finance/classifications?month=2026-01"
+        with connect() as db:
+            for i in range(51):
+                db.execute("INSERT INTO finance_transactions VALUES(?,?,?,?,?,?,?)",
+                    (f"{i+1:032x}","2026-01-02",f"Synthetic queue {i:03d}",-100,"fuel",0,1))
+            db.execute("INSERT INTO finance_transactions VALUES(?,?,?,?,?,?,?)",
+                ("b"*32,"2026-01-03","Reviewed outside queue",1000,"customer_income",1,1))
+        first=self.client.get(url+"&review=pending")
+        self.assertEqual(first.status_code,200)
+        self.assertIn(b"52 entries need classification review",first.data)
+        self.assertIn(b"Page 1 of 2",first.data)
+        self.assertIn(b"151.00",first.data)
+        self.assertNotIn(b"Reviewed outside queue",first.data)
+        second=self.client.get(url+"&review=pending&page=2")
+        self.assertIn(b"Synthetic mixed purchase",second.data)
+        self.assertNotIn(b"Synthetic queue 000",second.data)
+        self.assertIn(b"151.00",second.data)
+        classify=self.url.replace("/split","/classify")
+        self.assertEqual(self.client.post(classify,data=dict(csrf="test-csrf",revision="1",
+            category="fuel",reviewed="yes")).status_code,303)
+        exact=self.client.get(classify)
+        self.assertIn(b"Saved transaction revision history",exact.data)
+        self.assertIn(b"Previous state captured before edit",exact.data)
+        self.assertIn(b"Return to outstanding classifications",exact.data)
+        pending=self.client.get(url+"&review=pending&page=2")
+        self.assertIn(b"51 entries need classification review",pending.data)
+        self.assertNotIn(b"Synthetic mixed purchase",pending.data)
+        self.assertEqual(self.client.get(url+"&review=invalid").status_code,400)
+        self.assertEqual(self.client.get(url+"&page=0").status_code,400)
+        # An unclassified split belongs in the queue even if the parent was reviewed.
+        self.assertEqual(self.client.post(self.url,data=self.form(revision="2",
+            category_0="unclassified")).status_code,303)
+        self.assertIn(b"Synthetic mixed purchase",self.client.get(
+            url+"&review=pending&page=2").data)
+        self.assertEqual(self.client.post(self.url,data=self.form(revision="3")).status_code,303)
+        self.assertNotIn(b"Synthetic mixed purchase",self.client.get(
+            url+"&review=pending&page=2").data)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_transactions").fetchone()[0],53)
