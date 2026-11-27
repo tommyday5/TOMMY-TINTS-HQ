@@ -242,6 +242,66 @@ class NativeWorkTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_work_records").fetchone()[0], 1)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_work_audit WHERE work_id=?", (work_id,)).fetchone()[0], 3)
 
+    def test_native_workshop_plan_persists_and_suggests_first_timer_allowance(self):
+        self.login()
+        created = self.post({**self.payload, "kind": "job", "customer_tier": "trade"})
+        work_id = created.headers["Location"].split("/")[3]
+        url = "/hq/work/" + work_id + "/review"
+        plan = {"csrf": "test-csrf", "action": "plan", "revision": "0",
+                "planned_minutes": "390", "planned_material": "54",
+                "planned_sale_rate": "70"}
+        self.assertEqual(app.test_client().post(url, data=plan).status_code, 302)
+        self.assertEqual(self.client.post(url, data={**plan, "csrf": ""}).status_code, 403)
+        for change in ({"planned_minutes": "0"}, {"planned_minutes": "390.5"},
+                       {"planned_material": "-1"}, {"planned_sale_rate": "70.001"}):
+            self.assertEqual(self.client.post(url, data={**plan, **change}).status_code, 400)
+        self.assertIsNone(native_work_record(work_id)["planned_minutes"])
+        self.assertEqual(self.client.post(url, data=plan).status_code, 303)
+        self.assertEqual(self.client.post(url, data=plan).status_code, 303)
+        self.assertEqual(self.client.post(url, data={**plan, "planned_minutes": "391"}).status_code, 409)
+        row = native_work_record(work_id)
+        self.assertEqual((row["planned_minutes"], row["planned_material_pence"],
+                          row["planned_sale_rate_pence"], row["revision"]), (390, 5400, 7000, 1))
+        self.assertIsNone(row["price_pence"])
+        self.assertIn(b"6h 30m", self.client.get(url).data)
+        self.assertIn(b"54.00", self.client.get(url).data)
+        from hq_work_timer import snapshot, history
+        from hq_work_cost_overview import cost_overview_snapshot
+        self.assertIsNone(snapshot(work_id))
+        actual = cost_overview_snapshot(work_id)
+        self.assertEqual(actual["labour_minutes"], 0)
+        self.assertIsNone(actual["material_known_pence"])
+        self.assertIsNone(actual["final_profit_pence"])
+        self.assertEqual(history(work_id)["planned_allowance"], 390)
+        for action, revision, extra in (
+            ("amounts", "1", {"price": "550", "deposit": "0"}),
+            ("review", "2", {}), ("approve", "3", {"confirm": "yes"}),
+        ):
+            self.assertEqual(self.client.post(url, data={"csrf": "test-csrf",
+                "action": action, "revision": revision, **extra}).status_code, 303)
+        timer = self.client.get("/hq/work/" + work_id + "/time")
+        self.assertEqual(timer.status_code, 200)
+        self.assertIn(b'Saved workshop plan suggested', timer.data)
+        self.assertIn(b'value="390"', timer.data)
+        self.assertIsNone(snapshot(work_id))
+        self.assertEqual(self.client.post(url, data={**plan, "revision": "4"}).status_code, 400)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_work_audit WHERE work_id=? AND action='native_workshop_plan'",
+                                        (work_id,)).fetchone()[0], 1)
+
+    def test_native_workshop_plan_distinguishes_zero_and_unknown(self):
+        self.login()
+        created = self.post()
+        work_id = created.headers["Location"].split("/")[3]
+        url = "/hq/work/" + work_id + "/review"
+        self.assertEqual(self.client.post(url, data={"csrf": "test-csrf", "action": "plan",
+            "revision": "0", "planned_minutes": "", "planned_material": "0",
+            "planned_sale_rate": ""}).status_code, 303)
+        row = native_work_record(work_id)
+        self.assertIsNone(row["planned_minutes"])
+        self.assertIsNone(row["planned_sale_rate_pence"])
+        self.assertEqual(row["planned_material_pence"], 0)
+
     def test_exact_native_quote_review_converts_same_record(self):
         self.login()
         created = self.post()
