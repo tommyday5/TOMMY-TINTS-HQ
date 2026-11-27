@@ -2,7 +2,47 @@
 function pause(){if(state.start){state.seconds=clock();state.start=null;state.pauseAt=Date.now();persist();render()}}
 if($('clockStart')){$('clockStart').onclick=()=>{if(!state.start){if(state.pauseAt)state.paused+=Math.max(0,(Date.now()-state.pauseAt)/1000);state.pauseAt=null;state.start=Date.now();state.pendingSave=false;persist();render()}};$('clockPause').onclick=pause;$('clockFinish').onclick=()=>{const minutes=Math.floor(clock()/60);if(minutes<1||minutes>1440){$('clockNotice').textContent='Review sessions in entries of 1–1440 whole minutes.';return}$('minutes').value=minutes;$('clockNotice').textContent='Review '+minutes+' whole active minutes below, select the activity, then Save actual time. Remaining seconds are not included. Job is not marked complete.';$('timeEntryForm').scrollIntoView({behavior:'auto',block:'start'});$('minutes').focus()};$('timeEntryForm').addEventListener('submit',()=>{pause();state.pendingSave=true;persist()})}$('allowance').onchange=()=>{state.estimate=$('allowance').value;persist();render()};document.addEventListener('visibilitychange',()=>{persist();if(!document.hidden)render()});setInterval(render,1000);render()})();
 
-(()=>{const root=document.getElementById('serverTimer');if(!root)return;const get=id=>document.getElementById(id),clock=get('serverClock'),totalClock=get('serverTotalClock'),breakClock=get('serverBreakClock'),ring=get('serverAllowanceRing'),percent=get('serverPercent'),notice=get('serverAllowanceNotice'),initial=Number(root.dataset.seconds),initialBreak=Number(root.dataset.break||0),started=Date.now(),recorded=Number(root.dataset.recorded)*60,allowance=Number(root.dataset.allowance)*60;const format=s=>[Math.floor(s/3600),Math.floor(s%3600/60),Math.floor(s%60)].map(v=>String(v).padStart(2,'0')).join(':');function render(){const elapsed=Math.max(0,Math.floor((Date.now()-started)/1000)),seconds=initial+(root.dataset.running==='yes'?elapsed:0),breaks=initialBreak+(root.dataset.paused==='yes'?elapsed:0),total=seconds+recorded,ratio=allowance>0?total/allowance:0;clock.textContent=format(seconds);if(totalClock)totalClock.textContent=format(total);if(breakClock)breakClock.textContent=format(breaks);if(percent)percent.textContent=allowance>0?Math.floor(ratio*100)+'%':'—';if(ring){ring.style.setProperty('--used',Math.min(100,ratio*100)+'%');if(allowance>0){ring.setAttribute('aria-valuenow',String(Math.min(100,Math.floor(ratio*100))));ring.setAttribute('aria-valuetext',Math.floor(ratio*100)+' percent used')}else{ring.removeAttribute('aria-valuenow');ring.setAttribute('aria-valuetext','Allowance unknown')}}const message=allowance>0?(total>=allowance?'Allowance reached: '+format(total-allowance)+' over estimate. Review scope before continuing.':(total>=allowance*.9?'90% allowance used · ':total>=allowance*.75?'75% allowance used · ':'')+format(allowance-total)+' remaining'):'No allowance recorded.';if(notice.textContent!==message)notice.textContent=message}render();setInterval(render,1000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)render()})})();
+(()=>{'use strict';
+const root=document.getElementById('serverTimer');if(!root)return;
+const get=id=>document.getElementById(id),clock=get('serverClock'),totalClock=get('serverTotalClock'),breakClock=get('serverBreakClock'),ring=get('serverAllowanceRing'),percent=get('serverPercent'),notice=get('serverAllowanceNotice'),syncNotice=get('serverSyncNotice'),reload=get('serverReload');
+let initial=Number(root.dataset.seconds),initialBreak=Number(root.dataset.break||0),started=performance.now(),stale=false,pending=false;
+const recorded=Number(root.dataset.recorded)*60,allowance=Number(root.dataset.allowance)*60;
+const format=s=>[Math.floor(s/3600),Math.floor(s%3600/60),Math.floor(s%60)].map(v=>String(v).padStart(2,'0')).join(':');
+function render(){
+  if(stale)return;
+  const elapsed=Math.max(0,Math.floor((performance.now()-started)/1000)),seconds=initial+(root.dataset.running==='yes'?elapsed:0),breaks=initialBreak+(root.dataset.paused==='yes'?elapsed:0),total=seconds+recorded,ratio=allowance>0?total/allowance:0;
+  clock.textContent=format(seconds);if(totalClock)totalClock.textContent=format(total);if(breakClock)breakClock.textContent=format(breaks);
+  if(percent)percent.textContent=allowance>0?Math.floor(ratio*100)+'%':'—';
+  if(ring){ring.style.setProperty('--used',Math.min(100,ratio*100)+'%');if(allowance>0){ring.setAttribute('aria-valuenow',String(Math.min(100,Math.floor(ratio*100))));ring.setAttribute('aria-valuetext',Math.floor(ratio*100)+' percent used')}else{ring.removeAttribute('aria-valuenow');ring.setAttribute('aria-valuetext','Allowance unknown')}}
+  const message=allowance<=0?'No allowance recorded.':total>allowance?'Allowance exceeded by '+format(total-allowance)+'. Review scope before continuing.':total===allowance?'Allowance reached. Review scope before continuing.':(total*5>=allowance*4?'Approaching labour allowance · ':'')+format(allowance-total)+' remaining';
+  if(notice.textContent!==message)notice.textContent=message;
+}
+function setNotice(message){if(syncNotice&&syncNotice.textContent!==message)syncNotice.textContent=message}
+function markStale(){
+  stale=true;notice.textContent='Clock paused on this screen: server records changed.';
+  setNotice('This job or timer changed on another screen. Reload before making timer changes. The server timer itself has not been paused.');
+  if(reload)reload.hidden=false;
+  for(const button of root.querySelectorAll('form button'))button.disabled=true;
+}
+async function refresh(){
+  if(stale||pending||document.hidden||!root.dataset.statusUrl)return;
+  pending=true;
+  try{
+    const response=await fetch(root.dataset.statusUrl,{credentials:'same-origin',cache:'no-store',redirect:'error',headers:{Accept:'application/json'}});
+    if(!response.ok)throw Error('status unavailable');
+    const data=await response.json();
+    if(!Number.isSafeInteger(data.work_revision)||!Number.isSafeInteger(data.timer_revision)||!Number.isSafeInteger(data.saved_minutes)||!Number.isSafeInteger(data.active_seconds)||!Number.isSafeInteger(data.break_seconds)||data.active_seconds<0||data.break_seconds<0||data.saved_minutes<0)throw Error('invalid status');
+    if(data.work_revision!==Number(root.dataset.workRevision)||data.timer_revision!==Number(root.dataset.timerRevision)||(data.session_id||'')!==root.dataset.sessionId||data.saved_minutes*60!==recorded){markStale();return}
+    initial=data.active_seconds;initialBreak=data.break_seconds;started=performance.now();
+    setNotice('Clock checked against server. No background push is sent.');render();
+  }catch{
+    setNotice('Live verification unavailable. Display is estimated from the last known server state; reconnect or sign in and reload to verify.');
+  }finally{pending=false}
+}
+render();refresh();setInterval(render,1000);setInterval(refresh,15000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){render();refresh()}});
+window.addEventListener('pageshow',event=>{if(event.persisted)refresh()});
+})();
 
 
 ;(()=>{'use strict';
