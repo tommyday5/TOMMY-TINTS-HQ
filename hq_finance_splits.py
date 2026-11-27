@@ -202,7 +202,91 @@ def classification_period(db, start, end, *, include_revisions=False):
                 outgoing=outgoing, unclassified=unclassified, split_count=split_count, archived_count=archived_count)
 
 
+
+def save_classification(ref, revision, category, reviewed):
+    """Classify exactly one existing manual transaction without editing its amount."""
+    from hq_native_finance import (schema, audit, transaction_archived,
+        capture_transaction, CATEGORIES, validate_explicit_direction)
+    if not storage_ready():
+        raise ValueError("Persistent HQ storage is required.")
+    if not HEX.fullmatch(ref) or type(revision) is not int or not 0 <= revision < 2**63-1:
+        raise ValueError("Invalid transaction or revision.")
+    if category not in CATEGORIES or type(reviewed) is not bool:
+        raise ValueError("Choose a valid classification.")
+    if reviewed and category == "unclassified":
+        raise ValueError("Classify before marking reviewed.")
+    with closing(connect()) as db, db:
+        schema(db)
+        tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("SELECT * FROM finance_transactions WHERE id=?", (ref,)).fetchone()
+        if not row:
+            raise LookupError("Transaction not found.")
+        if transaction_archived(db, ref) or active(db, ref):
+            raise StaleSplit("Restore the transaction or withdraw its active split before classifying.")
+        validate_explicit_direction(category, row["amount"])
+        unchanged = row["category"] == category and bool(row["reviewed"]) == reviewed
+        if row["revision"] != revision:
+            # Exact immediate retry of our own saved revision is harmless.
+            replay = unchanged and row["revision"] == revision + 1 and db.execute(
+                """SELECT 1 FROM finance_edit_audit WHERE entity='transaction_classification'
+                   AND record_id=? AND revision=?""", (ref, revision + 1)).fetchone()
+            if replay:
+                return
+            raise StaleSplit("Transaction changed elsewhere. Reload before editing.")
+        if unchanged:
+            return
+        capture_transaction(db, row, "before_edit")
+        db.execute("""UPDATE finance_transactions SET category=?,reviewed=?,revision=?
+            WHERE id=? AND revision=?""", (category, int(reviewed), revision+1, ref, revision))
+        capture_transaction(db, db.execute("SELECT * FROM finance_transactions WHERE id=?",
+            (ref,)).fetchone(), "saved")
+        audit(db, "transaction_classification", ref, revision+1)
+
+
 def register(bp):
+    @bp.route("/hq/finance/transactions/<ref>/classify", methods=["GET","POST"])
+    @required
+    def transaction_classification_page(ref):
+        from hq_native_finance import CATEGORIES
+        if not HEX.fullmatch(ref):
+            abort(404)
+        if not storage_ready():
+            abort(503)
+        error, status = None, 200
+        try:
+            if request.method == "POST":
+                request.max_content_length = 4096
+                token = session.get("csrf")
+                if not token or not secrets.compare_digest(request.form.get("csrf",""), token):
+                    abort(403)
+                revision = request.form.get("revision","")
+                if not re.fullmatch(r"[0-9]{1,19}", revision):
+                    raise ValueError("Invalid revision.")
+                reviewed = request.form.get("reviewed","")
+                if reviewed not in ("", "yes"):
+                    raise ValueError("Invalid review flag.")
+                save_classification(ref, int(revision), request.form.get("category"), reviewed=="yes")
+                return redirect(url_for("native_finance.transaction_classification_page",ref=ref),code=303)
+        except StaleSplit as exc:
+            error, status = str(exc), 409
+        except (ValueError,TypeError) as exc:
+            error, status = str(exc), 400
+        except LookupError:
+            abort(404)
+        except (sqlite3.Error,OSError):
+            abort(503)
+        try:
+            parent,history=read(ref)
+        except LookupError:
+            abort(404)
+        except (sqlite3.Error,OSError):
+            abort(503)
+        split=bool(history and history[0]["action"]=="save")
+        return render_template("finance_transaction_classify.html",parent=parent,
+            split=split,categories=CATEGORIES,csrf=session.get("csrf",""),error=error),status,{"Cache-Control":"no-store"}
+
+
     @bp.get("/hq/finance/classifications")
     @required
     def classification_report_page():
