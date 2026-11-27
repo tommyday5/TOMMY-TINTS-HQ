@@ -2288,3 +2288,26 @@ No new historical domain reconciled or authoritative. Actual recovery and
 bounded historical import still require separate owner approval; phone
 delivery requires secure transport and explicit consent. No production job
 creation, timer start, customer communications or workbook writes by this run.
+
+
+### 2026-11-27 — native draft creation deployed; direct draft price and approval
+
+PR #333 exact head 8dd5f3a18f7b41f10a827f2b6589d79bfa316edf passed
+Actions 46021167703 (127 + 710 Python tests; 19 JavaScript tests).
+Squash merged as 2a0ece880370c27de83292355ee86076293d3944; Railway
+16684d1d-299a-4d07-91d2-339a5fdebc89 SUCCESS at 15:58:18 UTC.
+Read-only workbook metadata still lists 48 tabs. Existing customer portal
+service request, combined quote appointment handoff and account-isolation
+regressions passed. Live authenticated acceptance remains unverified.
+
+Next slice adds a private exact-record draft review page reached from the
+native work editor and native draft job timer search. Save GBP proposed price
+and planned deposit via existing canonical revision-checked operations; mark
+ready, explicitly confirm approval, and open the same job timer without
+starting it. Existing financial validation, historical reconciliation blocks,
+archive checks, audit trail and Sheets link boundaries remain in force.
+Synthetic HTTP tests exercise save/reload, price validation, stale edits,
+owner-only access, same-ID quote conversion and no automatic timing.
+No actual job, customer, payment, appointment, message or workbook write;
+no recovery or migration approval granted; no domain authority changed.
+Exact-head CI and deployment of this slice still pending.
