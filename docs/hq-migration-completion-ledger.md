@@ -2261,3 +2261,30 @@ regression verify scope, no wildcard expansion, escaping and no timer
 start or labour write. No identity inference, live job creation or
 migration. Exact-head CI and deployment pending. Recovery and bounded
 historical imports remain separate approvals; no domain authority changed.
+
+
+### 2026-11-27 — canonical lookup deployed; paginated lookup and native draft entry
+
+PR #332 exact head 8d51f114a0f96c288fdfaa6458b52b4a438dbe75 passed
+Actions 46012325577 (127 + 708 Python tests; 19 JavaScript tests).
+Squash merged as d9420107223646dd55de3b2e4b52235181b9b09f; Railway
+deployment e4ffce87-3ac8-4b14-af93-a3b9968965cc SUCCESS at 15:00:29 UTC.
+Original 1024 MB /data volume attached and no pending changes.
+Read-only workbook metadata confirms 48 tabs; Jobs read again finds
+J0014 and J0073, not verified current black Kia identity. Synthetic
+combined quote appointment handoff and customer account isolation passed.
+Authenticated live acceptance and database record inspection remain unverified.
+
+Next slice: owner timer search can page through all bounded matching records
+and explicitly enter the existing native job draft creation workflow, with
+job preselected across customer lookup. Same-customer duplicate nonblank
+registrations (ignoring case and spaces) are rejected atomically rather than
+silently cloning the vehicle; existing vehicle selection permits subsequent
+work. Preserve selected customer when recovering from a validation error.
+Draft creation does not approve a price, book work, start timing, or write to
+Sheets. Synthetic tests cover save/reload, collision rollback, reuse, access
+control and pagination beyond 50. Exact-head CI and deployment pending.
+No new historical domain reconciled or authoritative. Actual recovery and
+bounded historical import still require separate owner approval; phone
+delivery requires secure transport and explicit consent. No production job
+creation, timer start, customer communications or workbook writes by this run.
