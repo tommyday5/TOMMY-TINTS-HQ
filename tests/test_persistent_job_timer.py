@@ -703,3 +703,62 @@ class PersistentTimerTests(unittest.TestCase):
         self.assertEqual(scan(),1)
         self.assertEqual([(x["level"],x["observed_seconds"]) for x in inbox()["pending"]],[("limit",600)])
         self.assertEqual(scan(),0)
+
+
+    def test_background_scan_heartbeat_without_browser_and_manual_scan_not_health(self):
+        from hq_timer_alerts import scan, inbox
+        from hq_timer_background import run, INTERVAL_SECONDS
+        from unittest.mock import Mock
+        self.command("start", allowance="10")
+        self.now.return_value += 480
+        self.assertIsNone(inbox()["automatic_checked_utc"])
+        self.assertEqual(scan(), 1)
+        self.assertIsNone(inbox()["automatic_checked_utc"])
+        stop = Mock()
+        stop.is_set.side_effect = [False, True]
+        logger = Mock()
+        run(stop, logger)
+        stop.wait.assert_called_once_with(INTERVAL_SECONDS)
+        logger.info.assert_called_once()
+        data = inbox()
+        self.assertTrue(data["automatic_recent"])
+        self.assertEqual(len(data["pending"]), 1)
+        heartbeat = data["automatic_checked_utc"]
+        self.now.return_value += 181
+        self.assertEqual(scan(), 1)
+        self.assertFalse(inbox()["automatic_recent"])
+        self.assertEqual(inbox()["automatic_checked_utc"], heartbeat)
+        self.assertEqual(scan(automatic=True), 0)
+        self.assertTrue(inbox()["automatic_recent"])
+        self.assertEqual(len(inbox()["pending"]), 2)
+        self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"], 0)
+        self.assertEqual(snapshot(self.job)["state"], "running")
+
+    def test_background_scan_retries_failure_and_worker_lifecycle_is_guarded(self):
+        import sqlite3
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from hq_timer_background import run, start, shutdown
+        stop, logger = Mock(), Mock()
+        stop.is_set.side_effect = [False, False, True]
+        with patch("hq_timer_background.hq_timer_alerts.scan",
+                   side_effect=[sqlite3.OperationalError("private data"), 0]) as scanner:
+            run(stop, logger)
+        self.assertEqual(scanner.call_count, 2)
+        logger.warning.assert_called_once_with(
+            "Private timer alert scan failed (%s); retrying", "OperationalError")
+        logger.info.assert_called_once()
+        worker = SimpleNamespace(log=Mock())
+        with patch("hq_timer_background.Thread") as thread, patch(
+                "hq_timer_background.storage_ready", return_value=False):
+            start(worker)
+            thread.assert_not_called()
+        with patch("hq_timer_background.Thread") as thread, patch(
+                "hq_timer_background.storage_ready", return_value=True):
+            start(worker)
+            start(worker)
+            thread.assert_called_once()
+            thread.return_value.start.assert_called_once()
+            shutdown(worker)
+            self.assertTrue(worker._hq_timer_alert_stop.is_set())
+            thread.return_value.join.assert_called_once_with(timeout=1)
