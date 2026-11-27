@@ -1864,3 +1864,21 @@ Native domain implementation and historical authority/reconciliation
 status remain unchanged. Current Kia native identity and authenticated
 production acceptance remain unverified. Off-volume recovery and bounded
 historical import require separately evidenced owner approval.
+
+
+### 2026-11-27 — reviewed timer correction and owner-friendly labour cost entry
+
+PR #318 exact head bd53dd4cce0ecc15de1e43b52a28bfa0d01615ee passed
+Actions 45914722241 and squash merged as 65a04f9fc1f1d1b333d2456f6dff45662baac3e1.
+Railway deployment 3a2ab356-348e-40e9-a922-4203c11375ba was SUCCESS at inspection; original /data
+volume (1024 MB) verified before merge. Workbook schema rechecked read-only
+(48 tabs); Jobs A1:Z1000 returned only J0014 (other customer) and J0073
+(CV Motors bonnet), not the current black Kia. Native identity unverified.
+
+Next slice: owner actual labour cost entry in pounds and pence with exact
+integer-pence normalization, preserving legacy pence requests, unknown rates
+and idempotent fingerprints. Reject ambiguous dual-rate submissions and
+fractional pence. Synthetic authenticated timer review and replay regression
+included. Exact-head CI and deployment pending. No production record writes,
+customer price changes, public booking changes or new historical authority.
+Production browser acceptance and owner-approved recovery/import remain open.
