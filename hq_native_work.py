@@ -609,11 +609,22 @@ def edit_work_time(work_id):
         return redirect(url_for(".edit_work_time", work_id=work_id, saved="1"), 303)
     timer = timer_snapshot(work_id)
     review = timer and timer["state"] == "review"
-    return render_template("hq_work_time.html", work=current, stages=WORK_STAGES,
+    # Keep the timer usable if the optional combined-cost view is unavailable.
+    # The cost snapshot is internally consistent; never mix different work revisions.
+    costs = None
+    try:
+        candidate = cost_overview_snapshot(work_id)
+        if candidate["revision"] == current["revision"]:
+            costs = candidate
+    except (ValueError, LookupError, OSError, sqlite3.Error, RuntimeError):
+        current_app.logger.warning("Timer combined cost overview unavailable")
+    response = current_app.make_response(render_template("hq_work_time.html", work=current, stages=WORK_STAGES,
         csrf=session["csrf"], operation_id=timer["id"] if review else uuid.uuid4().hex,
         values={"minutes": str(timer["active_seconds"] // 60)} if review else {},
         error=None, timer=timer, timer_operation=uuid.uuid4().hex, allowance_operation=uuid.uuid4().hex,
-                 timer_history=timer_history(work_id))
+        timer_history=timer_history(work_id), combined_costs=costs))
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @native_work.post("/hq/work/<work_id>/timer")
