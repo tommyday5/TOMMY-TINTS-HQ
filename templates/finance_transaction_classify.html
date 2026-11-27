@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Classify transaction · Tommy Tints HQ</title><link rel="stylesheet" href="/static/finance-command.css"></head>
+<body><main><header><a href="/hq/finance/classifications?month={{ parent.day[:7] }}">Back to monthly classification</a> · <a href="/hq/finance/command">Finance Command Centre</a></header>
+<h1>Review transaction classification</h1>
+<article><h2>{{ parent.description }}</h2><p>{{ parent.day }} · £{{ '%.2f'|format(parent.amount/100) }}</p><p>Revision {{ parent.revision }} · Manual HQ entry, not verified bank evidence.</p><p>Only the category and owner-reviewed flag can change here. Amount, date and description remain unchanged.</p></article>
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+{% if parent.archived or split %}
+<p>This transaction is {% if parent.archived %}archived{% else %}split{% endif %}. Restore it or withdraw the split before editing its parent classification.</p>
+{% else %}
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="revision" value="{{ parent.revision }}">
+<label>Category<select name="category" required>{% for category in categories %}<option value="{{ category }}"{% if category==parent.category %} selected{% endif %}>{{ category|replace('_',' ') }}</option>{% endfor %}</select></label>
+<label><input type="checkbox" name="reviewed" value="yes"{% if parent.reviewed %} checked{% endif %}> Classification reviewed by owner</label>
+<button type="submit">Save classification</button></form>
+{% endif %}
+<p><a href="{{ url_for('native_finance.transaction_split_page',ref=parent.id) }}">Split classification / history</a> · <a href="{{ url_for('native_finance.transaction_archive_page',ref=parent.id) }}">Archive / history</a></p>
+<p>Saving does not verify cash received, reconcile a provider settlement, move money or change the workbook.</p>
+</main></body></html>
