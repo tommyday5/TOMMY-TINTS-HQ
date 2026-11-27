@@ -162,7 +162,8 @@ def time_ledger_snapshot(work_id):
             WHERE e.work_id=?
             ORDER BY e.created_at DESC,e.entry_id DESC LIMIT 101""", (work_id,))]
     for entry in entries:
-        entry["rate_operation"] = uuid.uuid4().hex
+        entry["rate_operation"] = uuid.uuid5(uuid.NAMESPACE_OID,
+            f'hq-rate-correction:{entry["entry_id"]}:{work["revision"]}').hex
     unknown = totals["unknown_rates"] or 0
     work.update({
         "entry_count": totals["entry_count"],
