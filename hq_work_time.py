@@ -70,7 +70,18 @@ def _validate_payload(payload):
         raw_rate = ""
     if not isinstance(raw_rate, str) or (raw_rate and not re.fullmatch(r"[0-9]{1,7}", raw_rate)):
         raise ValueError("Enter internal hourly cost in pence or leave unknown")
-    rate = None if raw_rate == "" else int(raw_rate)
+    # The owner-facing form accepts pounds; retain old pence submissions and
+    # normalize both to the same integer-pence replay fingerprint.
+    pounds = payload.get("hourly_cost_pounds", "")
+    if not isinstance(pounds, str):
+        raise ValueError("Enter internal hourly cost in pounds or leave unknown")
+    if pounds:
+        if raw_rate or not re.fullmatch(r"[0-9]{1,5}(?:\.[0-9]{1,2})?", pounds):
+            raise ValueError("Enter one internal hourly cost in pounds with up to two decimal places")
+        whole, _, fraction = pounds.partition(".")
+        rate = int(whole) * 100 + int(fraction.ljust(2, "0"))
+    else:
+        rate = None if raw_rate == "" else int(raw_rate)
     if rate is not None and not 0 <= rate <= 1000000:
         raise ValueError("Hourly cost must be between 0 and 1000000 pence")
     correction = payload.get("timer_correction_reason", "")
