@@ -122,7 +122,13 @@ def history(work_id):
         previous = db.execute("""SELECT allowance_minutes FROM hq_timer_sessions
             WHERE work_id=? AND state='saved' ORDER BY changed_at DESC,id DESC LIMIT 1""",
             (work_id,)).fetchone()
+        plan = None
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hq_native_workshop_plans'").fetchone():
+            plan = db.execute("SELECT planned_minutes FROM hq_native_workshop_plans WHERE work_id=?",
+                              (work_id,)).fetchone()
     return {"previous_saved_allowance": previous["allowance_minutes"] if previous else None,
+            "planned_allowance": plan["planned_minutes"] if plan else None,
+            "has_previous_saved_session": previous is not None,
             "sessions": sessions[:100], "events": events[:100],
             "truncated": len(sessions)>100 or len(events)>100}
 
