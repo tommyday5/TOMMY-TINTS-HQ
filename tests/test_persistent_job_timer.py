@@ -763,3 +763,57 @@ class PersistentTimerTests(unittest.TestCase):
             shutdown(worker)
             self.assertTrue(worker._hq_timer_alert_stop.is_set())
             thread.return_value.join.assert_called_once_with(timeout=1)
+
+
+    def test_timer_home_priority_alerts_full_counts_and_owner_acknowledgement(self):
+        from hq_timer_alerts import scan, inbox
+        c = app.test_client()
+        self.assertEqual(c.get("/hq/timer").status_code, 302)
+        with c.session_transaction() as s, auth_db() as db:
+            s["hq_sid"] = issue_session(db, "owner")
+            s["google_sub"] = "owner"
+            s["csrf"] = "test"
+        self.command("start", allowance="10")
+        sid = snapshot(self.job)["id"]
+        self.now.return_value += 480
+        self.assertEqual(scan(automatic=True), 1)
+        self.now.return_value += 120
+        self.assertEqual(scan(automatic=True), 1)
+        data = inbox()
+        self.assertEqual((data["pending_count"], data["matching_count"],
+                          data["matching_limit_count"], data["historical_count"]), (2,2,1,0))
+        self.assertEqual([x["level"] for x in data["pending"]], ["limit","near"])
+        limit = data["pending"][0]["id"]
+        # Older sessions are still reviewable but cannot conceal an open limit alert.
+        with connect() as db:
+            for i in range(1, 53):
+                db.execute("""INSERT INTO hq_timer_alerts
+                    (id,session_id,work_id,allowance_minutes,level,observed_seconds,observed_at)
+                    VALUES (?,?,?,?,?,?,?)""",
+                    (uuid.uuid4().hex,sid,self.job,100+i,"near",480,self.now.return_value+i))
+        data = inbox()
+        self.assertEqual((data["pending_count"], data["matching_count"],
+                          data["historical_count"]), (54,2,52))
+        self.assertEqual(len(data["pending"]),50)
+        self.assertTrue(data["has_more"])
+        self.assertEqual(data["pending"][0]["id"],limit)
+        page = c.get("/hq/timer")
+        self.assertEqual(page.status_code,200)
+        self.assertEqual(page.headers["Cache-Control"],"no-store")
+        self.assertIn(b"54 unacknowledged observations",page.data)
+        self.assertIn(b"Background scan recently verified",page.data)
+        self.assertIn(b"Acknowledge alert",page.data)
+        self.assertIn(limit.encode(),page.data)
+        self.assertEqual(c.post("/hq/timer/alerts",data={
+            "action":"acknowledge","alert_id":limit}).status_code,403)
+        self.assertEqual(c.post("/hq/timer/alerts",data={
+            "action":"acknowledge","alert_id":limit,"csrf":"test"}).status_code,303)
+        self.assertEqual(inbox()["pending_count"],53)
+        self.assertEqual(inbox()["matching_limit_count"],0)
+        self.assertEqual(snapshot(self.job)["state"],"running")
+        self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"],0)
+        with patch("hq_timer_alerts.inbox",side_effect=RuntimeError("unavailable")):
+            page = c.get("/hq/timer")
+            self.assertEqual(page.status_code,200)
+            self.assertIn(b"Alert summary unavailable",page.data)
+            self.assertIn(b"Open running timer",page.data)
