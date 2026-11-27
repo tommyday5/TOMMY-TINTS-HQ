@@ -90,7 +90,17 @@ def _payload(payload):
         raw_cost = ""
     if not isinstance(raw_cost, str) or (raw_cost and not _INTEGER.fullmatch(raw_cost)):
         raise ValueError("Enter actual allocated cost in whole pence, or leave unknown")
-    actual_cost = None if raw_cost == "" else int(raw_cost)
+    # Normalize pounds to the existing integer-pence payload and replay fingerprint.
+    pounds = payload.get("actual_cost_pounds", "")
+    if not isinstance(pounds, str):
+        raise ValueError("Enter allocated cost in pounds or leave unknown")
+    if pounds:
+        if raw_cost or not re.fullmatch(r"[0-9]{1,7}(?:\.[0-9]{1,2})?", pounds):
+            raise ValueError("Enter one allocated cost in pounds with up to two decimal places")
+        whole, _, fraction = pounds.partition(".")
+        actual_cost = int(whole) * 100 + int(fraction.ljust(2, "0"))
+    else:
+        actual_cost = None if raw_cost == "" else int(raw_cost)
     if actual_cost is not None and actual_cost > 100000000:
         raise ValueError("Material cost out of permitted range")
     return {
