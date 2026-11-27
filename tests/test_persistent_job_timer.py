@@ -11,7 +11,7 @@ from hq_auth_store import auth_db
 from hq_core_records import create_test_job, change_work_status, StaleWorkRecordError
 from hq_work_archive import set_work_archived
 from hq_work_timer import snapshot, transition, history, open_timer_jobs
-from hq_work_time import time_ledger_snapshot, append_work_time, void_work_time, correct_work_time_rate
+from hq_work_time import time_ledger_snapshot, append_work_time, void_work_time, correct_work_time_rate, correct_work_time_minutes
 
 class PersistentTimerTests(unittest.TestCase):
     def setUp(self):
@@ -441,3 +441,63 @@ class PersistentTimerTests(unittest.TestCase):
         self.assertEqual((final["entry_count"], final["minutes_total"], final["revision"]), (1, 30, 4))
         self.assertIsNone(final["actual_labour_cost_pence"])
         self.assertIsNone(cost_overview_snapshot(self.job)["labour_recorded_total_pence"])
+
+
+    def test_saved_minutes_correction_replays_and_preserves_original_timer(self):
+        from hq_work_cost_overview import cost_overview_snapshot
+        self.command("start", allowance="390")
+        sid = snapshot(self.job)["id"]
+        self.now.return_value += 3600
+        self.command("finish", 0, sid)
+        original = append_work_time(self.job, {
+            "operation_id": sid, "minutes": "60", "stage": "repair",
+            "hourly_cost_pounds": "18.25", "note": "Synthetic repair",
+        }, 0, "owner")
+        c = app.test_client()
+        url = "/hq/work/" + self.job + "/time/" + original + "/minutes"
+        payload = {"operation_id": uuid.uuid4().hex, "revision": "1",
+                   "minutes": "45", "reason": "Forgot to pause"}
+        self.assertEqual(c.post(url, data=payload).status_code, 302)
+        with c.session_transaction() as s, auth_db() as db:
+            s["hq_sid"] = issue_session(db, "owner")
+            s["google_sub"] = "owner"
+            s["csrf"] = "test"
+        self.assertEqual(c.post(url, data=payload).status_code, 403)
+        payload["csrf"] = "test"
+        for invalid in ("0", "60", "61", "1.5"):
+            self.assertIn("minutes_invalid=1", c.post(url, data=dict(payload, minutes=invalid)).location)
+        self.assertIn("minutes_invalid=1", c.post(url, data=dict(payload, reason="")).location)
+        self.assertIn("minutes_corrected=1", c.post(url, data=payload).location)
+        self.assertIn("minutes_corrected=1", c.post(url, data=payload).location)
+        self.assertIn("conflict=1", c.post(url, data=dict(payload, minutes="44")).location)
+        ledger = time_ledger_snapshot(self.job)
+        self.assertEqual((ledger["revision"], ledger["entry_count"], ledger["minutes_total"],
+                          ledger["actual_labour_cost_pence"]), (2, 1, 45, 1369))
+        entries = {row["entry_id"]: row for row in ledger["entries"]}
+        successor = entries[original]["replaced_by"]
+        self.assertEqual(entries[original]["minutes"], 60)
+        self.assertIsNotNone(entries[original]["voided_at"])
+        self.assertEqual(entries[successor]["minutes_corrected_from"], original)
+        self.assertEqual(entries[successor]["minute_correction_reason"], "Forgot to pause")
+        self.assertEqual(entries[successor]["hourly_cost_pence"], 1825)
+        self.assertEqual(entries[successor]["note"], "Synthetic repair")
+        self.assertEqual(history(self.job)["sessions"][0]["entry_id"], original)
+        self.assertEqual(history(self.job)["sessions"][0]["active_seconds"], 3600)
+        self.assertEqual(cost_overview_snapshot(self.job)["labour_recorded_total_pence"], 1369)
+        page = c.get("/hq/work/" + self.job + "/time").get_data(as_text=True)
+        self.assertIn("Reduce saved working minutes", page)
+        self.assertIn("Forgot to pause", page)
+        with self.assertRaises(StaleWorkRecordError):
+            correct_work_time_minutes(self.job, successor, dict(payload, operation_id=uuid.uuid4().hex, minutes="40"), 1, "owner")
+        corrected_rate = correct_work_time_rate(self.job, successor, {
+            "operation_id": uuid.uuid4().hex, "hourly_cost_pounds": "", "reason": "Rate unverified"
+        }, 2, "owner")
+        corrected_minutes = correct_work_time_minutes(self.job, corrected_rate, {
+            "operation_id": uuid.uuid4().hex, "minutes": "40", "reason": "Additional break"
+        }, 3, "owner")
+        ledger = time_ledger_snapshot(self.job)
+        self.assertEqual((ledger["revision"], ledger["entry_count"], ledger["minutes_total"]), (4, 1, 40))
+        self.assertIsNone(ledger["actual_labour_cost_pence"])
+        entries = {row["entry_id"]: row for row in ledger["entries"]}
+        self.assertEqual(entries[successor]["replaced_by"], corrected_rate)
+        self.assertEqual(entries[corrected_rate]["replaced_by"], corrected_minutes)
