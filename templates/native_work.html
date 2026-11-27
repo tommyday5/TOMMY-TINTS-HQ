@@ -33,9 +33,10 @@ button:disabled{opacity:.55;cursor:not-allowed}.secondary{background:#272b33;bor
 <h2>Find an existing HQ customer</h2>
 <form action="/hq/work/new" method="get" class="actions">
 <label for="customerSearch">Search by name, email or telephone</label>
+<input type="hidden" name="kind" value="{{ values.get('kind','quote') }}">
 <input id="customerSearch" name="q" maxlength="80" value="{{ search }}" placeholder="Search saved HQ customers">
 <button class="secondary" type="submit">Find customer</button>
-</form><p class="hint">Showing up to 100 matches. Existing customer and vehicle records are reused rather than duplicated. Search before creating a second contact.</p>
+</form><p class="hint">Showing up to 100 matches. Existing customer and vehicle records are reused rather than duplicated. Search before creating a second contact. For another job on an existing registered vehicle, select that vehicle rather than adding it again.</p>
 </div>
 {% else %}
 <div class="panel">

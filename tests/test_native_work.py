@@ -168,6 +168,39 @@ class NativeWorkTests(unittest.TestCase):
         with connect() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_vehicles").fetchone()[0], 2)
 
+    def test_timer_draft_entry_and_same_customer_registration_collision(self):
+        self.assertEqual(self.client.get("/hq/work/new?kind=job").status_code, 302)
+        self.login()
+        first = self.post()
+        self.assertEqual(first.status_code, 303)
+        row = list_work_records()[0]
+        vehicle_id = native_work_record(row["id"])["vehicle_id"]
+        page = self.client.get("/hq/work/new?kind=job&q=Synthetic")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b'<option value="job" selected>', page.data)
+        self.assertIn(b'name="kind" value="job"', page.data)
+        self.assertEqual(self.client.get("/hq/work/new?kind=invalid").status_code, 400)
+        chosen = {**self.payload, "operation_id": uuid.uuid4().hex,
+                  "customer_id": row["customer_id"], "vehicle_id": "",
+                  "customer_name": "", "email": "", "phone": "",
+                  "kind": "job", "registration": "ab22aaa"}
+        duplicate = self.post(chosen)
+        self.assertEqual(duplicate.status_code, 400)
+        self.assertIn(b"Select the existing vehicle", duplicate.data)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_vehicles").fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_work_records").fetchone()[0], 1)
+        reused = self.post({**chosen, "vehicle_id": vehicle_id, "registration": "",
+                            "make": "", "model": "", "model_year": ""})
+        self.assertEqual(reused.status_code, 303)
+        work_id = reused.headers["Location"].split("/")[3]
+        self.assertEqual(read_work_record(work_id)["status"], "draft")
+        self.assertEqual(native_work_record(work_id)["vehicle_id"], vehicle_id)
+        self.assertEqual(sheet_sync_status(work_id)["state"], "not_linked")
+        from hq_work_timer import snapshot
+        self.assertIsNone(snapshot(work_id))
+        self.assertIn(b"Create a new job draft", self.client.get("/hq/timer").data)
+
     def test_strict_form_validation_and_no_public_native_access(self):
         self.login()
         bad = [
