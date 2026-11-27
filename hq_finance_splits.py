@@ -108,11 +108,13 @@ class StaleSplit(ValueError):
     pass
 
 
-def read(ref):
+def read(ref, *, include_transaction_history=False):
     from hq_native_finance import schema, transaction_archived
     with closing(connect()) as db, db:
         schema(db)
         tables(db)
+        db.commit()
+        db.execute("BEGIN")
         parent = db.execute("SELECT * FROM finance_transactions WHERE id=?", (ref,)).fetchone()
         if not parent:
             raise LookupError("Transaction not found.")
@@ -120,7 +122,14 @@ def read(ref):
                         **json.loads(r["payload"])) for r in db.execute(
             """SELECT * FROM finance_split_events WHERE transaction_id=?
                ORDER BY revision DESC LIMIT 100""", (ref,))]
-        return dict(parent, archived=transaction_archived(db,ref)),history
+        result = (dict(parent, archived=transaction_archived(db,ref)),history)
+        if include_transaction_history:
+            revisions = [dict(revision=r["revision"], snapshot=json.loads(r["snapshot"]),
+                capture_kind=r["capture_kind"], captured_at=r["captured_at"]) for r in db.execute(
+                """SELECT * FROM finance_transaction_history WHERE transaction_id=?
+                ORDER BY revision DESC LIMIT 100""", (ref,))]
+            return (*result, revisions)
+        return result
 
 
 def parse_form(form):
@@ -277,14 +286,14 @@ def register(bp):
         except (sqlite3.Error,OSError):
             abort(503)
         try:
-            parent,history=read(ref)
+            parent,history,revisions=read(ref, include_transaction_history=True)
         except LookupError:
             abort(404)
         except (sqlite3.Error,OSError):
             abort(503)
         split=bool(history and history[0]["action"]=="save")
         return render_template("finance_transaction_classify.html",parent=parent,
-            split=split,categories=CATEGORIES,csrf=session.get("csrf",""),error=error),status,{"Cache-Control":"no-store"}
+            split=split,categories=CATEGORIES,revisions=revisions,csrf=session.get("csrf",""),error=error),status,{"Cache-Control":"no-store"}
 
 
     @bp.get("/hq/finance/classifications")
@@ -294,14 +303,29 @@ def register(bp):
             abort(503)
         month = request.args.get("month", datetime.now(timezone.utc).strftime("%Y-%m"))
         report, error, status = None, None, 200
+        mode = request.args.get("review", "all")
+        raw_page = request.args.get("page", "1")
+        page, pages, pending_count, visible = 1, 1, 0, []
         try:
+            if mode not in ("all", "pending") or not re.fullmatch(r"[1-9][0-9]{0,3}", raw_page):
+                raise ValueError("Invalid review filter or page.")
             report = classification_report(month)
+            # A fully categorised split is a proposal, not parent review or bank verification.
+            pending = [e for e in report["entries"] if
+                any(line["category"] == "unclassified" for line in e["lines"])
+                or (not e["split"] and not e["reviewed"])]
+            pending_count = len(pending)
+            selected = pending if mode == "pending" else report["entries"]
+            pages = max(1, (len(selected)+49)//50)
+            page = min(int(raw_page), pages)
+            visible = selected[(page-1)*50:page*50]
         except (ValueError, TypeError, KeyError, AttributeError) as exc:
             error, status = "Classification report unavailable: "+str(exc), 400
         except (sqlite3.Error, OSError):
             abort(503)
         return render_template("finance_classifications.html", month=month, report=report,
-                               error=error),status,{"Cache-Control":"no-store"}
+                               error=error, mode=mode, page=page, pages=pages, pending_count=pending_count,
+                               visible=visible),status,{"Cache-Control":"no-store"}
 
 
     @bp.route("/hq/finance/transactions/<ref>/split", methods=["GET","POST"])
