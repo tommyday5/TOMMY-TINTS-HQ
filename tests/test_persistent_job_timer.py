@@ -316,6 +316,44 @@ class PersistentTimerTests(unittest.TestCase):
         self.assertEqual([r["id"] for r in open_timer_jobs()["records"]],[other])
         self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"],2)
 
+    def test_recovery_pages_expose_older_paused_sessions_independent_of_search(self):
+        ids = [self.job] + [create_test_job() for _ in range(50)]
+        with connect() as db:
+            db.executemany("UPDATE hq_work_records SET status='approved' WHERE id=?",
+                           [(job,) for job in ids])
+        for job in ids:
+            transition(job, "start", -1, uuid.uuid4().hex)
+            self.now.return_value += 60
+            transition(job, "pause", 0, uuid.uuid4().hex, snapshot(job)["id"])
+        first = open_timer_jobs()
+        older = open_timer_jobs(50)
+        self.assertEqual(first["total"], 51)
+        self.assertEqual(len(first["records"]), 50)
+        self.assertTrue(first["has_more"])
+        self.assertEqual([r["id"] for r in older["records"]], [self.job])
+        self.assertFalse(older["has_more"])
+        c = app.test_client()
+        self.assertEqual(c.get("/hq/timer?recovery_offset=50").status_code, 302)
+        with c.session_transaction() as s, auth_db() as db:
+            s["hq_sid"] = issue_session(db, "owner")
+            s["csrf"] = "test"
+        first_page = c.get("/hq/timer?q=synthetic-no-match")
+        self.assertIn(b"Next unfinished timers", first_page.data)
+        self.assertIn(b"51 unfinished sessions", first_page.data)
+        page = c.get("/hq/timer?q=synthetic-no-match&recovery_offset=50")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("no-store", page.headers["Cache-Control"])
+        self.assertIn(b"Previous unfinished timers", page.data)
+        self.assertIn(b"No matching HQ jobs", page.data)
+        self.assertIn(("/hq/work/" + self.job + "/time").encode(), page.data)
+        self.assertNotIn(("/hq/work/" + ids[-1] + "/time").encode(), page.data)
+        self.assertIn(b"No unfinished timers on this page",
+                      c.get("/hq/timer?recovery_offset=100").data)
+        for invalid in ("-1", "100001", "not-a-number"):
+            self.assertEqual(c.get("/hq/timer?recovery_offset=" + invalid).status_code, 400)
+        self.assertEqual(snapshot(self.job)["state"], "paused")
+        self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"], 0)
+
     def test_review_correction_is_atomic_audited_and_replay_safe(self):
         self.command("start")
         sid = snapshot(self.job)["id"]
