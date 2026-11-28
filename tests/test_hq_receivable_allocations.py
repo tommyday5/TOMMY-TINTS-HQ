@@ -932,6 +932,7 @@ class AllocationTests(unittest.TestCase):
             self.assertTrue(undone.headers["Location"].endswith(focused))
             self.assertEqual(self.client.post(url, data=undo).status_code, 303)
             self.assertNotIn(b"Withdraw proposal", self.client.get(focused).data)
+            self.assertEqual(self.client.post(url, data=approval).status_code, 409)
             self.assertEqual(self.client.post(url, data=form).status_code, 200)
             external_post.assert_not_called()
         with connect() as db:
@@ -1042,6 +1043,29 @@ class AllocationTests(unittest.TestCase):
             self.assertEqual(self.client.post(url,data=dict(approval,reference="changed")).status_code,409)
             self.assertEqual(self.client.post(url,data=form).status_code,409)
             self.assertIn(b"Synthetic combined statement",self.client.get(url).data)
+            with connect() as db:
+                event = db.execute("SELECT id FROM hq_square_batch_reviews").fetchone()[0]
+                for n in range(51):
+                    db.execute("""INSERT INTO hq_square_batch_reviews
+                        (source_id,manifest,state,evidence,actor,created,operation)
+                        VALUES(?,?,'withdrawn',?,?,?,?)""",
+                        ("unrelated-"+str(n), "a"*64, '{"withdraws":0}', "synthetic",
+                         "2026-11-24", uuid.uuid4().hex))
+            source.reset_mock()
+            recent = self.client.get(url)
+            self.assertNotIn(b"Synthetic combined statement", recent.data)
+            self.assertIn(b"Older proposals", recent.data)
+            focused = self.client.get(url+"?view=active")
+            self.assertEqual(focused.status_code, 200)
+            self.assertEqual(focused.headers["Cache-Control"], "no-store")
+            self.assertIn(b"Synthetic combined statement", focused.data)
+            self.assertNotIn(b"unrelated-", focused.data)
+            self.assertIn(b"Withdraw combined proposal", focused.data)
+            self.assertIn(b"Synthetic combined statement", self.client.get(url+"?before="+str(event+2)).data)
+            self.assertEqual(self.client.get(url+"?before=-1").status_code, 400)
+            self.assertEqual(self.client.get(url+"?view=invalid").status_code, 400)
+            self.assertEqual(app.test_client().get(url+"?view=active").status_code, 302)
+            source.assert_not_called()
             single_entry = dict(entry,ref="tx-single-synthetic",pence=19500)
             source.return_value = single_entry
             one = dict(allocation=payments[0]["id"],csrf="test",action="preview",
@@ -1053,6 +1077,10 @@ class AllocationTests(unittest.TestCase):
             undo = dict(action="withdraw",event=str(event),csrf="test",confirm="yes",operation=uuid.uuid4().hex)
             self.assertEqual(self.client.post(url,data=undo).status_code,303)
             self.assertEqual(self.client.post(url,data=undo).status_code,303)
+            self.assertNotIn(b"Synthetic combined statement", self.client.get(url+"?view=active").data)
+            source.return_value = entry
+            self.assertEqual(self.client.post(url,data=approval).status_code,409)
+            source.return_value = single_entry
             preview = self.client.post(single,data=one)
             self.assertEqual(preview.status_code,200,preview.get_data(as_text=True))
             one_manifest = re.search(rb'name="manifest" value="([0-9a-f]{64})"',preview.data)[1].decode()
@@ -1061,7 +1089,7 @@ class AllocationTests(unittest.TestCase):
             self.assertEqual(self.client.post(url,data=form).status_code,409)
             external_post.assert_not_called()
         with connect() as db:
-            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_square_batch_reviews").fetchone()[0],2)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_square_batch_reviews WHERE source_id=?", (entry["ref"],)).fetchone()[0],2)
             self.assertEqual(db.execute("SELECT SUM(amount_pence) FROM hq_receivable_allocations").fetchone()[0],30000)
         after = self.client.get("/api/hq/finance/receipt-allocations").json
         self.assertFalse(after["receipts_verified"])
