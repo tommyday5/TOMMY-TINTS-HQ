@@ -2835,3 +2835,34 @@ No actual snapshot, off-volume transfer, live restore, or import authorised.
 Next: independently retained and verified owner recovery copy, exact bounded
 customer manifest, and independently evidenced financial reconciliation;
 authenticated owner/customer acceptance and current Kia identity remain open.
+
+### 2026-11-28 — independent recovery deployed; native monthly target progress
+
+PR #354 exact head 2bdf8267d05bf84aa06fd8f0d7587646cc0b2e8f passed
+Actions 46147434961 (127 + 731 Python tests and 22 JavaScript tests).
+Squash merge 3342d6f652c1a544c8f3f3118730813186251133 deployed on
+Railway e8f22066-9120-4f53-80ee-70ef9dda0c1f SUCCESS at 13:58:51 UTC.
+Original 1024 MB /data volume 540528d1-3953-4737-9d92-3c861575c5d4
+attached; runtime mount and worker startup logged, no staged changes.
+Read-only workbook metadata and Jobs/Monzo headings rechecked. Owner-only
+synthetic backup save/reload/replay/export/isolated decryption and customer
+request/quote conversion/appointment approval/isolation tests passed.
+Owner can open /hq/migration/recovery independently of Sheets or Jobs.
+No real backup, independent retention, offline verification, or import
+was executed by development. Actual recovery and exact bounded manifest
+approval remain owner gates; no historical authority change.
+
+New finance slice: native current-month target scenario uses the latest
+saved owner target and active reviewed manual customer inflows less explicit
+customer refunds, including saved classification splits once, excluding
+future entries, transfers and funding. Pending/ambiguous classifications
+withhold the recorded-only gap and rounded-up calendar daily requirement;
+missing evidence remains unavailable. Planned current-month and earlier
+overdue commitments and owner-reported paid bills stay separate. No blending
+with invoice totals, provider receipts, Sheets, profit or bank balance. The
+existing native editing flows are linked; no new financial writes on viewing.
+Synthetic tests cover the actual owner HTTP save/reload flow and arithmetic.
+CI, deployment and owner acceptance of this slice pending. Full formula
+parity, independent bank reconciliation and actual historical import remain
+open. No actual jobs, financial records, customer records, bookings, workbook
+cells or authentication settings changed by development.
