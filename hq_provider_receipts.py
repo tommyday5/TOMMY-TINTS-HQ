@@ -127,12 +127,13 @@ def withdraw(allocation, revision, reason, owner):
              _actor_fingerprint(owner), datetime.now(timezone.utc).isoformat()))
 
 
-def listing(db):
+def listing(db, allocation=None):
     # Bounded display, not a complete ledger total. No provider call on GET.
     rows = db.execute("""SELECT e.* FROM hq_square_receipt_recognition e
         WHERE NOT EXISTS (SELECT 1 FROM hq_square_receipt_recognition n
             WHERE n.allocation_id=e.allocation_id AND n.revision>e.revision)
-        ORDER BY e.created_at DESC,e.allocation_id LIMIT 100""").fetchall()
+        AND (? IS NULL OR e.allocation_id=?)
+        ORDER BY e.created_at DESC,e.allocation_id LIMIT 100""", (allocation, allocation)).fetchall()
     result = []
     for raw in rows:
         item = dict(raw)
@@ -227,11 +228,12 @@ def withdraw_fee(allocation, revision, reason, owner):
                     datetime.now(timezone.utc).isoformat()))
 
 
-def fee_listing(db):
+def fee_listing(db, allocation=None):
     rows = db.execute("""SELECT f.* FROM hq_square_fee_reviews f
         WHERE NOT EXISTS (SELECT 1 FROM hq_square_fee_reviews n
             WHERE n.allocation_id=f.allocation_id AND n.revision>f.revision)
-        ORDER BY f.created_at DESC,f.allocation_id LIMIT 100""").fetchall()
+        AND (? IS NULL OR f.allocation_id=?)
+        ORDER BY f.created_at DESC,f.allocation_id LIMIT 100""", (allocation, allocation)).fetchall()
     result = []
     for raw in rows:
         item = dict(raw)
@@ -369,6 +371,10 @@ def register(bp):
         if not storage_ready():
             abort(503)
         error, proposal, fee_proposal, status = None, None, None, 200
+        # Exact opaque allocation ID only; no customer names or payment references in URLs.
+        selected = request.args.get("allocation") or None
+        if selected and not HEX.fullmatch(selected):
+            abort(400)
         if request.method == "POST":
             request.max_content_length = 4096
             token = session.get("csrf")
@@ -378,6 +384,7 @@ def register(bp):
                 allocation = request.form.get("allocation","")
                 if not HEX.fullmatch(allocation):
                     raise ValueError("Choose a valid allocation ID.")
+                selected = allocation
                 action = request.form.get("action")
                 if action == "preview":
                     proposal = review(allocation)
@@ -406,7 +413,7 @@ def register(bp):
                 else:
                     raise ValueError("Choose a valid action.")
                 if action not in ("preview", "fee-preview"):
-                    return redirect(url_for(".provider_confirmed_receipts"), code=303)
+                    return redirect(url_for(".provider_confirmed_receipts", allocation=allocation), code=303)
             except EvidenceConflict as exc:
                 error, status = str(exc), 409
             except ValueError as exc:
@@ -417,19 +424,22 @@ def register(bp):
             with closing(connect()) as db, db:
                 fee_tables(db)
                 db.execute("BEGIN")
-                rows = listing(db)
-                fee_rows = fee_listing(db)
+                rows = listing(db, selected)
+                fee_rows = fee_listing(db, selected)
                 fee_history = [dict(r) for r in db.execute("""SELECT allocation_id,revision,state,reason,created_at,snapshot
-                    FROM hq_square_fee_reviews ORDER BY created_at DESC,allocation_id LIMIT 200""")]
+                    FROM hq_square_fee_reviews WHERE (? IS NULL OR allocation_id=?)
+                    ORDER BY created_at DESC,allocation_id LIMIT 200""", (selected, selected))]
                 for event in fee_history:
                     event["details"] = json.loads(event.pop("snapshot"))
                 candidates = [dict(r) for r in db.execute("""SELECT o.allocation_id,r.invoice_ref
                     FROM hq_square_invoice_observations o JOIN hq_receivables r ON r.id=o.invoice_id
-                    ORDER BY o.observed_at DESC LIMIT 100""")]
+                    WHERE (? IS NULL OR o.allocation_id=?)
+                    ORDER BY o.observed_at DESC,o.allocation_id LIMIT 100""", (selected, selected))]
                 history = [dict(r) for r in db.execute("""SELECT allocation_id,revision,state,reason,created_at
-                    FROM hq_square_receipt_recognition ORDER BY created_at DESC,allocation_id LIMIT 200""")]
+                    FROM hq_square_receipt_recognition WHERE (? IS NULL OR allocation_id=?)
+                    ORDER BY created_at DESC,allocation_id LIMIT 200""", (selected, selected))]
         except (sqlite3.Error, OSError, RuntimeError):
             abort(503)
         return render_template("finance_provider_receipts.html", rows=rows, candidates=candidates,
             history=history, proposal=proposal, fee_proposal=fee_proposal, fee_rows=fee_rows,
-            fee_history=fee_history, error=error, csrf=session.get("csrf","")), status, {"Cache-Control":"no-store"}
+            fee_history=fee_history, selected=selected, error=error, csrf=session.get("csrf","")), status, {"Cache-Control":"no-store"}

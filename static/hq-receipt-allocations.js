@@ -103,6 +103,9 @@ async function load(query=activeQuery){
    const link=node('a','Check / view exact Square payment evidence');
    link.href='/hq/finance/square-invoice-evidence?allocation='+encodeURIComponent(r.id);
    const line=node('p','');line.append(link);card.append(line);
+   const recognition=node('a','Review provider-confirmed receipt and fees');
+   recognition.href='/hq/finance/provider-confirmed-receipts?allocation='+encodeURIComponent(r.id);
+   const reviewLine=node('p','');reviewLine.append(recognition);card.append(reviewLine);
   }
   records.append(card);
  }

@@ -356,6 +356,18 @@ class AllocationTests(unittest.TestCase):
             self.assertEqual(page.headers["Cache-Control"], "no-store")
             self.assertIn(b"Provider-confirmed at recorded time", page.data)
             self.assertIn(b"200.00", page.data)
+            # Exact record navigation stays private and never calls the provider.
+            focused = url + "?allocation=" + payload["id"]
+            self.assertEqual(app.test_client().get(focused).status_code, 302)
+            self.assertEqual(again.get(url + "?allocation=invalid").status_code, 400)
+            selected = again.get(focused)
+            self.assertEqual(selected.status_code, 200)
+            self.assertEqual(selected.headers["Cache-Control"], "no-store")
+            self.assertIn(b"Provider-confirmed at recorded time", selected.data)
+            self.assertIn(payload["id"].encode(), selected.data)
+            absent = again.get(url + "?allocation=" + uuid.uuid4().hex)
+            self.assertEqual(absent.status_code, 200)
+            self.assertNotIn(b"square-recognition-test", absent.data)
             provider.assert_not_called()
             provider.return_value = dict(evidence, refunded_minor=5000,
                                          updated_at="2026-11-22T10:03:00+00:00")
@@ -365,7 +377,10 @@ class AllocationTests(unittest.TestCase):
             withdrawal = dict(form, action="withdraw", revision="1", reason="Synthetic refund",
                               confirm="yes")
             self.assertEqual(again.post(url, data=dict(withdrawal, revision="0")).status_code, 409)
-            self.assertEqual(again.post(url, data=withdrawal).status_code, 303)
+            withdrawn = again.post(url, data=withdrawal)
+            self.assertEqual(withdrawn.status_code, 303)
+            self.assertTrue(withdrawn.headers["Location"].endswith("?allocation=" + payload["id"]))
+            self.assertIn(b"Withdrawn", again.get(focused).data)
             self.assertIn(b"Withdrawn", again.get(url).data)
             self.assertEqual(again.post(url, data=withdrawal).status_code, 409)
             external_post.assert_not_called()
