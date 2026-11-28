@@ -91,6 +91,53 @@ class PersistentTimerTests(unittest.TestCase):
             s["csrf"]="test2"
         self.assertIn(b'data-seconds="60"',other.get("/hq/work/"+self.job+"/time").data)
 
+    def test_older_labour_history_remains_editable_without_changing_totals(self):
+        for revision in range(101):
+            append_work_time(self.job, {"operation_id": uuid.uuid4().hex,
+                "minutes": "5", "stage": "repair", "note": "Synthetic entry " + str(revision),
+                "hourly_cost_pounds": "12.00"}, revision, "owner")
+        first = time_ledger_snapshot(self.job)
+        older = time_ledger_snapshot(self.job, 100)
+        self.assertEqual((first["history_count"], len(first["entries"]), first["minutes_total"]), (101, 100, 505))
+        self.assertTrue(first["history_has_next"])
+        self.assertFalse(older["history_has_next"])
+        self.assertEqual(older["minutes_total"], 505)
+        self.assertEqual(older["actual_labour_cost_pence"], 10100)
+        self.assertEqual(len(older["entries"]), 1)
+        entry = older["entries"][0]
+        self.assertEqual(entry["note"], "Synthetic entry 0")
+        c = app.test_client()
+        url = "/hq/work/" + self.job + "/time"
+        self.assertEqual(c.get(url + "?history_offset=100").status_code, 302)
+        with c.session_transaction() as s, auth_db() as db:
+            s["hq_sid"] = issue_session(db, "owner")
+            s["csrf"] = "test"
+            s["google_sub"] = "owner"
+        recent_page = c.get(url)
+        self.assertIn(b"Older time entries", recent_page.data)
+        older_page = c.get(url + "?history_offset=100")
+        self.assertEqual(older_page.status_code, 200)
+        self.assertEqual(older_page.headers["Cache-Control"], "no-store")
+        self.assertIn(b"Newer time entries", older_page.data)
+        self.assertIn(b"Synthetic entry 0", older_page.data)
+        self.assertIn(b"505 minutes", older_page.data)
+        self.assertNotIn(b"Synthetic entry 100", older_page.data)
+        self.assertIn((url + "/" + entry["entry_id"] + "/minutes").encode(), older_page.data)
+        self.assertEqual(c.get(url + "?history_offset=101").status_code, 400)
+        self.assertEqual(c.get(url + "?history_offset=-100").status_code, 400)
+        self.assertEqual(c.get(url + "?history_offset=1000001").status_code, 400)
+        self.assertIn(b"Synthetic entry 0", c.get(url + "?history_offset=200").data)
+        self.assertEqual(time_ledger_snapshot(self.job)["revision"], 101)
+        corrected = c.post(url + "/" + entry["entry_id"] + "/minutes",
+            data={"csrf": "test", "revision": "101", "operation_id": entry["minute_operation"],
+                  "minutes": "3", "reason": "Synthetic missed break"})
+        self.assertEqual(corrected.status_code, 303)
+        self.assertIn("minutes_corrected=1", corrected.location)
+        after = time_ledger_snapshot(self.job, 100)
+        self.assertEqual((after["entry_count"], after["minutes_total"], after["history_count"]), (101, 503, 102))
+        self.assertEqual(after["actual_labour_cost_pence"], 10060)
+        self.assertTrue(next(row for row in after["entries"] if row["entry_id"] == entry["entry_id"])["voided_at"])
+
     def test_short_session_correction_and_stale_session(self):
         self.command("start")
         sid=snapshot(self.job)["id"]
