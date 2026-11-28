@@ -2674,3 +2674,27 @@ No live financial/job/customer data or workbook mutation, no domain
 authority changes. Independent recovery snapshot, bounded import approval,
 authenticated production acceptance and current Kia identity remain open.
 Next: evidence-backed reconciliation and reversible historical import.
+
+
+### 2026-11-28 — Monzo reversal guards deployed; cross-device timer review recovery
+
+PR #348 exact head 1594ebb5211ec893612c2e46d75736d6e7467bde passed
+Actions 46115002566 (127 + 724 Python tests and 22 JavaScript tests).
+Squash merge 36cbee316251944a63e650ee16ca4de8f13b7e10 deployed to
+Railway c409b584-a71c-4aef-b467-5bd2b66486b2 SUCCESS, updated
+07:03:33 UTC. Existing 1024 MB /data volume retained, no staged changes.
+Read-only inventory reconfirmed 48 workbook tabs, Jobs title and Monzo
+Live Feed headings. No bank verification or historical authority change.
+
+New slice: when a stale manual time form is submitted after another
+owner device finishes a persistent timer, return an explicit conflict
+and a fresh review form bound to the actual finished session. Do not
+reuse the old activity, rate, minutes or note. Nothing is posted until
+the owner reviews and submits again. Error page is no-store. Added
+synthetic HTTP regression for conflict, exact measured minutes, explicit
+save and replay without duplicate labour. CI and production deployment
+pending for this slice. Owner browser acceptance and current Kia identity
+remain unverified. No actual job, financial, customer, booking, workbook
+or authentication mutation. Independent backup and exact bounded import
+approval remain outstanding; next priority is reversible historical
+execution and independently evidenced bank reconciliation.
