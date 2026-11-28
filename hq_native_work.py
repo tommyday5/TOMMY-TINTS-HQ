@@ -18,7 +18,7 @@ from hq_auth import required
 from hq_core_records import (_audit_work, _schema, StaleWorkRecordError,
                              set_draft_financials, change_work_status)
 from hq_work_progress import WORK_STAGES, work_progress_snapshot, record_work_progress
-from hq_work_time import time_ledger_snapshot, append_work_time, void_work_time, correct_work_time_rate, correct_work_time_minutes
+from hq_work_time import time_ledger_snapshot, append_work_time, void_work_time, correct_work_time_rate, correct_work_time_minutes, TimeEntryAlreadyUsedError
 from hq_work_timer import snapshot as timer_snapshot, transition as timer_transition, history as timer_history, open_timer_jobs, live_status as timer_live_status
 from hq_work_materials import material_ledger_snapshot, append_work_material, void_work_material, UNITS
 from hq_work_expenses import expense_ledger_snapshot, append_work_expense, void_work_expense, EXPENSE_TYPES
@@ -746,6 +746,11 @@ def edit_work_time(work_id):
                 values = {"minutes": str(timer["active_seconds"] // 60)}
                 error = "A different timer is awaiting review. Your previous submission was not saved. Review the measured time and select the activity again."
                 status = 409
+            elif isinstance(exc, TimeEntryAlreadyUsedError):
+                # A previous operation may have been saved, reversed or discarded.
+                # Never offer its submitted values again as a fresh manual entry.
+                return redirect(url_for(".edit_work_time", work_id=work_id,
+                                        time_already_used="1"), 303)
             return render_template("hq_work_time.html", work=latest, stages=WORK_STAGES,
                 csrf=session["csrf"], operation_id=operation,
                 values=values, error=error, timer=timer,
