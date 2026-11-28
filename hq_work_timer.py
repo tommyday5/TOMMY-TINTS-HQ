@@ -140,7 +140,7 @@ def transition(work_id, action, revision, operation_id, session_id='', allowance
         _validate_id(session_id)
     elif session_id:
         raise ValueError("Start must not identify an existing timer")
-    if type(revision) is not int or revision < -1 or action not in ("start","pause","resume","finish","discard","allowance"):
+    if type(revision) is not int or revision < -1 or action not in ("start","pause","resume","finish","discard","allowance","clear_allowance"):
         raise ValueError("Invalid timer operation")
     with connect() as db:
         _schema(db)
@@ -151,7 +151,7 @@ def transition(work_id, action, revision, operation_id, session_id='', allowance
             if (action == "allowance" or allowance) and (not re.fullmatch(r"[0-9]{1,5}", allowance) or not 1 <= int(allowance) <= 30000):
                 raise ValueError("Allowance must be 1–30000 whole minutes")
             detail = allowance
-        elif action == "discard":
+        elif action in ("discard", "clear_allowance"):
             detail = reason.strip()
             if not 1 <= len(detail) <= 160:
                 raise ValueError("Enter a correction reason (1–160 characters)")
@@ -186,12 +186,15 @@ def transition(work_id, action, revision, operation_id, session_id='', allowance
             if not row or row["id"] != session_id or row["revision"] != revision:
                 raise StaleWorkRecordError("Timer changed; reload")
             sid = row["id"]
-            if action == "allowance":
+            if action in ("allowance", "clear_allowance"):
                 if row["state"] not in ("running", "paused"):
                     raise ValueError("Edit the allowance before finishing the timer")
                 # Do not reset changed_at or accumulated active/break time.
+                if action == "clear_allowance" and row["allowance_minutes"] is None:
+                    raise ValueError("Allowance is already unknown")
+                new_allowance = None if action == "clear_allowance" else int(allowance)
                 db.execute("UPDATE hq_timer_sessions SET allowance_minutes=?,revision=revision+1 WHERE id=?",
-                           (int(allowance), sid))
+                           (new_allowance, sid))
                 db.execute("INSERT INTO hq_timer_events VALUES (?,?,?,?,?,?,?)",
                            (operation_id,sid,work_id,action,revision,t,detail))
                 return

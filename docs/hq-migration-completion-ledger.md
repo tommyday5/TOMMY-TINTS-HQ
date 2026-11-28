@@ -2565,3 +2565,29 @@ CI and deployment pending for this slice. No new cash/receipt verification,
 real job, working time, financial record, booking or Sheets mutation.
 Authenticated production acceptance, current Kia identity, independent
 recovery snapshot and exact bounded import approval remain unverified.
+
+### 2026-11-28 — active settlement queue deployed; editable timer allowance removal
+
+PR #344 initially failed Actions 46095795167: the synthetic withdrawal test
+selected an arbitrary history row after inserting unrelated events. Scoped
+the fixture lookup by exact source and proposed state; no production
+validation weakened. Corrected exact head cbf35bc13cf0499ce51122c18f4d865fd1f844a0
+passed Actions 46100667361 (127 + 721 Python tests, 22 JavaScript tests).
+Squash merge 8f1e88b65ad02b759f4170ac7987280c728cee16 deployed to Railway
+78479524-e989-40c9-b5fd-30599fb911ae SUCCESS at 03:00:33 UTC.
+Read-only workbook inventory still 48 tabs; Jobs and Monzo schema checked.
+Synthetic customer request, quote/appointment handoff, account isolation,
+multi-day timer and cross-device tests passed. Direct /book and /hq/timer
+HTTP probes failed DNS; authenticated owner acceptance is not established.
+
+Next slice: explicitly clear a mistaken active timer estimate to unknown,
+with a required correction reason, optimistic session revision and replay
+guard. Running and paused sessions retain their original clock, accumulated
+time and breaks, original workshop plan, actual cost and customer price.
+Existing alerts become historical; no new allowance alerts while unknown.
+Owner-only existing CSRF-protected route; no new external requests.
+Synthetic HTTP regression covers running/paused clears, invalid reason,
+CSRF, reload, replay, alert history and re-entering an estimate.
+CI/deployment pending. No real job/financial record, booking, or workbook
+mutation, snapshot or historical migration; no domain authority change.
+Next: evidence-based bank reconciliation and owner-approved bounded import.

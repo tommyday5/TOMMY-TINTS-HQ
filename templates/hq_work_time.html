@@ -63,6 +63,18 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 <p class="hint">Changing this estimate does not reset working time, breaks, actual cost or customer price.</p>
 <button class="secondary" name="action" value="allowance">Save estimated allowance</button>
 </form>
+{% if timer.allowance_minutes is not none %}
+<form method="post" action="/hq/work/{{ work.id }}/timer">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="timer_revision" value="{{ timer.revision }}">
+<input type="hidden" name="timer_session" value="{{ timer.id }}">
+<input type="hidden" name="operation_id" value="{{ allowance_operation }}">
+<label for="clearAllowanceReason">Reason for removing the estimate</label>
+<input id="clearAllowanceReason" name="reason" maxlength="160" required>
+<p class="hint">Mark the allowance unknown without stopping this timer or changing the original workshop plan, saved labour, costs or customer price. Existing alerts remain in history.</p>
+<button class="secondary" name="action" value="clear_allowance">Clear estimated allowance</button>
+</form>
+{% endif %}
 {% endif %}
 <p id="serverAllowanceNotice" aria-live="off"></p>
 <p id="serverSyncNotice" role="status">Live clock verification pending. No background push is sent.</p>
