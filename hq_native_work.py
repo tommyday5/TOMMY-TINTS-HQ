@@ -1069,7 +1069,10 @@ def timer_jobs():
     from hq_core_records import search_work_records
     query=request.args.get('q','')
     offset=request.args.get('offset','0')
-    if not re.fullmatch(r"[0-9]{1,6}", offset):
+    recovery_offset=request.args.get('recovery_offset','0')
+    if (not re.fullmatch(r"[0-9]{1,6}", offset)
+            or not re.fullmatch(r"[0-9]{1,6}", recovery_offset)
+            or int(recovery_offset) > 100000):
         abort(400)
     try:
         page=search_work_records(query=query,kind='job',limit=50,offset=int(offset),match_all_terms=True)
@@ -1079,7 +1082,7 @@ def timer_jobs():
         current_app.logger.exception('Timer job lookup unavailable')
         abort(503)
     try:
-        unfinished = open_timer_jobs()
+        unfinished = open_timer_jobs(offset=int(recovery_offset))
     except (OSError, sqlite3.Error, RuntimeError):
         current_app.logger.exception('Timer recovery unavailable')
         abort(503)
