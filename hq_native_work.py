@@ -749,8 +749,10 @@ def edit_work_time(work_id):
             elif isinstance(exc, TimeEntryAlreadyUsedError):
                 # A previous operation may have been saved, reversed or discarded.
                 # Never offer its submitted values again as a fresh manual entry.
-                return redirect(url_for(".edit_work_time", work_id=work_id,
-                                        time_already_used="1"), 303)
+                operation = timer["id"] if timer and timer["state"] == "review" else uuid.uuid4().hex
+                values = {"minutes": str(timer["active_seconds"] // 60)} if timer and timer["state"] == "review" else {}
+                error = "Previous submission not saved again. The time entry or timer was already used, corrected or closed. Check the ledger and timer history before recording any new labour."
+                status = 409
             return render_template("hq_work_time.html", work=latest, stages=WORK_STAGES,
                 csrf=session["csrf"], operation_id=operation,
                 values=values, error=error, timer=timer,
