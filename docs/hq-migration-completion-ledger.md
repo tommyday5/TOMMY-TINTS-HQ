@@ -2758,3 +2758,32 @@ job, finance, booking, workbook or infrastructure records changed.
 Historical authority, independent recovery, current Kia identity and
 authenticated production acceptance remain unverified. Next priority:
 bounded reversible historical import and verified bank settlement.
+
+
+### 2026-11-28 — older labour editing deployed; atomic material cost correction
+
+PR #351 exact head bed037b597a6b3b05c61b84be5023e73b0cf8dc5 passed
+Actions 46133240834 (127 + 728 Python tests, 22 JavaScript tests).
+Squash merged as e78adf6fbc03eb95e648a5200845fb752bd4828e.
+Railway deployment 7adb8dd9-c65d-4dc4-b4da-023c51cd40b9 SUCCESS at
+11:04:51 UTC; original 1024 MB /data volume mounted, no pending changes.
+Workbook metadata confirms 48 tabs and Monzo Live Feed header read-only.
+Customer-to-HQ quote conversion, appointment approval and isolation tests
+passed, as did older labour correction through owner HTTP routes.
+
+New slice: owner can correct actual allocated material cost without
+re-entering measured quantities. A single SQLite transaction reverses
+and replaces an active entry, links original and replacement, records a
+required reason, advances the shared job revision and preserves the
+original material, quantity, unit, source note and customer price.
+Blank cost explicitly means unknown; verified zero remains zero.
+Replay of an active correction is idempotent; superseded material
+submissions cannot restore old costs. Archived jobs are locked for edits.
+Added synthetic owner HTTP regression including customer-price invariance,
+CSRF, unknown/known transitions, stale forms and audit evidence.
+CI and deployment pending for this slice. No actual customer, payment,
+job, working hours, booking, stock or workbook modification.
+No newly reconciled domain or authority; actual recovery snapshot and
+bounded import need exact owner approval. Authenticated owner/customer
+production acceptance and current Kia canonical ID remain unverified.
+Next: reversible import execution and independent receipt reconciliation.
