@@ -1,0 +1,30 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Statement evidence | Tommy Tints HQ</title><link rel="stylesheet" href="/static/finance-command.css"></head><body><main>
+<header><a href="/hq/finance/command">Finance Command Centre</a></header>
+<h1>Private bank statement evidence</h1>
+<p>Review and retain an explicitly mapped Monzo statement independently of the manual and provider ledgers. An arithmetic match is not bank authentication, proof of customer income, or reconciliation. No payment, allocation, bank balance or Sheets record changes.</p>
+{% if notice %}<p role="status">{{ notice }}</p>{% endif %}{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}">
+<label>Stable account reference (use the same non-secret identifier each time)<input name="account" required maxlength="128" value="{{ form.get('account','') }}"></label>
+<label>First UK statement date<input type="date" required name="start" value="{{ form.get('start','') }}"></label>
+<label>Last UK statement date (inclusive)<input type="date" required name="end" value="{{ form.get('end','') }}"></label>
+<label>Opening balance (signed integer pence)<input name="opening" required inputmode="numeric" value="{{ form.get('opening','') }}"></label>
+<label>Closing balance (signed integer pence)<input name="closing" required inputmode="numeric" value="{{ form.get('closing','') }}"></label>
+<label>Exact mapping from canonical field to CSV header (JSON)<textarea name="mapping" required rows="5">{{ form.get('mapping','') }}</textarea></label>
+<p>Required keys: transaction_id, amount_pence, currency, booked_at. Use only explicitly GBP rows with integer pence and timestamps with timezone. Do not guess the mapping or enter passwords. Maximum 500 rows.</p>
+<label>Statement CSV text<textarea name="csv_text" rows="7" required>{{ form.get('csv_text','') }}</textarea></label>
+<button name="action" value="preview">Review exact statement</button>
+{% if preview %}<article><h2>Exact statement review</h2>
+<p>Account {{ preview.manifest.account }} · {{ preview.manifest.start }} to {{ preview.manifest.end }} · {{ preview.manifest.count }} distinct rows.</p>
+<p>Opening {{ preview.manifest.opening }}p + movement {{ preview.manifest.rollforward.mapped_net_movement_pence }}p = expected closing {{ preview.manifest.rollforward.expected_closing_pence }}p; supplied closing {{ preview.manifest.closing }}p. Difference {{ preview.manifest.rollforward.difference_pence }}p.</p>
+<p>Manifest: <code>{{ preview.stamp }}</code></p>
+<details><summary>Review exact transaction references and signed pence</summary><ul>{% for event in preview.events %}<li>{{ event.transaction_id }} · {{ event.occurred_at }} · {{ event.amount_pence }}p</li>{% endfor %}</ul></details>
+{% if preview.manifest.rollforward.arithmetically_consistent %}
+<input type="hidden" name="stamp" value="{{ preview.stamp }}">
+<label><input type="checkbox" name="confirm" value="yes"> I approve retaining this exact owner-supplied statement as unverified evidence. This does not import canonical transactions or verify payment.</label>
+<button name="action" value="save">Save exact statement evidence</button>
+{% else %}<p role="alert">Balance mismatch. Save disabled.</p>{% endif %}</article>{% endif %}
+</form>
+<h2>Retained statement history</h2><p>Last 100 saved statements; withdrawn evidence is retained and excluded from active overlap checks.</p>
+{% for row in rows %}<article><h3>{{ row.account_ref }} · {{ row.start_day }} to {{ row.end_day }}</h3><p>Opening {{ row.opening }}p · closing {{ row.closing }}p · owner-supplied; not bank verified.</p><p>Manifest <code>{{ row.id }}</code> · {{ row.created_at }}</p>
+{% if row.withdrawal_reason %}<p>Withdrawn: {{ row.withdrawal_reason }}</p>{% else %}<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="batch" value="{{ row.id }}"><label>Withdrawal reason<input name="reason" required maxlength="500"></label><label><input type="checkbox" name="confirm" value="yes" required> Confirm withdrawal (history retained)</label><button name="action" value="withdraw">Withdraw evidence</button></form>{% endif %}</article>{% else %}<p>No saved statements.</p>{% endfor %}
+</main></body></html>
