@@ -2698,3 +2698,37 @@ remain unverified. No actual job, financial, customer, booking, workbook
 or authentication mutation. Independent backup and exact bounded import
 approval remain outstanding; next priority is reversible historical
 execution and independently evidenced bank reconciliation.
+
+
+### 2026-11-28 — Cross-device recovery deployed; obsolete labour form handling
+
+PR #349 head c53c946595694ac33380f0a32abbf5a5eb4afd84 passed Actions
+46119496859 (127 + 725 Python tests and 22 JavaScript tests). Squash merge
+02deaf9bdb90f42f982dba547898721a79908571 deployed to Railway
+ d44c35b8-ad49-40b5-8fce-dd50ca6c08ad SUCCESS at 08:01:31 UTC; original
+1024 MB /data volume attached and worker boot logged. Read-only metadata
+returned all 48 workbook tabs and Jobs header. Synthetic customer request,
+quote approval, appointment approval and isolation tests passed. Direct
+production /book and /hq/timer checks failed DNS; owner acceptance and Kia
+identity remain unverified.
+
+New slice: replay of a corrected or reversed labour entry no longer reports
+a new successful save. Changed details on an already-used operation or an
+obsolete discarded timer require a fresh ledger review with a clear warning;
+no stale form is automatically repurposed as a fresh manual time entry.
+Exact replay of an active saved posting remains idempotent. Synthetic HTTP
+tests cover correction, reversal, discard, and unchanged measured evidence.
+CI and deployment pending. No historical authority changes, live record
+writes or workbook edits. Independent recovery and first bounded import
+approval remain open; next focus reversible historical execution and finance
+settlement evidence.
+
+PR #350 initial Actions 46123940290 failed two HTTP regressions: changed
+operation replay returned redirect instead of the existing 409 contract,
+and the discarded-session fixture omitted owner identity. Corrected the
+route to return a no-store 409 with a fresh operation and blank manual
+fields (or exact current review minutes), preserving the existing stale
+submission contract; corrected fixture to supply owner identity. No weakened
+validation. Exact corrected head CI and deployment pending. Railway
+inventory at this iteration confirms original 1024 MB /data mount and no
+staged infrastructure changes; workbook metadata still 48 tabs, read only.

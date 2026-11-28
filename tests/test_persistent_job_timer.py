@@ -434,6 +434,62 @@ class PersistentTimerTests(unittest.TestCase):
         self.assertEqual(time_ledger_snapshot(self.job)["entry_count"], 1)
         self.assertIsNone(snapshot(self.job))
 
+    def test_obsolete_timer_submission_cannot_restore_corrected_or_reversed_time(self):
+        c = app.test_client()
+        with c.session_transaction() as s, auth_db() as db:
+            s["hq_sid"] = issue_session(db, "owner")
+            s["csrf"] = "test"
+            s["google_sub"] = "owner"
+        url = "/hq/work/" + self.job + "/time"
+        self.command("start")
+        sid = snapshot(self.job)["id"]
+        self.now.return_value += 600
+        self.command("finish", 0, sid)
+        data = {"operation_id": sid, "minutes": "10", "stage": "repair",
+                "hourly_cost_pounds": "25.00", "note": "Synthetic old timer",
+                "csrf": "test", "revision": "0"}
+        self.assertIn("saved=1", c.post(url, data=data).location)
+        self.assertIn("saved=1", c.post(url, data=data).location)
+        original = time_ledger_snapshot(self.job)["entries"][0]["entry_id"]
+        successor = correct_work_time_minutes(self.job, original, {
+            "operation_id": uuid.uuid4().hex, "minutes": "8",
+            "reason": "Synthetic missed break"}, 1, "owner")
+        for replay in (data, dict(data, minutes="9")):
+            response = c.post(url, data=replay)
+            self.assertEqual(response.status_code, 409)
+            page = response
+            self.assertEqual(page.headers["Cache-Control"], "no-store")
+            self.assertIn(b"Previous submission not saved again", page.data)
+            self.assertNotIn(b"Time entry saved to HQ", page.data)
+            self.assertNotIn(('name="operation_id" value="' + sid + '"').encode(), page.data)
+            self.assertIn(b'name="minutes" type="number" min="1" max="1440" step="1" required  value=""', page.data)
+        self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"], 8)
+        void_work_time(self.job, successor, 2, "owner")
+        self.assertEqual(c.post(url, data=data).status_code, 409)
+        self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"], 0)
+        self.assertEqual(history(self.job)["sessions"][0]["active_seconds"], 600)
+
+    def test_discarded_timer_review_replay_requires_fresh_ledger_review(self):
+        c = app.test_client()
+        with c.session_transaction() as s, auth_db() as db:
+            s["hq_sid"] = issue_session(db, "owner")
+            s["csrf"] = "test"
+            s["google_sub"] = "owner"
+        self.command("start")
+        sid = snapshot(self.job)["id"]
+        self.now.return_value += 600
+        self.command("finish", 0, sid)
+        self.command("discard", 1, sid, reason="Synthetic mistaken session")
+        url = "/hq/work/" + self.job + "/time"
+        response = c.post(url, data={"operation_id": sid, "minutes": "10",
+            "stage": "repair", "csrf": "test", "revision": "0"})
+        self.assertEqual(response.status_code, 409, response.get_data(as_text=True))
+        self.assertIn(b"Previous submission not saved again", response.data)
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        self.assertNotIn(('name="operation_id" value="' + sid + '"').encode(), response.data)
+        self.assertEqual(time_ledger_snapshot(self.job)["entry_count"], 0)
+        self.assertEqual(history(self.job)["sessions"][0]["state"], "discarded")
+
     def test_timer_review_pounds_rate_posts_exact_pence_and_legacy_replay(self):
         self.command("start")
         sid = snapshot(self.job)["id"]

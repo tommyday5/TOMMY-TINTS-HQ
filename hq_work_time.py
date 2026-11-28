@@ -20,6 +20,10 @@ _WORK_ID = re.compile(r"[0-9a-f]{32}\Z")
 _ALLOWED = ("approved", "in_progress")
 
 
+class TimeEntryAlreadyUsedError(StaleWorkRecordError):
+    """A stale submission cannot be repurposed as new labour."""
+
+
 def _now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -205,14 +209,16 @@ def append_work_time(work_id, payload, expected_revision, owner_identity):
         _tables(db)
         db.execute("BEGIN IMMEDIATE")
         work = _read_work(db, work_id)
-        prior = db.execute("""SELECT entry_id,work_id,payload_fingerprint
+        prior = db.execute("""SELECT entry_id,work_id,payload_fingerprint,voided_at
             FROM hq_work_time_entries WHERE operation_id=?""",
             (fields["operation_id"],)).fetchone()
         if prior:
             if prior["work_id"] != work_id or not hmac.compare_digest(
                 prior["payload_fingerprint"], fingerprint
             ):
-                raise StaleWorkRecordError("This time entry was submitted with different details.")
+                raise TimeEntryAlreadyUsedError("This time entry was submitted with different details.")
+            if prior["voided_at"] is not None:
+                raise TimeEntryAlreadyUsedError("This time entry has been reversed or corrected.")
             return prior["entry_id"]
         from hq_work_timer import tables as timer_tables
         timer_tables(db)
@@ -226,7 +232,7 @@ def append_work_time(work_id, payload, expected_revision, owner_identity):
         if timer:
             original_minutes = timer["active_seconds"] // 60
             if timer["work_id"] != work_id or timer["state"] != "review":
-                raise ValueError("Review the exact finished timer minutes before saving")
+                raise TimeEntryAlreadyUsedError("This timer is not awaiting review.")
             if fields["minutes"] > original_minutes or (fields["minutes"] != original_minutes and not correction):
                 raise ValueError("Review the exact finished timer minutes before saving, or reduce them with a correction reason")
             if correction and fields["minutes"] == original_minutes:
