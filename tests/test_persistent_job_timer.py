@@ -398,6 +398,42 @@ class PersistentTimerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             append_work_time(self.job,dict(payload,operation_id=uuid.uuid4().hex),1,"owner")
 
+    def test_stale_manual_form_recovers_new_finished_timer_without_carrying_old_values(self):
+        c = app.test_client()
+        with c.session_transaction() as s, auth_db() as db:
+            s["hq_sid"] = issue_session(db, "owner")
+            s["csrf"] = "test"
+            s["google_sub"] = "owner"
+        url = "/hq/work/" + self.job + "/time"
+        self.assertEqual(c.get(url).status_code, 200)
+        stale = {"operation_id": uuid.uuid4().hex, "minutes": "17",
+                 "stage": "paint", "hourly_cost_pounds": "25.00",
+                 "note": "Old unsaved manual entry", "revision": "0", "csrf": "test"}
+        # Simulate another authenticated device finishing a persistent session.
+        self.command("start", allowance="390")
+        sid = snapshot(self.job)["id"]
+        self.now.return_value += 600
+        self.command("finish", 0, sid)
+        response = c.post(url, data=stale)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        page = response.get_data(as_text=True)
+        self.assertIn("A different timer is awaiting review", page)
+        self.assertIn('name="operation_id" value="' + sid + '"', page)
+        self.assertIn('value="10"', page)
+        self.assertNotIn("Old unsaved manual entry", page)
+        self.assertNotIn('value="25.00"', page)
+        self.assertNotIn('value="paint" selected', page)
+        self.assertEqual(time_ledger_snapshot(self.job)["entry_count"], 0)
+        self.assertEqual(snapshot(self.job)["state"], "review")
+        correct = dict(stale, operation_id=sid, minutes="10", stage="repair",
+                       hourly_cost_pounds="", note="")
+        self.assertEqual(c.post(url, data=correct).status_code, 303)
+        self.assertEqual(c.post(url, data=correct).status_code, 303)
+        self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"], 10)
+        self.assertEqual(time_ledger_snapshot(self.job)["entry_count"], 1)
+        self.assertIsNone(snapshot(self.job))
+
     def test_timer_review_pounds_rate_posts_exact_pence_and_legacy_replay(self):
         self.command("start")
         sid = snapshot(self.job)["id"]
