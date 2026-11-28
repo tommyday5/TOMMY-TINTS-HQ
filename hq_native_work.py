@@ -907,8 +907,16 @@ def correct_time_entry_minutes(work_id, entry_id):
 @required
 def edit_work_materials(work_id):
     """Actual material-use ledger; never an automatic stock or finance write."""
+    offset = 0
+    if request.method == "GET":
+        raw_offset = request.args.get("history_offset", "0")
+        if not re.fullmatch(r"[0-9]{1,7}", raw_offset):
+            abort(400)
+        offset = int(raw_offset)
+        if offset > 1000000 or offset % 100:
+            abort(400)
     try:
-        current = material_ledger_snapshot(work_id)
+        current = material_ledger_snapshot(work_id, offset)
     except (ValueError, LookupError):
         abort(404)
     except (OSError, sqlite3.Error):
