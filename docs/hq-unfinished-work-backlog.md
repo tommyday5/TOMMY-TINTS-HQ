@@ -1,0 +1,32 @@
+# HQ completion backlog — 28 November 2026
+
+Owner directive: close incomplete and obsolete workflows before refinements. This is the actionable index for the append-only [migration ledger](hq-migration-completion-ledger.md), not migration or cutover authority. Update a row when its acceptance evidence changes. Do not equate deployed code with live owner acceptance, reconciled history or authority.
+
+## Verified baseline
+
+PR #353 passed Actions [46143168700](https://github.com/tommyday5/TOMMY-TINTS-HQ/actions/runs/46143168700): 127 root + 730 integration Python tests and 22 JS tests. The exact PR head 4adc2c8d was squash-merged as 408695d789d6fda3edfc40949a2b47bcb10a5d2f. Railway deployment 78151aa2-63d1-456e-99a3-d62db857ac4a reported SUCCESS at 12:58:31 UTC. Original 1024 MB /data volume was attached before merge. All 48 workbook tab titles and 32 Customers headings were rechecked read-only. The work ledger records existing bounded canonical customer/vehicle/work import code, private recovery and offline verifier, finance and public request functionality. Actual migration, reconciliation and authenticated acceptance are still unverified. Production DB contents were not accessed by development.
+
+## Actionable order and acceptance
+
+| Domain | Implemented/deployed evidence or partial scope | Remaining deliverable and acceptance |
+|---|---|---|
+| Customers/vehicles | Native directory and edits; historical identity and postcode review, creation, vehicle provenance (ledger #277–282) | Owner acceptance create/edit/reload/archive and linked account permissions; reconcile source identities and exact J IDs; actual bounded import approved separately. |
+| Jobs/quotes/workshop | Native work records, quote conversion, job cards, time/material correction and PDFs; #353 green/deployed | Owner-device timer start/break/resume/finish and restart acceptance on exact canonical job; verify PDF and actual job cost including unknown costs; fix only demonstrated defects; no guessed Kia ID or agreed price. |
+| Recovery | On-volume snapshot, encrypted RSA export and offline verifier (#258–295) | Standalone owner backup entry point (this branch, pending CI/deploy); owner-authorised snapshot, separately retained encrypted file, offline verification, record exact evidence; broader disaster recovery/attachments and retention remain separate. |
+| Historical import | Source staging and approval-gated bounded execution for names/postcodes, vehicle, draft historical work and selected price fields | First 1–5 reviewed customer rows with exact native collision/identity check, snapshot, manifest, approval, apply/reload, reconciliation, guarded rollback; then remaining Jobs fields/status/actual-cost evidence, domain batches, all remaining workbook groups. No inferred receipt or booking. |
+| Finance/transactions | Native transaction edits/splits/history, reviewed allocations, provider observations and settlement candidates; finance plan and partial formula parity | Independent bank evidence, current refund/fee/settlement allocation and verified receipts, complete expenses/debts/affordability/calculation parity, cashflow vs profit vs balance; owner acceptance and source reconciliation. Worksheet/owner report alone is not bank verification. |
+| Public Bookings | Synthetic request, quote, appointment, product and account isolation paths in prior and current CI | Verify full authenticated customer-to-HQ and back with safe fixtures; confirm tier catalogue, profile, quote acceptance, booking approval, maintenance ledger, order and status/payment readiness. No live booking/payment/message. |
+| Maintenance/routes | Native packages/visits/workspaces per ledger | Complete schedule/edit/save/archive, agreement and route acceptance, historical visits and route-formula parity; preserve real bookings. |
+| Inventory/shop/staff | Native cost/product workspaces and order/deposit review per ledger | Verify stock/purchase/edit/archive, inventory vs actual usage, staff allocation and affordability, shop privacy and shared canonical IDs; historical migration. |
+| Legal/creditors | Native cases, outflow proposals and affordability subset per ledger | Reconcile cases, liabilities, legal/evidence registers and risk inbox destinations; versioned editing, document/history integrity and full affordability parity; no communication or payment. |
+| Integrations/AI | Existing connected adapters, local/provider assistant routes | End-to-end permissions and provider evidence/reconciliation; owner/customer scope, Face ID/PWA real device acceptance, owner-approved iPhone push. No unapproved external actions. |
+
+No historical domain is newly authoritative. New native records have limited native authority as documented in the ledger. For every row distinguish implemented, CI-passed, deployed, owner-tested, migrated, reconciled and authoritative; currently owner acceptance and historical domain reconciliation are unverified across the listed domains. Retain the workbook read-only.
+
+## Next owner actions (not blanket approval)
+
+1. After standalone recovery is verified deployed, open Historical Jobs or Historical Customers → **Private recovery and encrypted backup**. Review scope, explicitly confirm **Save private backup and check isolated restore**, then select the snapshot and download encrypted copy with your public key only. Follow the offline verification procedure in the migration ledger. Keep the private key off HQ. Recovery approval alone does not approve an import.
+2. Historical Customers → **Create missing historical customers (reviewed batch)**. Select 1–5 independently reviewed source rows, initially names only; select a fresh snapshot and prepare exact manifest. Verify native IDs, conflicts, before/after and rollback before approving. Eligibility cannot be calculated without authenticated canonical directory review; no invented counts.
+3. Verify owner and customer UI on authenticated devices using existing records for read-only review and separately authorised test records for writes. Do not disable passkeys or weaken access controls for automation.
+
+When blocked on an owner action, develop the next independent vertical workflow, not another superficial timer/history improvement. Do not declare full replacement until all required operational workflows are usable without Sheets and migration/reconciliation gates are satisfied.
