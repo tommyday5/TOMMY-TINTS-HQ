@@ -235,3 +235,8 @@ register_provider_receipts(finance)
 # Native current-month planning report; manual classifications remain unverified.
 from hq_monthly_target import register as register_monthly_target
 register_monthly_target(finance)
+
+
+# Owner-supplied statement evidence; never canonical cash or verified receipts.
+from hq_statement_evidence import register as register_statement_evidence
+register_statement_evidence(finance)
