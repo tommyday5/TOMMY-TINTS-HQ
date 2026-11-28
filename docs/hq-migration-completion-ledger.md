@@ -2542,3 +2542,26 @@ HTTP and fee evidence regression assertions added. CI/deployment pending.
 Settlement proposals remain unverified, never bank cash or a new receipt.
 Authenticated customer and workshop acceptance, current Kia canonical ID,
 first bounded import and independent recovery snapshot remain outstanding.
+
+
+### 2026-11-28 — settlement focus deployed; active combined settlement queue
+
+PR #343 exact head 48da88a3a38f73074e98c569315ef0dac07214b9 passed
+Actions 46091441785 (127 + 721 Python tests, 22 JavaScript tests). Squash
+merged as 9d522d5d7d0bc3fa62be53e55d00f9bf5b9c083a; Railway deployment
+255f57d9-0a73-4f8c-a7bb-70b9429b4343 SUCCESS 01:58:30 UTC. Runtime logs
+confirmed worker and private timer scanner startup. Environment inventory
+retained the 1024 MB /data mount; read-only workbook metadata returned 48 tabs.
+No actual historical import, recovery snapshot or domain authority established.
+
+This slice adds owner-only active combined Square settlement proposal queue
+and cursor-paged history beyond 50 events, using only local retained records
+on GET. Older active proposals remain withdrawable even after later unrelated
+history. Replaying an original single or combined save after explicit
+withdrawal now returns a conflict rather than false success; new preview
+and operation required. Synthetic HTTP regression assertions cover the
+older active record, pagination, authorization, source isolation and replay.
+CI and deployment pending for this slice. No new cash/receipt verification,
+real job, working time, financial record, booking or Sheets mutation.
+Authenticated production acceptance, current Kia identity, independent
+recovery snapshot and exact bounded import approval remain unverified.
