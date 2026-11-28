@@ -2722,3 +2722,13 @@ CI and deployment pending. No historical authority changes, live record
 writes or workbook edits. Independent recovery and first bounded import
 approval remain open; next focus reversible historical execution and finance
 settlement evidence.
+
+PR #350 initial Actions 46123940290 failed two HTTP regressions: changed
+operation replay returned redirect instead of the existing 409 contract,
+and the discarded-session fixture omitted owner identity. Corrected the
+route to return a no-store 409 with a fresh operation and blank manual
+fields (or exact current review minutes), preserving the existing stale
+submission contract; corrected fixture to supply owner identity. No weakened
+validation. Exact corrected head CI and deployment pending. Railway
+inventory at this iteration confirms original 1024 MB /data mount and no
+staged infrastructure changes; workbook metadata still 48 tabs, read only.
