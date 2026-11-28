@@ -20,7 +20,8 @@ from hq_core_records import (_audit_work, _schema, StaleWorkRecordError,
 from hq_work_progress import WORK_STAGES, work_progress_snapshot, record_work_progress
 from hq_work_time import time_ledger_snapshot, append_work_time, void_work_time, correct_work_time_rate, correct_work_time_minutes, TimeEntryAlreadyUsedError
 from hq_work_timer import snapshot as timer_snapshot, transition as timer_transition, history as timer_history, open_timer_jobs, live_status as timer_live_status
-from hq_work_materials import material_ledger_snapshot, append_work_material, void_work_material, UNITS
+from hq_work_materials import (material_ledger_snapshot, append_work_material, void_work_material,
+                               correct_work_material_cost, MaterialEntryAlreadyUsedError, UNITS)
 from hq_work_expenses import expense_ledger_snapshot, append_work_expense, void_work_expense, EXPENSE_TYPES
 from hq_work_archive import archived_work_snapshot, set_work_archived, list_archived_work
 from hq_work_cost_overview import cost_overview_snapshot
@@ -927,9 +928,10 @@ def edit_work_materials(work_id):
         except (StaleWorkRecordError, ValueError) as exc:
             latest = material_ledger_snapshot(work_id)
             status = 409 if isinstance(exc, StaleWorkRecordError) else 400
+            used = isinstance(exc, MaterialEntryAlreadyUsedError)
             return render_template("hq_work_materials.html", work=latest, units=UNITS,
-                csrf=session["csrf"], operation_id=request.form.get("operation_id", ""),
-                values=request.form, error=str(exc)), status
+                csrf=session["csrf"], operation_id=uuid.uuid4().hex if used else request.form.get("operation_id", ""),
+                values={} if used else request.form, error=str(exc)), status, {"Cache-Control": "no-store"}
         except (OSError, sqlite3.Error, RuntimeError):
             current_app.logger.exception("Material usage write unavailable")
             abort(503)
@@ -958,6 +960,29 @@ def void_work_material_entry(work_id, entry_id):
         current_app.logger.exception("Material reversal unavailable")
         abort(503)
     return redirect(url_for(".edit_work_materials", work_id=work_id, voided="1"), 303)
+
+
+@native_work.post("/hq/work/<work_id>/materials/<entry_id>/cost")
+@required
+def correct_material_entry_cost(work_id, entry_id):
+    if request.content_length is None or request.content_length > 2048:
+        abort(413)
+    if not secrets.compare_digest(request.form.get("csrf", ""), session.get("csrf", "not-set")):
+        abort(403)
+    revision = request.form.get("revision", "")
+    if not re.fullmatch(r"[0-9]{1,18}", revision):
+        abort(400)
+    try:
+        correct_work_material_cost(work_id, entry_id, request.form.to_dict(flat=True),
+                                   int(revision), session.get("google_sub"))
+    except StaleWorkRecordError:
+        return redirect(url_for(".edit_work_materials", work_id=work_id, conflict="1"), 303)
+    except (ValueError, LookupError):
+        return redirect(url_for(".edit_work_materials", work_id=work_id, cost_invalid="1"), 303)
+    except (OSError, sqlite3.Error, RuntimeError):
+        current_app.logger.exception("Material cost correction unavailable")
+        abort(503)
+    return redirect(url_for(".edit_work_materials", work_id=work_id, cost_corrected="1"), 303)
 
 
 @native_work.route("/hq/work/archived", methods=["GET"])
