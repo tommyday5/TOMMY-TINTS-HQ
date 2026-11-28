@@ -189,6 +189,9 @@ class MonzoSheetReviewTests(unittest.TestCase):
         self.assertEqual(self.client.post(url,data=withdraw).status_code,200)
         self.assertIn(b"No active saved candidates",self.client.get(url).data)
         self.reader.side_effect=lambda _:self.feed()
+        stale=self.client.post(url,data=proposal)
+        self.assertEqual(stale.status_code,409)
+        self.assertIn(b"no longer active",stale.data)
         self.assertEqual(self.client.post(url,data=dict(form,ref="tx_synthetic_2")).status_code,200)
         with connect() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_monzo_invoice_match_events").fetchone()[0],2)
@@ -438,7 +441,16 @@ class MonzoSheetReviewTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             save_payment(dict(allocation,operation_id="2"*32,evidence_ref="Changed evidence"))
         save_payment(dict(allocation,operation_id="3"*32,status="reversed"))
+        retry=self.client.post(url,data=report)
+        self.assertEqual(retry.status_code,409)
+        self.assertIn(b"previously reversed",retry.data)
+        reopened=self.client.get(url+"?ref=tx_synthetic_1")
+        self.assertIn(b"Reversed owner-reported allocations",reopened.data)
+        self.assertIn(b"Statement synthetic 123",reopened.data)
+        self.assertNotIn(b"Active owner-reported allocations",reopened.data)
         with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_receivable_allocations").fetchone()[0],1)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_transactions").fetchone()[0],0)
             self.assertEqual(reported_links(db,"tx_synthetic_1"),[])
             self.assertEqual(db.execute("SELECT status FROM hq_receivable_allocations").fetchone()[0],"reversed")
             self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_monzo_reported_links").fetchone()[0],1)
