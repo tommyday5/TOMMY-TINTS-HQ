@@ -1044,7 +1044,7 @@ class AllocationTests(unittest.TestCase):
             self.assertEqual(self.client.post(url,data=form).status_code,409)
             self.assertIn(b"Synthetic combined statement",self.client.get(url).data)
             with connect() as db:
-                event = db.execute("SELECT id FROM hq_square_batch_reviews").fetchone()[0]
+                event = db.execute("SELECT id FROM hq_square_batch_reviews WHERE source_id=? AND state='proposed'", (entry["ref"],)).fetchone()[0]
                 for n in range(51):
                     db.execute("""INSERT INTO hq_square_batch_reviews
                         (source_id,manifest,state,evidence,actor,created,operation)
@@ -1073,7 +1073,7 @@ class AllocationTests(unittest.TestCase):
                        operation=uuid.uuid4().hex)
             self.assertEqual(self.client.post(single,data=one).status_code,409)
             with connect() as db:
-                event = db.execute("SELECT id FROM hq_square_batch_reviews").fetchone()[0]
+                event = db.execute("SELECT id FROM hq_square_batch_reviews WHERE source_id=? AND state='proposed'", (entry["ref"],)).fetchone()[0]
             undo = dict(action="withdraw",event=str(event),csrf="test",confirm="yes",operation=uuid.uuid4().hex)
             self.assertEqual(self.client.post(url,data=undo).status_code,303)
             self.assertEqual(self.client.post(url,data=undo).status_code,303)
