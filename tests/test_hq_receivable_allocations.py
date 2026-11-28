@@ -134,6 +134,53 @@ class AllocationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             save_invoice(changed)
 
+    def test_private_search_reaches_old_allocations_and_preserves_invoice_totals(self):
+        path = "/api/hq/finance/receipt-allocations/search"
+        self.assertEqual(self.client.post(path, json={"query": "older"}).status_code, 302)
+        self.login()
+        self.assertEqual(self.client.post(path, json={"query": "older"}).status_code, 403)
+        def search(query):
+            return self.client.post(path, json={"query": query}, headers={"X-HQ-CSRF": "test"})
+        first = self.payload(amount_pence=1000, evidence_ref="SYNTH-OLDER%REF")
+        self.assertEqual(self.post(first).status_code, 200)
+        # Synthetic older record plus 501 later active one-penny claims.
+        with connect() as db:
+            db.execute("UPDATE hq_receivable_allocations SET updated_at='2020-01-01' WHERE id=?",
+                       (first["id"],))
+            db.execute("UPDATE hq_receivable_allocation_events SET occurred_at='2020-01-01' WHERE allocation_id=?",
+                       (first["id"],))
+            rows = [(uuid.uuid4().hex, self.invoice_id, 1, "2026-11-23", "bank_reported",
+                     "NEW-"+str(i), "", "reported", 1, "2026-11-24", "2099-01-01")
+                    for i in range(501)]
+            db.executemany("INSERT INTO hq_receivable_allocations VALUES(?,?,?,?,?,?,?,?,?,?,?)", rows)
+            db.executemany("INSERT INTO hq_receivable_allocation_events VALUES(?,?,?,?,?)",
+                           [(uuid.uuid4().hex, row[0], 1, "{}", "2099-01-01") for row in rows])
+        recent = self.client.get("/api/hq/finance/receipt-allocations").json
+        self.assertTrue(recent["display_limited"])
+        self.assertNotIn(first["id"], [row["id"] for row in recent["allocations"]])
+        result = search("older%ref")
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.headers["Cache-Control"], "no-store")
+        self.assertEqual([row["id"] for row in result.json["allocations"]], [first["id"]])
+        self.assertEqual(result.json["history"][0]["allocation_id"], first["id"])
+        self.assertEqual(result.json["invoices"][0]["owner_reported_allocated_pence"], 1501)
+        self.assertEqual(result.json["invoices"][0]["unallocated_owner_reported_pence"], 33499)
+        self.assertFalse(result.json["bank_verified"])
+        self.assertIsNone(result.json["collected_income"])
+        self.assertFalse(result.json["display_limited"])
+        self.assertEqual(search("older_ref").json["allocations"], [])
+        self.assertEqual(search(first["id"]).json["allocations"][0]["id"], first["id"])
+        self.assertEqual(search("synthetic customer").json["invoices"][0]["id"], self.invoice_id)
+        self.assertEqual(search("test-allocation-001").json["invoices"][0]["id"], self.invoice_id)
+        self.assertEqual(search("x"*121).status_code, 400)
+        self.assertEqual(search(123).status_code, 400)
+        # Searching never changes the ledger; older records remain editable.
+        self.assertEqual(self.post({**first, "operation_id": uuid.uuid4().hex, "revision": 1,
+                                    "memo": "Synthetic older reference reviewed"}).json["revision"], 2)
+        self.assertEqual(search(first["id"]).json["allocations"][0]["revision"], 2)
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_receivable_allocations").fetchone()[0], 502)
+
     def test_lost_response_replay_without_evidence_reference(self):
         self.login()
         claim = self.payload(amount_pence=1000, evidence_ref="")

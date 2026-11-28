@@ -2463,3 +2463,34 @@ checking saved entries before retrying. Synthetic JS and SQLite replay tests
 added; CI/deployment pending. Owner-reported entries remain unverified; no
 new domain authority, historical data import, payment or workbook writes.
 Next: actual source-evidence matching and approval-gated recovery/import.
+
+
+### 2026-11-27 — uncertain allocation retry deployed; full-ledger private search
+
+PR #340 exact head ad447d4f43b205722769072bac88bc106dfe247b passed Actions
+46073801911 (127 + 720 Python tests, 22 JavaScript tests). Squash merged as
+ebebcf267042496340e2640cbaa5b675e98f0e1d. Railway deployment
+cf05e27e-2c81-4c29-b706-f84189306add SUCCESS at 23:04:24 UTC; existing
+1024 MB /data volume 540528d1-3953-4737-9d92-3c861575c5d4 mounted, no staged
+infrastructure changes in environment inventory. Workbook metadata remains
+48 tabs, Monzo Live Feed A7:U7 schema confirmed read-only. Synthetic timer
+server-time, breaks, multi-day replay, saved correction and customer-to-HQ
+quote/vehicle/product review and isolation tests passed. Direct production
+/book, /hq/timer and allocation page still fail DNS in this environment.
+No confirmed identity for current Kia, authenticated acceptance or actual
+snapshot/import approval; no new domain authority.
+
+Next proposed slice: owner-only private search across all native invoices,
+allocation references and IDs before display limits, including older entries.
+Search uses POST + CSRF + no-store, not a URL containing customer names or
+references. Full invoice totals are calculated across every active reported
+allocation, independent of filtered display; matching history and bounded
+results are labelled. Search preserves unresolved saves and prevents
+discarding an unsaved edit. Older entries remain editable with existing
+revision and reversal guards. Synthetic fixture tests cover older record
+lookup outside the recent 500/200 limits, literal wildcard handling,
+security, full totals and persisted edit. CI/deployment pending.
+Reported claims remain unverified, no actual finance record, booking,
+external message, payment, workbook or historical import performed.
+Next: actual source-evidence reconciliation, bounded historical approval and
+off-volume recovery; customer authenticated acceptance still open.

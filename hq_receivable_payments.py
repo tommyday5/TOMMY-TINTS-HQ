@@ -192,7 +192,18 @@ def save(data):
     return revision
 
 
-def snapshot():
+def snapshot(query=""):
+    # Search the complete canonical ledger before applying display limits.
+    # Literal substring comparisons deliberately do not interpret SQL wildcards.
+    if not isinstance(query, str) or len(query.strip()) > 120:
+        raise ValueError("Search must be at most 120 characters")
+    query = query.strip()
+    invoice_match = "(instr(lower(r.invoice_ref),lower(?))>0 OR instr(lower(c.name),lower(?))>0 OR instr(lower(r.id),lower(?))>0)"
+    allocation_match = "(instr(lower(a.evidence_ref),lower(?))>0 OR instr(lower(a.id),lower(?))>0)"
+    invoice_filter = ("WHERE (" + invoice_match + " OR EXISTS (SELECT 1 FROM hq_receivable_allocations a "
+                      "WHERE a.invoice_id=r.id AND " + allocation_match + "))") if query else ""
+    allocation_filter = ("WHERE (" + invoice_match + " OR " + allocation_match + ")") if query else ""
+    args = (query,) * 5 if query else ()
     with connect() as db:
         db.execute("PRAGMA foreign_keys=ON")
         tables(db)
@@ -202,18 +213,27 @@ def snapshot():
                 AS owner_reported_allocated_pence
             FROM hq_receivables r JOIN hq_customers c ON c.id=r.customer_id
             LEFT JOIN hq_receivable_allocations a ON a.invoice_id=r.id
-            GROUP BY r.id ORDER BY r.updated_at DESC LIMIT 500""")]
+            """ + invoice_filter + """
+            GROUP BY r.id ORDER BY r.updated_at DESC,r.id DESC LIMIT 501""", args)]
         entries = [dict(row) for row in db.execute("""SELECT a.*,r.invoice_ref
-            FROM hq_receivable_allocations a JOIN hq_receivables r ON a.invoice_id=r.id
-            ORDER BY a.updated_at DESC,a.id DESC LIMIT 500""")]
-        history = [dict(row) for row in db.execute("""SELECT allocation_id,revision,
-            snapshot,occurred_at FROM hq_receivable_allocation_events
-            ORDER BY occurred_at DESC,event_id DESC LIMIT 200""")]
+            FROM hq_receivable_allocations a JOIN hq_receivables r ON r.id=a.invoice_id
+            JOIN hq_customers c ON c.id=r.customer_id
+            """ + allocation_filter + """
+            ORDER BY a.updated_at DESC,a.id DESC LIMIT 501""", args)]
+        history = [dict(row) for row in db.execute("""SELECT e.allocation_id,e.revision,
+            e.snapshot,e.occurred_at FROM hq_receivable_allocation_events e
+            JOIN hq_receivable_allocations a ON a.id=e.allocation_id
+            JOIN hq_receivables r ON r.id=a.invoice_id
+            JOIN hq_customers c ON c.id=r.customer_id
+            """ + allocation_filter + """
+            ORDER BY e.occurred_at DESC,e.event_id DESC LIMIT 201""", args)]
+    limited = len(invoices) > 500 or len(entries) > 500 or len(history) > 200
+    invoices, entries, history = invoices[:500], entries[:500], history[:200]
     for invoice in invoices:
         invoice["unallocated_owner_reported_pence"] = (
             invoice["amount_pence"] - invoice["owner_reported_allocated_pence"])
     return dict(invoices=invoices, allocations=entries, history=history,
-                bank_verified=False, receipts_verified=False,
+                display_limited=limited, bank_verified=False, receipts_verified=False,
                 outstanding_verified=False, collected_income=None,
                 source="Owner-reported payment claims, not matched bank evidence")
 
@@ -226,6 +246,25 @@ def register(bp):
     @required
     def receipt_allocations_page():
         return render_template("hq_receipt_allocations.html", csrf=session.get("csrf", "")), 200, {"Cache-Control": "no-store"}
+
+    @bp.post("/api/hq/finance/receipt-allocations/search")
+    @required
+    def receipt_allocations_search():
+        # POST keeps private search terms out of request URLs / proxy logs.
+        headers = {"Cache-Control": "no-store"}
+        if not secrets.compare_digest(request.headers.get("X-HQ-CSRF", ""), session.get("csrf", "missing")):
+            return jsonify(error="Invalid security token"), 403, headers
+        if not request.is_json or not request.content_length or request.content_length > 2048:
+            return jsonify(error="Invalid search request"), 400, headers
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or set(data) != {"query"}:
+            return jsonify(error="Invalid search request"), 400, headers
+        try:
+            return jsonify(snapshot(data["query"])), 200, headers
+        except ValueError as exc:
+            return jsonify(error=str(exc)), 400, headers
+        except sqlite3.Error:
+            return jsonify(error="Storage unavailable; search not completed"), 503, headers
 
     @bp.route("/api/hq/finance/receipt-allocations", methods=["GET", "POST"])
     @required
