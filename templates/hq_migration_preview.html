@@ -16,6 +16,7 @@ select{background:#0d1420;color:white;border:1px solid #69788b;border-radius:8px
 </style></head><body><main>
 <p><a href="/hq/customers">HQ Customers</a> · <a href="/hq/sheets/job-link-preflight">Single-row Jobs inspection</a> · <a href="/hq/migration/customers">Review historical Customers candidates</a> · <a href="/auth/sheets/connect">Connect Sheets read-only</a></p>
 <h1>Historical Jobs &amp; Customers — migration dry run</h1>
+<p><a href="/hq/migration/recovery">Private recovery and encrypted backup</a></p>
 <p><a href="/hq/migration/job-batches">Create and manage historical Jobs review batches</a></p>
 <p>This owner-only report reads the <strong>existing</strong> Google workbook and compares candidate customer names with native HQ records without importing, linking or editing anything. It does not establish customer identity from a shared name.</p>
 <div class="warning">Google Sheets stays authoritative for unmigrated history. New native HQ records stay authoritative only for their own data. The comparison does not change either system; saving a review candidate writes only an inactive, owner-only HQ proposal and an audit event. Never assume a completed job is paid.</div>
