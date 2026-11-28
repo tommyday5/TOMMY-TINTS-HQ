@@ -2732,3 +2732,29 @@ submission contract; corrected fixture to supply owner identity. No weakened
 validation. Exact corrected head CI and deployment pending. Railway
 inventory at this iteration confirms original 1024 MB /data mount and no
 staged infrastructure changes; workbook metadata still 48 tabs, read only.
+
+
+### 2026-11-28 — obsolete labour replay protection deployed; older labour editor
+
+PR #350 exact corrected head d78d128afdc31788f5261424c45646aefa8cc758
+passed Actions 46128350903 (127 + 727 Python tests, 22 JavaScript tests).
+Squash merge 3adee6e56558a9c820a80a426eb09dda56dfec35 deployed to Railway
+5bdf575b-a4c2-4b8c-85f2-52b70f581c19 SUCCESS at 10:01:17 UTC. Runtime
+volume mount, worker startup and private timer alert scanner observed.
+Environment inventory before merge: original 1024 MB /data volume
+540528d1-3953-4737-9d92-3c861575c5d4, no staged changes. Read-only
+workbook metadata returned 48 tabs. No actual migration or backup approval.
+
+New slice: existing owner-only time ledger can page past its original
+100-entry display limit, retaining full active totals across all history.
+Each page carries current canonical revision and existing correction and
+reversal forms; older active entries can now be corrected without guessing
+their IDs. Counts and history share a SQLite read transaction; invalid
+offsets are rejected and oversized valid pages clamp to the last page.
+Synthetic HTTP regression covers 101 entries, older entry correction,
+full totals, unknown evidence semantics preserved, auth and no-store.
+CI and deployment of the new slice pending. No live labour, customer,
+job, finance, booking, workbook or infrastructure records changed.
+Historical authority, independent recovery, current Kia identity and
+authenticated production acceptance remain unverified. Next priority:
+bounded reversible historical import and verified bank settlement.

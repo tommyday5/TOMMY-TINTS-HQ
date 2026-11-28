@@ -135,9 +135,11 @@ def _read_work(db, work_id):
     return dict(work)
 
 
-def time_ledger_snapshot(work_id):
-    """Read all active entries for totals; show only latest 100 in history."""
+def time_ledger_snapshot(work_id, history_offset=0):
+    """Read all active totals and one bounded page of immutable history."""
     _validate_id(work_id)
+    if type(history_offset) is not int or not 0 <= history_offset <= 1000000 or history_offset % 100:
+        raise ValueError("Invalid labour history offset")
     with connect() as db:
         _schema(db)
         _tables(db)
@@ -160,6 +162,8 @@ def time_ledger_snapshot(work_id):
         for stage in stage_totals:
             stage["actual_labour_cost_pence"] = (
                 stage["known_cost_subtotal_pence"] if not stage["unknown_rate_count"] else None)
+        history_count = db.execute("SELECT COUNT(*) FROM hq_work_time_entries WHERE work_id=?", (work_id,)).fetchone()[0]
+        history_offset = min(history_offset, max(0, (history_count - 1) // 100 * 100))
         entries = [dict(row) for row in db.execute("""SELECT
             e.entry_id,e.minutes,e.stage,e.note,e.hourly_cost_pence,e.created_at,e.voided_at,
             r.original_entry_id AS corrected_from, r.reason AS rate_correction_reason,
@@ -172,7 +176,7 @@ def time_ledger_snapshot(work_id):
             LEFT JOIN hq_work_time_minute_corrections m ON m.replacement_entry_id=e.entry_id
             LEFT JOIN hq_work_time_minute_corrections x ON x.original_entry_id=e.entry_id
             WHERE e.work_id=?
-            ORDER BY e.created_at DESC,e.entry_id DESC LIMIT 101""", (work_id,))]
+            ORDER BY e.created_at DESC,e.entry_id DESC LIMIT 100 OFFSET ?""", (work_id, history_offset))]
     for entry in entries:
         entry["rate_operation"] = uuid.uuid5(uuid.NAMESPACE_OID,
             f'hq-rate-correction:{entry["entry_id"]}:{work["revision"]}').hex
@@ -187,9 +191,12 @@ def time_ledger_snapshot(work_id):
         # Do not convert absent evidence into a "£0 total".
         "actual_labour_cost_pence": (totals["known_cost"] or 0)
             if totals["entry_count"] and unknown == 0 else None,
-        "entries": entries[:100],
+        "entries": entries,
         "stage_totals": stage_totals,
-        "history_truncated": len(entries) > 100,
+        "history_truncated": history_count > 100,
+        "history_count": history_count,
+        "history_offset": history_offset,
+        "history_has_next": history_offset + len(entries) < history_count,
         "can_edit_time": work["kind"] == "job" and work["status"] in _ALLOWED and not work["is_archived"],
         "payment_verified": False,
     })
