@@ -734,12 +734,23 @@ def edit_work_time(work_id):
                              session.get("google_sub"))
         except (StaleWorkRecordError, ValueError) as exc:
             latest = time_ledger_snapshot(work_id)
+            timer = timer_snapshot(work_id)
+            operation = request.form.get("operation_id", "")
+            values = request.form
             status = 409 if isinstance(exc, StaleWorkRecordError) else 400
+            error = str(exc)
+            # Another device may have finished a different session while this
+            # form was open. Never relabel the submitted minutes as that timer.
+            if timer and timer["state"] == "review" and operation != timer["id"]:
+                operation = timer["id"]
+                values = {"minutes": str(timer["active_seconds"] // 60)}
+                error = "A different timer is awaiting review. Your previous submission was not saved. Review the measured time and select the activity again."
+                status = 409
             return render_template("hq_work_time.html", work=latest, stages=WORK_STAGES,
-                csrf=session["csrf"], operation_id=request.form.get("operation_id", ""),
-                values=request.form, error=str(exc), timer=timer_snapshot(work_id),
+                csrf=session["csrf"], operation_id=operation,
+                values=values, error=error, timer=timer,
                 timer_operation=uuid.uuid4().hex, allowance_operation=uuid.uuid4().hex,
-                 timer_history=timer_history(work_id)), status
+                timer_history=timer_history(work_id)), status, {"Cache-Control": "no-store"}
         except (OSError, sqlite3.Error, RuntimeError):
             current_app.logger.exception("Work time write unavailable")
             abort(503)
