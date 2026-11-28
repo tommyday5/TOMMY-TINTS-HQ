@@ -64,8 +64,10 @@ def live_status(work_id):
     }
 
 
-def open_timer_jobs():
-    """Owner-only recovery queue, independent of job search and pagination."""
+def open_timer_jobs(offset=0):
+    """Owner-only recovery queue, paged independently of normal job search."""
+    if type(offset) is not int or not 0 <= offset <= 100000:
+        raise ValueError("Invalid recovery offset")
     with connect() as db:
         _schema(db)
         tables(db)
@@ -82,7 +84,12 @@ def open_timer_jobs():
             JOIN hq_vehicles v ON v.id=w.vehicle_id
             WHERE t.state IN ('running','paused','review')
             ORDER BY CASE t.state WHEN 'running' THEN 0 WHEN 'review' THEN 1 ELSE 2 END,
-                t.changed_at DESC,t.id DESC LIMIT 51""").fetchall()
+                t.changed_at DESC,t.id DESC LIMIT 51 OFFSET ?""", (offset,)).fetchall()
+        total = db.execute("""SELECT COUNT(*) FROM hq_timer_sessions t
+            JOIN hq_work_records w ON w.id=t.work_id
+            JOIN hq_customers c ON c.id=w.customer_id
+            JOIN hq_vehicles v ON v.id=w.vehicle_id
+            WHERE t.state IN ('running','paused','review')""").fetchone()[0]
     checked_at = now()
     records = []
     for source in rows[:50]:
@@ -100,7 +107,8 @@ def open_timer_jobs():
                                    else "near" if row["total_seconds"] * 5 >= budget * 4
                                    else "within")
         records.append(row)
-    return {"records": records, "has_more": len(rows)>50}
+    return {"records": records, "has_more": len(rows)>50,
+            "offset": offset, "limit": 50, "total": total}
 
 
 def history(work_id):
