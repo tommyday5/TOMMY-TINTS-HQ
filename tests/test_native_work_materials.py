@@ -127,6 +127,52 @@ class NativeMaterialLedgerTests(unittest.TestCase):
             data={"csrf": "material-csrf", "revision": "5"}).status_code, 303)
         self.assertEqual(material_ledger_snapshot(self.work_id)["revision"], 6)
 
+    def test_allocated_cost_correction_preserves_quantity_and_rejects_obsolete_replay(self):
+        self.login()
+        self.approve()
+        original_form = self.form()
+        self.assertEqual(self.client.post(self.url, data=original_form).status_code, 303)
+        original = material_ledger_snapshot(self.work_id)["entries"][0]
+        endpoint = self.url + "/" + original["entry_id"] + "/cost"
+        self.assertIn(b"Correct actual allocated cost", self.client.get(self.url).data)
+        data = {"csrf": "material-csrf", "revision": "4",
+                "operation_id": original["cost_operation"], "actual_cost_pounds": "8.61",
+                "reason": "Synthetic verified mixing cost"}
+        self.assertEqual(app.test_client().post(endpoint, data=data).status_code, 302)
+        self.assertEqual(self.client.post(endpoint, data=dict(data, csrf="wrong")).status_code, 403)
+        invalid = self.client.post(endpoint, data=dict(data, reason=""))
+        self.assertIn("cost_invalid=1", invalid.location)
+        self.assertEqual(material_ledger_snapshot(self.work_id)["revision"], 4)
+        saved = self.client.post(endpoint, data=data)
+        self.assertEqual(saved.status_code, 303)
+        self.assertIn("cost_corrected=1", saved.location)
+        ledger = material_ledger_snapshot(self.work_id)
+        self.assertEqual((ledger["entry_count"], ledger["actual_material_cost_pence"], ledger["revision"]), (1, 861, 5))
+        active = next(e for e in ledger["entries"] if e["voided_at"] is None)
+        self.assertEqual(active["corrected_from"], original["entry_id"])
+        for field in ("material_name", "quantity_milli", "unit", "source_note"):
+            self.assertEqual(active[field], original[field])
+        self.assertEqual(self.client.post(endpoint, data=data).status_code, 303)
+        self.assertEqual(material_ledger_snapshot(self.work_id)["revision"], 5)
+        stale = self.client.post(self.url, data=original_form)
+        self.assertEqual(stale.status_code, 409)
+        self.assertNotIn(b'Material usage saved against this HQ job', stale.data)
+        self.assertIn(b"reversed or corrected", stale.data)
+        self.assertIn(b"Synthetic verified mixing cost", self.client.get(self.url).data)
+        clear = {"csrf": "material-csrf", "revision": "5", "operation_id": active["cost_operation"],
+                 "actual_cost_pounds": "", "reason": "Synthetic evidence withdrawn"}
+        cleared = self.client.post(self.url + "/" + active["entry_id"] + "/cost", data=clear)
+        self.assertIn("cost_corrected=1", cleared.location)
+        after = material_ledger_snapshot(self.work_id)
+        self.assertEqual((after["revision"], after["entry_count"], after["unknown_cost_count"]), (6, 1, 1))
+        self.assertIsNone(after["actual_material_cost_pence"])
+        self.assertEqual(len(after["entries"]), 3)
+        self.assertIn("conflict=1", self.client.post(endpoint, data=data).location)
+        self.assertEqual(material_ledger_snapshot(self.work_id)["revision"], 6)
+        self.assertEqual(read_work_record(self.work_id)["price_pence"], 35000)
+        self.assertEqual(read_work_record(self.work_id)["deposit_pence"], 5000)
+        self.assertEqual(sheet_sync_status(self.work_id)["state"], "not_linked")
+
     def test_owner_only_csrf_validation_and_closed_job_lock(self):
         other = app.test_client()
         self.assertEqual(other.get(self.url).status_code, 302)
