@@ -1,16 +1,18 @@
 # Tommy Tints HQ
 
-Dedicated, isolated business operations application. **Portfolio HQ is not involved.**
+Dedicated business operations application for Tommy Tints HQ and customer Bookings. Portfolio HQ is not involved.
 
-## Initial deployment
-Flask/Gunicorn on Railway. `/health` provides readiness. The landing dashboard is an initial UI shell with placeholder data only.
+## Current architecture
 
-## Security
-**Do not enter customer, financial, creditor or legal information yet.** This first version has no authentication or production database. Set the GitHub repository to PRIVATE before integrating real data. Add authenticated roles, audit logs, CSRF protection, encrypted secrets and PostgreSQL before real integrations.
+Existing Flask/Gunicorn deployment on Railway, with canonical native SQLite records on the existing persistent volume. HQ owner authentication and customer access controls are separate. The public customer entry point is /book; the owner dashboard is private. /health provides service readiness, not proof that every integration or workflow is complete.
 
-## Next stages
-1. PostgreSQL and authentication.
-2. Import/mapping from existing Tommy Tints HQ Google Sheets (read-only verification first).
-3. Quotes/jobs/customer CRM with price engine.
-4. Calendar/Square and DNA/Monzo integrations after permission and reconciliation tests.
-5. Financial, creditor and legal dashboard with access controls.
+## Development and completion
+
+- [Current unfinished-work backlog](docs/hq-unfinished-work-backlog.md): prioritized acceptance and implementation gaps.
+- [Migration completion ledger](docs/hq-migration-completion-ledger.md): verified commits, tests, deployment evidence, recovery instructions, field ownership and approval boundaries.
+
+The original Google workbook remains read-only during staged migration. New native records and historical source evidence must be distinguished. Do not reset production storage, overwrite the workbook, activate bidirectional sync, run real imports or change real business records without explicit owner approval. No blanket cutover has occurred.
+
+Develop on an isolated branch with synthetic fixtures and no production credentials. Follow the repository's HQ tests workflow; merge only green exact-head changes, then verify Railway deployment and original volume. Keep access controls, audit history, idempotency and unknown-value semantics intact. Never put private recovery keys or real customer/financial data into GitHub.
+
+The existence of a route, passing tests, or a successful deployment does not establish authenticated owner/customer acceptance or historical reconciliation. Record those separately. Finish incomplete vertical workflows before cosmetic or redundant refinements.

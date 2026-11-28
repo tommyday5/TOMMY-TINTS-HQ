@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Private recovery | Tommy Tints HQ</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#090b0f;color:#f4f5f9}
+body{margin:0}main{max-width:860px;margin:auto;padding:20px}a{color:#ff808b}
+section{background:#181d26;border:1px solid #3b4659;border-radius:14px;padding:18px;margin:18px 0}
+label{display:block;margin:12px 0}button,select,textarea{font:inherit}button{background:#b71528;color:white;border:1px solid #ff4452;border-radius:8px;padding:12px;cursor:pointer;font-weight:700}
+select,textarea{box-sizing:border-box;width:100%;background:#101620;color:white;padding:10px;border:1px solid #69788b;border-radius:8px}
+code{overflow-wrap:anywhere}li{margin:8px 0}small{color:#c1c9d3}button:focus-visible,a:focus-visible{outline:3px solid #ffda38}
+</style></head><body><main>
+<nav><a href="/hq/migration/preview">Historical Jobs</a> · <a href="/hq/migration/customers">Historical Customers</a></nav>
+<h1>Private recovery</h1>
+<p>Back up the canonical HQ SQLite database without selecting a historical job or connecting Google Sheets. This does not restore live data, import history, change a business record or upload anything.</p>
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+{% if saved %}<p role="status">Private recovery snapshot saved and isolated restore checked: <code>{{ saved }}</code>.</p>{% endif %}
+<section><h2>1. Save an on-volume recovery snapshot</h2>
+<p>Each copy is checked in isolated SQLite memory before publication. The copy remains on the existing Railway volume and is not independent disaster recovery.</p>
+{% if snapshots is not none %}
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="private_backup"><input type="hidden" name="operation_id" value="{{ operation }}">
+<label><input type="checkbox" name="confirm_backup" value="yes" required> I authorise creating a private snapshot of the current canonical database.</label>
+<button type="submit">Save private backup and check isolated restore</button></form>
+{% endif %}
+</section>
+<section><h2>2. Saved snapshots</h2>
+{% if snapshots is none %}<p>Snapshot list unavailable. Do not assume there are no backups.</p>
+{% elif not snapshots %}<p>No saved private snapshots.</p>
+{% else %}<ul>{% for item in snapshots %}<li><code>{{ item.id }}</code> · {{ item.utc }} · {{ item.bytes }} bytes</li>{% endfor %}</ul>{% endif %}
+</section>
+<section><h2>3. Download an independent encrypted copy</h2>
+<p>Generate and retain the private RSA key on a trusted separate computer. Paste ONLY its 3072- or 4096-bit public PEM below. Never paste a private key into HQ. Keep the downloaded encrypted copy off the Railway volume and verify it offline using the repository's recovery verification instructions.</p>
+{% if snapshots %}
+<form method="post" autocomplete="off"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="encrypted_export">
+<label for="snapshot">Saved snapshot</label><select id="snapshot" name="snapshot_id" required><option value="">Choose exact snapshot</option>{% for item in snapshots %}<option value="{{ item.id }}"{% if saved == item.id %} selected{% endif %}>{{ item.id }} · {{ item.utc }}</option>{% endfor %}</select>
+<label for="public-key">RSA public key (PEM)</label><textarea id="public-key" name="public_key" rows="6" maxlength="2000" required spellcheck="false"></textarea>
+<label><input type="checkbox" name="confirm_export" value="yes" required> I authorise this encrypted download and control the corresponding private key.</label>
+<button type="submit">Download encrypted recovery copy</button></form>
+{% else %}<p>Save a checked snapshot first.</p>{% endif %}
+<p><small>Downloading does not prove independent retention or successful offline verification. This covers the canonical SQLite database only, not attachments, separate databases, the workbook, or provider credentials. No live restore control is available.</small></p>
+</section>
+<section><h2>4. Prepare historical migration separately</h2><p>Recovery approval is not import approval. Review source identities and exact field mappings first; create a fresh snapshot after the required review if the import manifest requires it.</p>
+<p><a href="/hq/migration/customers/create-batch">Create missing historical customers (reviewed batch)</a> · <a href="/hq/migration/job-batches">Historical Jobs review batches</a></p></section>
+</main></body></html>
