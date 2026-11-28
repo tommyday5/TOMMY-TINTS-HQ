@@ -139,6 +139,7 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 <p><a href="/hq/work/{{ work.id }}/materials">Record materials</a> · <a href="/hq/work/{{ work.id }}/expenses">Record expenses / overhead</a> · <a href="/hq/work/{{ work.id }}/costs">Open full private cost report</a></p>
 </section>
 {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+{% if request.args.get("time_already_used") == "1" %}<p class="error" role="alert">Previous submission not saved again. The time entry or timer was already used, corrected or closed. Check the ledger and timer history before recording any new labour.</p>{% endif %}
 {% if request.args.get("saved") == "1" %}<p class="success" role="status">Time entry saved to HQ. Reload to inspect its history.</p>{% endif %}
 {% if request.args.get("voided") == "1" %}<p class="success" role="status">Time entry reversed and retained in the audit history.</p>{% endif %}
 {% if request.args.get("rate_corrected") == "1" %}<p class="success" role="status">Internal hourly cost corrected. Recorded minutes are unchanged; original entry retained.</p>{% endif %}
