@@ -52,6 +52,26 @@ def active_candidates(db, ref):
         ORDER BY e.revision DESC""", (ref,))]
 
 
+def active_candidate_page(db, offset=0):
+    """Saved owner review queue, independent of a live worksheet connection.
+
+    The caller holds a read transaction. These are proposals, not receipts.
+    """
+    if type(offset) is not int or not 0 <= offset <= 100000:
+        raise ValueError("Invalid candidate page offset.")
+    active = """FROM hq_monzo_invoice_match_events e
+        WHERE e.status='proposed' AND NOT EXISTS (
+            SELECT 1 FROM hq_monzo_invoice_match_events n
+            WHERE n.source_id=e.source_id AND n.invoice_id=e.invoice_id
+              AND n.revision>e.revision)"""
+    total = db.execute("SELECT COUNT(*) " + active).fetchone()[0]
+    rows = db.execute("""SELECT e.source_id,e.invoice_ref,e.amount_pence,e.revision,e.created
+        """ + active + """ ORDER BY e.created DESC,e.source_id,e.revision DESC
+        LIMIT 51 OFFSET ?""", (offset,)).fetchall()
+    return dict(records=[dict(row) for row in rows[:50]], total=total,
+                offset=offset, limit=50, has_more=len(rows)>50)
+
+
 def reported_links(db, ref):
     return [dict(r) for r in db.execute("""SELECT l.*,a.amount_pence,a.status,a.invoice_id
         FROM hq_monzo_reported_links l JOIN hq_receivable_allocations a
@@ -246,6 +266,7 @@ def register(bp):
         active = []
         linked = []
         report = None
+        queue = None
         try:
             if request.method == "POST":
                 request.max_content_length = 4096
@@ -333,6 +354,14 @@ def register(bp):
                     events = history(db,ref)
                     active = active_candidates(db,ref)
                     linked = reported_links(db,ref)
+            elif request.method == "GET":
+                offset = request.args.get("offset","0")
+                if not re.fullmatch(r"[0-9]{1,6}",offset) or int(offset)>100000:
+                    raise ValueError("Invalid candidate page offset.")
+                with closing(connect()) as db, db:
+                    tables(db)
+                    db.execute("BEGIN")
+                    queue = active_candidate_page(db,int(offset))
         except Conflict as exc:
             error,status = str(exc),409
         except (ValueError,TypeError) as exc:
@@ -340,4 +369,4 @@ def register(bp):
         except (requests.RequestException,sqlite3.Error,OSError,KeyError):
             error,status = "Read-only source or HQ storage unavailable; no new save confirmed.",503
         return render_template("finance_monzo_invoice_match.html",ref=ref,invoice_ref=invoice_ref,
-            preview=preview,events=events,active=active,linked=linked,report=report,notice=notice,error=error,raw_amount=raw_amount,csrf=session.get("csrf","")),status,{"Cache-Control":"no-store"}
+            preview=preview,events=events,active=active,linked=linked,report=report,queue=queue,notice=notice,error=error,raw_amount=raw_amount,csrf=session.get("csrf","")),status,{"Cache-Control":"no-store"}

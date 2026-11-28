@@ -169,6 +169,14 @@ class MonzoSheetReviewTests(unittest.TestCase):
         proposal["manifest"]=manifest(self.client.post(url,data=form))
         self.assertEqual(self.client.post(url,data=proposal).status_code,200)
         self.assertEqual(self.client.post(url,data=proposal).status_code,200)
+        self.reader.reset_mock()
+        queue=self.client.get(url)
+        self.assertEqual(queue.status_code,200)
+        self.assertIn(b"1 active candidates",queue.data)
+        self.assertIn(b"TEST-MONZO-1",queue.data)
+        self.assertIn(b"ref=tx_synthetic_1",queue.data)
+        self.assertIn("no-store",queue.headers["Cache-Control"])
+        self.reader.assert_not_called()
         loaded=self.client.get(url+"?ref=tx_synthetic_1")
         self.assertIn(b"Revision 1",loaded.data)
         self.assertIn(b"Withdraw saved candidate",loaded.data)
@@ -179,6 +187,7 @@ class MonzoSheetReviewTests(unittest.TestCase):
         withdraw=dict(proposal,action="withdraw",revision="1")
         self.assertEqual(self.client.post(url,data=withdraw).status_code,200)
         self.assertEqual(self.client.post(url,data=withdraw).status_code,200)
+        self.assertIn(b"No active saved candidates",self.client.get(url).data)
         self.reader.side_effect=lambda _:self.feed()
         self.assertEqual(self.client.post(url,data=dict(form,ref="tx_synthetic_2")).status_code,200)
         with connect() as db:
@@ -187,6 +196,45 @@ class MonzoSheetReviewTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_transactions").fetchone()[0],0)
             self.assertEqual(db.execute("SELECT amount_pence FROM hq_receivables").fetchone()[0],35000)
 
+
+    def test_active_candidate_queue_paging_without_live_source(self):
+        from hq_monzo_invoice_matches import tables
+        url="/hq/finance/monzo-invoice-match"
+        self.assertEqual(self.client.get(url).status_code,302)
+        self.login()
+        # Synthetic persisted review history only; no bank or invoice writes.
+        with connect() as db:
+            tables(db)
+            for i in range(51):
+                db.execute("INSERT INTO hq_monzo_invoice_match_events VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (f"tx_synthetic_{i:03}",1,"a"*32,f"TEST-{i:03}",100,
+                     "b"*64,"proposed",f"operation-{i}","synthetic-owner","2026-11-28"))
+            db.execute("INSERT INTO hq_monzo_invoice_match_events VALUES(?,?,?,?,?,?,?,?,?,?)",
+                ("tx_synthetic_withdrawn",1,"a"*32,"TEST-WITHDRAWN",100,
+                 "b"*64,"proposed","operation-withdrawn","synthetic-owner","2026-11-28"))
+            db.execute("INSERT INTO hq_monzo_invoice_match_events VALUES(?,?,?,?,?,?,?,?,?,?)",
+                ("tx_synthetic_withdrawn",2,"a"*32,"TEST-WITHDRAWN",100,
+                 "b"*64,"withdrawn","operation-withdraw","synthetic-owner","2026-11-28"))
+        first=self.client.get(url)
+        self.assertEqual(first.status_code,200)
+        self.assertIn(b"51 active candidates",first.data)
+        self.assertIn(b"TEST-000",first.data)
+        self.assertNotIn(b"TEST-050",first.data)
+        self.assertNotIn(b"TEST-WITHDRAWN",first.data)
+        self.assertIn(b"Next candidates",first.data)
+        last=self.client.get(url+"?offset=50")
+        self.assertEqual(last.status_code,200)
+        self.assertIn(b"TEST-050",last.data)
+        self.assertNotIn(b"TEST-000",last.data)
+        self.assertIn(b"Previous candidates",last.data)
+        self.assertIn(b"No candidates on this page",self.client.get(url+"?offset=100").data)
+        for invalid in ("-1","abc","100001"):
+            self.assertEqual(self.client.get(url+"?offset="+invalid).status_code,400)
+        self.reader.assert_not_called()
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_monzo_invoice_match_events").fetchone()[0],53)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_receivable_allocations").fetchone()[0],0)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_transactions").fetchone()[0],0)
 
     def test_native_monzo_split_shared_history_and_exact_amount(self):
         self.login()

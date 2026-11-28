@@ -2620,3 +2620,31 @@ workbook or domain authority changes. Authenticated production acceptance,
 current Kia identity, independent recovery snapshot and bounded historical
 import remain outstanding. Next: verified settlement reconciliation and
 approval-gated reversible import, alongside customer acceptance.
+
+
+### 2026-11-28 — unfinished timer recovery deployed; active Monzo invoice candidate queue
+
+PR #346 exact head 591af73074f990586a3b534247541c17ca4b859d passed
+Actions 46105629636 (127 + 723 Python tests, 22 JavaScript tests).
+Squash merge 5b62aa4c46eea0393b30aadb9af6e4a6b36788a1 deployed on
+Railway b7f67806-7a14-4b94-a12e-b83d7498ee9d SUCCESS at 05:05:50 UTC.
+Read-only Railway inventory confirmed original 1024 MB /data volume
+540528d1-3953-4737-9d92-3c861575c5d4 and no pending changes. Workbook
+metadata still contains 48 tabs; Jobs and Monzo Live Feed headings read
+without modification. CI includes customer-to-HQ request/quote and
+appointment handoff and account isolation regression; authenticated
+production acceptance is not established by this evidence.
+
+New slice: owner-only active Monzo invoice candidate queue, 50 per page,
+available directly from the existing match screen without a new Sheets
+read. Latest status per source/invoice pair excludes withdrawn or consumed
+proposals; full count and list share one read transaction. Open a saved
+source to use existing withdrawal or evidence-gated report workflow.
+Candidates remain private proposals and do not establish receipts or
+bank cash. Synthetic coverage exercises >50 candidates, older recovery,
+withdrawal, auth, malformed offsets, no source calls and unchanged
+financial records. CI and deployment pending. No production data import,
+recovery snapshot, domain authority change or customer/financial record
+mutation. Next: independently evidenced receipt/settlement matching and
+bounded owner-approved historical imports; owner browser acceptance and
+current Kia identity remain outstanding.
