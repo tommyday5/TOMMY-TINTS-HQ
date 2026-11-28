@@ -714,8 +714,16 @@ def edit_work_progress(work_id):
 @required
 def edit_work_time(work_id):
     """Owner-only actual-time ledger; public enquiries never see this page."""
+    offset = 0
+    if request.method == "GET":
+        raw_offset = request.args.get("history_offset", "0")
+        if not re.fullmatch(r"[0-9]{1,7}", raw_offset):
+            abort(400)
+        offset = int(raw_offset)
+        if offset > 1000000 or offset % 100:
+            abort(400)
     try:
-        current = time_ledger_snapshot(work_id)
+        current = time_ledger_snapshot(work_id, offset)
     except (ValueError, LookupError):
         abort(404)
     except (OSError, sqlite3.Error):
