@@ -2591,3 +2591,32 @@ CSRF, reload, replay, alert history and re-entering an estimate.
 CI/deployment pending. No real job/financial record, booking, or workbook
 mutation, snapshot or historical migration; no domain authority change.
 Next: evidence-based bank reconciliation and owner-approved bounded import.
+
+
+### 2026-11-28 — audited allowance deployed; unfinished timer recovery pagination
+
+PR #345 exact head c1cb883cc2f5f7916c87e7df61542bfec7ebae14 passed
+Actions 46100841083 (127 + 722 Python tests, 22 JavaScript tests).
+Squash merge 1bd3f0c30d696dcfd9794b659ffdfa766c0b8196 deployed to Railway
+a3569a5c-41c5-4485-9271-66d037841d6d SUCCESS at 03:02:29 UTC.
+Read-only environment inventory verified original 1024 MB /data volume
+540528d1-3953-4737-9d92-3c861575c5d4, no staged changes; runtime worker
+startup confirmed. Workbook metadata still 48 tabs, Jobs title row and
+Monzo Live Feed A7:U7 schema read without modification. No open PRs at
+start of run.
+
+This slice exposes independent unfinished timer recovery pages on the
+existing owner-only /hq/timer screen. Total count and page results use
+the same database read transaction; running/review/paused ordering and
+existing allowance calculations remain unchanged. Older unfinished
+sessions can be found without knowing the customer, vehicle or job ID.
+Navigation preserves the current job search and does not start, resume
+or post labour; results remain no-store. Synthetic HTTP regression
+covers 51 paused sessions, exact older record recovery, independent
+search, out-of-range and malformed offsets, and unchanged persisted
+timer/ledger state. CI and deployment pending for this slice.
+No actual job, working time, price, payment, customer request, booking,
+workbook or domain authority changes. Authenticated production acceptance,
+current Kia identity, independent recovery snapshot and bounded historical
+import remain outstanding. Next: verified settlement reconciliation and
+approval-gated reversible import, alongside customer acceptance.
