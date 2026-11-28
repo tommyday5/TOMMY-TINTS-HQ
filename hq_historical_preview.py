@@ -1023,3 +1023,6 @@ def page():
 # Additive owner-only historical batch workspace; no import endpoint.
 from hq_historical_job_batches import register_routes as _register_job_batch_routes
 _register_job_batch_routes(migration_preview)
+
+from hq_recovery_workspace import register_routes as _register_recovery_routes
+_register_recovery_routes(migration_preview)
