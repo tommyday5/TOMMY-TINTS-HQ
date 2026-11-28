@@ -2787,3 +2787,25 @@ No newly reconciled domain or authority; actual recovery snapshot and
 bounded import need exact owner approval. Authenticated owner/customer
 production acceptance and current Kia canonical ID remain unverified.
 Next: reversible import execution and independent receipt reconciliation.
+
+
+### 2026-11-28 — material cost correction deployed; older usage editing
+
+PR #352 exact head 9a93beb7e2f4400fe61341994ce0e75a42086765 passed
+Actions 46138261893 (127 + 729 Python tests and 22 JavaScript tests).
+Squash merged as 67bf98029e020b82ca51b39a13443e90d2f43105.
+Railway deployment 1a51d843-1bcb-492f-b69d-d3fa8b4903df SUCCESS at
+12:07:32 UTC. Owner HTTP material correction, customer-to-HQ quotation
+conversion, appointment handoff and account isolation passed synthetic CI.
+Workbook metadata read-only confirms 48 tabs; no workbook writes.
+
+New owner UI slice: material usage history now has validated bounded pages
+with correction and reversal controls on older entries. Totals include all
+active entries regardless of page; unknown costs and original quantities
+remain distinct. Added synthetic 101-entry HTTP regression for old cost
+correction, authorization, invalid offsets, full totals and audit retention.
+CI and deployment pending for this slice. No live business record writes.
+Historical reconciliation/authority unchanged. Independent recovery,
+exact import approval, canonical Kia match and authenticated production
+browser acceptance remain unverified. Next: reversible historical import
+execution and independently evidenced bank reconciliation.

@@ -70,7 +70,7 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 {% else %}
 <div class="panel"><p>Material entries and corrections are available only on approved or in-progress jobs. Closed or draft records can still be reviewed.</p></div>
 {% endif %}
-<section class="panel"><h2>Material usage history</h2>
+<section class="panel" id="materialHistory"><h2>Material usage history</h2>
 {% if work.entries %}
 <ol>{% for entry in work.entries %}
 <li><strong>{{ entry.material_name }}</strong> · {{ '%.3f'|format(entry.quantity_milli/1000) }} {{ entry.unit }}
@@ -98,7 +98,12 @@ li{padding:8px 0;overflow-wrap:anywhere}time{color:#b4b9c4}
 {% endif %}</li>
 {% endfor %}</ol>
 {% else %}<p>No materials have been recorded for this HQ job.</p>{% endif %}
-{% if work.history_truncated %}<p class="hint">Showing only the most recent 100 events. Older rows remain preserved in SQLite.</p>{% endif %}
+{% if work.history_truncated %}
+<p class="hint">Showing entries {{ work.history_offset + 1 }}–{{ work.history_offset + work.entries|length }} of {{ work.history_count }}; totals include all active entries.</p>
+<nav aria-label="Material history pages">
+{% if work.history_offset > 0 %}<a href="{{ url_for('.edit_work_materials', work_id=work.id, history_offset=[0, work.history_offset-100]|max) }}#materialHistory">Newer material entries</a>{% endif %}
+{% if work.history_has_next and work.history_offset < 1000000 %}<a href="{{ url_for('.edit_work_materials', work_id=work.id, history_offset=work.history_offset+100) }}#materialHistory">Older material entries</a>{% endif %}
+</nav>{% endif %}
 <p class="hint">Reversal does not destroy the original evidence or change stock, payments, quotes or other costing logs.</p>
 </section>
 </main></body></html>

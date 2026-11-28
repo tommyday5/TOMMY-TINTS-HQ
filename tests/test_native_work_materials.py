@@ -173,6 +173,50 @@ class NativeMaterialLedgerTests(unittest.TestCase):
         self.assertEqual(read_work_record(self.work_id)["deposit_pence"], 5000)
         self.assertEqual(sheet_sync_status(self.work_id)["state"], "not_linked")
 
+    def test_older_material_entries_remain_editable_and_totals_cover_all_pages(self):
+        self.approve()
+        with app.app_context():
+            for i in range(101):
+                append_work_material(self.work_id, self.form(
+                    revision=str(i+3), material_name="Synthetic material " + str(i),
+                    actual_cost_pence="100"), i+3, "material-owner")
+        first = material_ledger_snapshot(self.work_id)
+        older = material_ledger_snapshot(self.work_id, 100)
+        self.assertEqual((first["history_count"], len(first["entries"]), first["actual_material_cost_pence"]),
+                         (101, 100, 10100))
+        self.assertTrue(first["history_has_next"])
+        self.assertFalse(older["history_has_next"])
+        self.assertEqual(older["actual_material_cost_pence"], 10100)
+        self.assertEqual(len(older["entries"]), 1)
+        entry = older["entries"][0]
+        self.assertEqual(entry["material_name"], "Synthetic material 0")
+        self.assertEqual(self.client.get(self.url + "?history_offset=100").status_code, 302)
+        self.login()
+        self.assertIn(b"Older material entries", self.client.get(self.url).data)
+        page = self.client.get(self.url + "?history_offset=100")
+        self.assertEqual(page.status_code, 200)
+        self.assertEqual(page.headers["Cache-Control"], "no-store")
+        self.assertIn(b"Newer material entries", page.data)
+        self.assertIn(b"Synthetic material 0", page.data)
+        self.assertNotIn(b"Synthetic material 100", page.data)
+        endpoint = self.url + "/" + entry["entry_id"] + "/cost"
+        self.assertIn(endpoint.encode(), page.data)
+        for offset in ("101", "-100", "1000001", "not-a-page"):
+            self.assertEqual(self.client.get(self.url + "?history_offset=" + offset).status_code, 400)
+        self.assertIn(b"Synthetic material 0", self.client.get(self.url + "?history_offset=200").data)
+        self.assertEqual(material_ledger_snapshot(self.work_id)["revision"], 104)
+        saved = self.client.post(endpoint, data={
+            "csrf": "material-csrf", "revision": "104", "operation_id": entry["cost_operation"],
+            "actual_cost_pounds": "2.00", "reason": "Synthetic corrected invoice allocation"})
+        self.assertEqual(saved.status_code, 303)
+        self.assertIn("cost_corrected=1", saved.location)
+        after = material_ledger_snapshot(self.work_id, 100)
+        self.assertEqual((after["entry_count"], after["history_count"], after["actual_material_cost_pence"]),
+                         (101, 102, 10200))
+        self.assertTrue(next(e for e in after["entries"] if e["entry_id"] == entry["entry_id"])["voided_at"])
+        self.assertEqual(read_work_record(self.work_id)["price_pence"], 35000)
+        self.assertFalse(after["payment_verified"])
+
     def test_owner_only_csrf_validation_and_closed_job_lock(self):
         other = app.test_client()
         self.assertEqual(other.get(self.url).status_code, 302)

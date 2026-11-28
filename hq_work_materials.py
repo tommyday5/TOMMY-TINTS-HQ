@@ -144,8 +144,11 @@ def _work(db, work_id):
     return dict(row)
 
 
-def material_ledger_snapshot(work_id):
+def material_ledger_snapshot(work_id, history_offset=0):
+    """Read complete active totals and a bounded page of immutable usage history."""
     _validate_id(work_id)
+    if type(history_offset) is not int or not 0 <= history_offset <= 1000000 or history_offset % 100:
+        raise ValueError("Invalid material history offset")
     with connect() as db:
         _schema(db)
         _tables(db)
@@ -158,6 +161,7 @@ def material_ledger_snapshot(work_id):
             (work_id,)).fetchone()
         history_count = db.execute(
             "SELECT COUNT(*) FROM hq_work_material_entries WHERE work_id=?", (work_id,)).fetchone()[0]
+        history_offset = min(history_offset, max(0, (history_count - 1) // 100 * 100))
         entries = [dict(x) for x in db.execute("""SELECT e.entry_id,e.material_name,e.quantity_milli,
             e.unit,e.actual_cost_pence,e.source_note,e.created_at,e.voided_at,
             c.original_entry_id AS corrected_from,c.reason AS correction_reason,
@@ -165,7 +169,7 @@ def material_ledger_snapshot(work_id):
             FROM hq_work_material_entries e
             LEFT JOIN hq_work_material_cost_corrections c ON c.replacement_entry_id=e.entry_id
             LEFT JOIN hq_work_material_cost_corrections x ON x.original_entry_id=e.entry_id
-            WHERE e.work_id=? ORDER BY e.created_at DESC,e.entry_id DESC LIMIT 100""", (work_id,))]
+            WHERE e.work_id=? ORDER BY e.created_at DESC,e.entry_id DESC LIMIT 100 OFFSET ?""", (work_id, history_offset))]
     for entry in entries:
         entry["cost_operation"] = uuid.uuid5(uuid.NAMESPACE_OID,
             f'hq-material-cost:{entry["entry_id"]}:{work["revision"]}').hex
@@ -179,6 +183,9 @@ def material_ledger_snapshot(work_id):
             if count and unknown == 0 else None,
         "entries": entries,
         "history_truncated": history_count > 100,
+        "history_count": history_count,
+        "history_offset": history_offset,
+        "history_has_next": history_offset + len(entries) < history_count,
         "can_edit_materials": work["kind"] == "job" and work["status"] in _ALLOWED and not work["is_archived"],
         "payment_verified": False,
     })
