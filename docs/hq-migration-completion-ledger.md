@@ -2517,3 +2517,28 @@ Opening the focused page makes no provider requests. No bank-settlement or
 new cash claim. Synthetic route assertions added; CI and deployment pending.
 No live business records or workbook cells modified. Next: evidence-based
 settlement and bounded historical approval; authenticated customer acceptance.
+
+
+### 2026-11-28 — provider review deployed; exact settlement proposals
+
+PR #342 exact head 047a9ce07aaea41449b7342b5e8f5195b8ecba1c passed
+Actions 46085783618 (127 + 721 Python tests, 22 JavaScript tests). Squash
+merged as f061361c3f8f5540a6730321f550409e9d3597fb; Railway deployment
+53181b2f-7f59-44a3-b2b6-ffc918da6e48 SUCCESS 01:05:54 UTC.
+Environment inventory before merge retained original 1024 MB /data volume
+and no pending changes; read-only workbook metadata returned all 48 tabs.
+No actual job, timer, financial record, payment, booking or historical
+import performed; no new domain authority.
+
+Next slice: direct owner-only single-payment settlement proposal navigation
+from any saved card allocation; scope retained proposal history by opaque
+allocation ID before the 50-event display cap; preserve focus after approval
+and withdrawal. Independent withdrawal tokens per active proposal. Opening
+a focused review does not call the source or provider; original explicit
+approval, source evidence digest, replay and conflict protections remain.
+Reject a documented combined fee total below the subtotal of already known
+non-negative provider fees, even if other member fees are missing. Synthetic
+HTTP and fee evidence regression assertions added. CI/deployment pending.
+Settlement proposals remain unverified, never bank cash or a new receipt.
+Authenticated customer and workshop acceptance, current Kia canonical ID,
+first bounded import and independent recovery snapshot remain outstanding.
