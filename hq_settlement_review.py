@@ -136,6 +136,8 @@ def provider_fee_comparison(db, members, documented_fee):
     total = sum(f["fee_pence"] for f in known) if known else None
     if not missing and total != documented_fee:
         raise ValueError("Documented settlement fee differs from retained provider fees. Investigate the difference before saving.")
+    if missing and total is not None and total > documented_fee:
+        raise ValueError("Known provider fee subtotal exceeds the documented total. Investigate the difference before saving.")
     return dict(known=known, missing=missing, total_pence=total)
 
 
@@ -244,6 +246,8 @@ def register(bp):
         error, proposed, code = None, None, 200
         form = request.form if request.method == "POST" else request.args
         allocation_id = form.get("allocation", "")
+        if request.method == "GET" and allocation_id and not HEX.fullmatch(allocation_id):
+            abort(400)
         source = form.get("source", "")
         fee_raw = form.get("fee", "")
         reference = form.get("reference", "")
@@ -265,7 +269,7 @@ def register(bp):
                         tables(db)
                         db.execute("BEGIN IMMEDIATE")
                         withdraw(db,allocation_id,int(form.get("event","")),operation,actor)
-                    return "",303,{"Location":url_for(".settlement_review"),"Cache-Control":"no-store"}
+                    return "",303,{"Location":url_for(".settlement_review", allocation=allocation_id),"Cache-Control":"no-store"}
                 if action not in ("preview","save") or not ID.fullmatch(source):
                     raise ValueError("Choose an exact worksheet transaction ID.")
                 if not re.fullmatch(r"[0-9]{1,8}(?:\.[0-9]{1,2})?",fee_raw):
@@ -284,7 +288,7 @@ def register(bp):
                             raise ValueError("Confirm the exact evidence preview first.")
                         db.execute("BEGIN IMMEDIATE")
                         save(db,allocation_id,entry,fee,reference,form["manifest"],operation,actor)
-                        return "",303,{"Location":url_for(".settlement_review"),"Cache-Control":"no-store"}
+                        return "",303,{"Location":url_for(".settlement_review", allocation=allocation_id),"Cache-Control":"no-store"}
         except ValueError as exc:
             error, code = str(exc), 409
         except (requests.RequestException, sqlite3.Error, OSError, RuntimeError, KeyError):
@@ -292,15 +296,19 @@ def register(bp):
         try:
             with closing(connect()) as db, db:
                 tables(db)
-                rows = [dict(r) for r in db.execute("SELECT * FROM hq_square_settlement_reviews ORDER BY id DESC LIMIT 50")]
+                selected = allocation_id if HEX.fullmatch(allocation_id) else None
+                rows = [dict(r) for r in db.execute("""SELECT * FROM hq_square_settlement_reviews
+                    WHERE (? IS NULL OR allocation_id=?) ORDER BY id DESC LIMIT 50""",
+                    (selected, selected))]
                 current = {r["id"] for r in active(db)}
                 for row in rows:
                     row["details"] = json.loads(row["evidence"])
+                    row["undo_operation"] = uuid.uuid4().hex
         except (sqlite3.Error,OSError,RuntimeError):
             return "Persistent storage unavailable.",503,{"Cache-Control":"no-store"}
         return render_template("hq_settlement_review.html", error=error, proposed=proposed,
             allocation=allocation_id, source=source, fee=fee_raw, reference=reference,
-            rows=rows,current=current,csrf=session.get("csrf",""),operation=uuid.uuid4().hex),code,{"Cache-Control":"no-store"}
+            rows=rows,current=current,selected=selected,csrf=session.get("csrf",""),operation=uuid.uuid4().hex),code,{"Cache-Control":"no-store"}
 
 
     @bp.route("/hq/finance/settlement-batches", methods=["GET","POST"])
