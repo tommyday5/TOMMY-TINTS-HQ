@@ -106,6 +106,9 @@ async function load(query=activeQuery){
    const recognition=node('a','Review provider-confirmed receipt and fees');
    recognition.href='/hq/finance/provider-confirmed-receipts?allocation='+encodeURIComponent(r.id);
    const reviewLine=node('p','');reviewLine.append(recognition);card.append(reviewLine);
+   const settlement=node('a','Review single-payment settlement proposal');
+   settlement.href='/hq/finance/settlement-review?allocation='+encodeURIComponent(r.id);
+   const settlementLine=node('p','');settlementLine.append(settlement);card.append(settlementLine);
   }
   records.append(card);
  }
