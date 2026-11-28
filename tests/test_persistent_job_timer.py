@@ -456,9 +456,8 @@ class PersistentTimerTests(unittest.TestCase):
             "reason": "Synthetic missed break"}, 1, "owner")
         for replay in (data, dict(data, minutes="9")):
             response = c.post(url, data=replay)
-            self.assertEqual(response.status_code, 303)
-            self.assertIn("time_already_used=1", response.location)
-            page = c.get(response.location)
+            self.assertEqual(response.status_code, 409)
+            page = response
             self.assertEqual(page.headers["Cache-Control"], "no-store")
             self.assertIn(b"Previous submission not saved again", page.data)
             self.assertNotIn(b"Time entry saved to HQ", page.data)
@@ -466,7 +465,7 @@ class PersistentTimerTests(unittest.TestCase):
             self.assertIn(b'name="minutes" type="number" min="1" max="1440" step="1" required  value=""', page.data)
         self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"], 8)
         void_work_time(self.job, successor, 2, "owner")
-        self.assertIn("time_already_used=1", c.post(url, data=data).location)
+        self.assertEqual(c.post(url, data=data).status_code, 409)
         self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"], 0)
         self.assertEqual(history(self.job)["sessions"][0]["active_seconds"], 600)
 
@@ -475,6 +474,7 @@ class PersistentTimerTests(unittest.TestCase):
         with c.session_transaction() as s, auth_db() as db:
             s["hq_sid"] = issue_session(db, "owner")
             s["csrf"] = "test"
+            s["google_sub"] = "owner"
         self.command("start")
         sid = snapshot(self.job)["id"]
         self.now.return_value += 600
@@ -483,8 +483,10 @@ class PersistentTimerTests(unittest.TestCase):
         url = "/hq/work/" + self.job + "/time"
         response = c.post(url, data={"operation_id": sid, "minutes": "10",
             "stage": "repair", "csrf": "test", "revision": "0"})
-        self.assertEqual(response.status_code, 303)
-        self.assertIn("time_already_used=1", response.location)
+        self.assertEqual(response.status_code, 409, response.get_data(as_text=True))
+        self.assertIn(b"Previous submission not saved again", response.data)
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        self.assertNotIn(('name="operation_id" value="' + sid + '"').encode(), response.data)
         self.assertEqual(time_ledger_snapshot(self.job)["entry_count"], 0)
         self.assertEqual(history(self.job)["sessions"][0]["state"], "discarded")
 
