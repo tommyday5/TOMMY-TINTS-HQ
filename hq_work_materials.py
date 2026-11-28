@@ -22,6 +22,10 @@ _ID = re.compile(r"[0-9a-f]{32}\Z")
 _QUANTITY = re.compile(r"[0-9]{1,7}(?:\.[0-9]{1,3})?\Z")
 _INTEGER = re.compile(r"[0-9]{1,9}\Z")
 _ALLOWED = ("approved", "in_progress")
+class MaterialEntryAlreadyUsedError(StaleWorkRecordError):
+    """An already-used form cannot be repurposed as a fresh material entry."""
+
+
 UNITS = {
     "ml": "Millilitres (ml)",
     "g": "Grams (g)",
@@ -61,6 +65,11 @@ def _tables(db):
         voided_at TEXT,
         voided_by_fingerprint TEXT)""")
     db.execute("CREATE INDEX IF NOT EXISTS idx_hq_work_material_work ON hq_work_material_entries(work_id, created_at)")
+    db.execute("""CREATE TABLE IF NOT EXISTS hq_work_material_cost_corrections (
+        operation_id TEXT PRIMARY KEY, work_id TEXT NOT NULL,
+        original_entry_id TEXT NOT NULL UNIQUE REFERENCES hq_work_material_entries(entry_id),
+        replacement_entry_id TEXT NOT NULL UNIQUE REFERENCES hq_work_material_entries(entry_id),
+        request_fingerprint TEXT NOT NULL, reason TEXT NOT NULL)""")
 
 
 def _payload(payload):
@@ -123,10 +132,12 @@ def _fingerprint(fields):
 
 def _work(db, work_id):
     row = db.execute("""SELECT w.id,w.kind,w.status,w.revision,w.service,
-        w.price_pence,c.name AS customer_name,v.make,v.model,v.registration
+        w.price_pence,c.name AS customer_name,v.make,v.model,v.registration,
+        COALESCE(a.is_archived,0) AS is_archived
         FROM hq_work_records w
         JOIN hq_customers c ON c.id=w.customer_id
         JOIN hq_vehicles v ON v.id=w.vehicle_id
+        LEFT JOIN hq_work_archive_state a ON a.work_id=w.id
         WHERE w.id=?""", (work_id,)).fetchone()
     if row is None:
         raise LookupError("HQ job not found")
@@ -147,10 +158,17 @@ def material_ledger_snapshot(work_id):
             (work_id,)).fetchone()
         history_count = db.execute(
             "SELECT COUNT(*) FROM hq_work_material_entries WHERE work_id=?", (work_id,)).fetchone()[0]
-        entries = [dict(x) for x in db.execute("""SELECT entry_id,material_name,quantity_milli,
-            unit,actual_cost_pence,source_note,created_at,voided_at
-            FROM hq_work_material_entries WHERE work_id=?
-            ORDER BY created_at DESC,entry_id DESC LIMIT 100""", (work_id,))]
+        entries = [dict(x) for x in db.execute("""SELECT e.entry_id,e.material_name,e.quantity_milli,
+            e.unit,e.actual_cost_pence,e.source_note,e.created_at,e.voided_at,
+            c.original_entry_id AS corrected_from,c.reason AS correction_reason,
+            x.replacement_entry_id AS replaced_by
+            FROM hq_work_material_entries e
+            LEFT JOIN hq_work_material_cost_corrections c ON c.replacement_entry_id=e.entry_id
+            LEFT JOIN hq_work_material_cost_corrections x ON x.original_entry_id=e.entry_id
+            WHERE e.work_id=? ORDER BY e.created_at DESC,e.entry_id DESC LIMIT 100""", (work_id,))]
+    for entry in entries:
+        entry["cost_operation"] = uuid.uuid5(uuid.NAMESPACE_OID,
+            f'hq-material-cost:{entry["entry_id"]}:{work["revision"]}').hex
     unknown = totals["unknown_count"] or 0
     count = totals["count"]
     work.update({
@@ -161,7 +179,7 @@ def material_ledger_snapshot(work_id):
             if count and unknown == 0 else None,
         "entries": entries,
         "history_truncated": history_count > 100,
-        "can_edit_materials": work["kind"] == "job" and work["status"] in _ALLOWED,
+        "can_edit_materials": work["kind"] == "job" and work["status"] in _ALLOWED and not work["is_archived"],
         "payment_verified": False,
     })
     return work
@@ -181,13 +199,15 @@ def append_work_material(work_id, payload, expected_revision, owner_identity):
         db.execute("BEGIN IMMEDIATE")
         work = _work(db, work_id)
         previous = db.execute(
-            "SELECT entry_id,work_id,payload_fingerprint FROM hq_work_material_entries WHERE operation_id=?",
+            "SELECT entry_id,work_id,payload_fingerprint,voided_at FROM hq_work_material_entries WHERE operation_id=?",
             (fields["operation_id"],)).fetchone()
         if previous:
             if previous["work_id"] != work_id or not hmac.compare_digest(previous["payload_fingerprint"], fingerprint):
-                raise StaleWorkRecordError("Operation was already submitted with different material details")
+                raise MaterialEntryAlreadyUsedError("Operation was already submitted with different material details")
+            if previous["voided_at"] is not None:
+                raise MaterialEntryAlreadyUsedError("This material entry has been reversed or corrected.")
             return previous["entry_id"]
-        if work["kind"] != "job" or work["status"] not in _ALLOWED:
+        if work["kind"] != "job" or work["status"] not in _ALLOWED or work["is_archived"]:
             raise ValueError("Materials can only be recorded on approved or in-progress jobs")
         if work["revision"] != expected_revision:
             raise StaleWorkRecordError("This job changed. Reload before recording materials.")
@@ -229,7 +249,7 @@ def void_work_material(work_id, entry_id, expected_revision, owner_identity):
             raise LookupError("Material entry not found")
         if entry["voided_at"] is not None:
             return work["revision"]
-        if work["kind"] != "job" or work["status"] not in _ALLOWED:
+        if work["kind"] != "job" or work["status"] not in _ALLOWED or work["is_archived"]:
             raise ValueError("Closed-job material history is locked")
         if work["revision"] != expected_revision:
             raise StaleWorkRecordError("This job changed. Reload before correcting materials.")
@@ -245,3 +265,69 @@ def void_work_material(work_id, entry_id, expected_revision, owner_identity):
                     {"entry_id": entry_id, "voided": False},
                     {"entry_id": entry_id, "voided": True})
     return expected_revision + 1
+
+
+def correct_work_material_cost(work_id, entry_id, payload, expected_revision, owner_identity):
+    """Atomically correct an allocated cost; preserve original quantity and evidence."""
+    _validate_id(work_id)
+    _validate_id(entry_id)
+    _validate_revision(expected_revision)
+    actor = _actor_fingerprint(owner_identity)
+    operation = payload.get("operation_id")
+    _validate_id(operation)
+    reason = payload.get("reason", "")
+    if not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 160 or re.search(r"[\x00-\x1f\x7f]", reason):
+        raise ValueError("Enter a correction reason (1–160 characters)")
+    if "actual_cost_pounds" not in payload:
+        raise ValueError("Enter a cost or explicitly leave it unknown")
+    # Reuse the established integer-pence validation and blank/zero semantics.
+    cost = _payload({"operation_id": operation, "material_name": "cost correction",
+                     "quantity": "1", "unit": "each",
+                     "actual_cost_pounds": payload["actual_cost_pounds"]})["actual_cost_pence"]
+    fingerprint = _fingerprint({"operation_id": operation, "work_id": work_id,
+                               "entry_id": entry_id, "cost": cost, "reason": reason.strip()})
+    with connect() as db:
+        db.execute("PRAGMA foreign_keys=ON")
+        _schema(db)
+        _tables(db)
+        db.execute("BEGIN IMMEDIATE")
+        work = _work(db, work_id)
+        prior = db.execute("""SELECT c.*, e.voided_at FROM hq_work_material_cost_corrections c
+            JOIN hq_work_material_entries e ON e.entry_id=c.replacement_entry_id
+            WHERE c.operation_id=?""", (operation,)).fetchone()
+        if prior:
+            if not hmac.compare_digest(prior["request_fingerprint"], fingerprint) or prior["voided_at"] is not None:
+                raise StaleWorkRecordError("Correction already used or superseded; reload history.")
+            return prior["replacement_entry_id"]
+        if db.execute("SELECT 1 FROM hq_work_material_entries WHERE operation_id=?", (operation,)).fetchone():
+            raise StaleWorkRecordError("Operation already used; reload history.")
+        entry = db.execute("SELECT * FROM hq_work_material_entries WHERE entry_id=? AND work_id=?",
+                           (entry_id, work_id)).fetchone()
+        if entry is None:
+            raise LookupError("Material entry not found")
+        if entry["voided_at"] is not None or work["revision"] != expected_revision:
+            raise StaleWorkRecordError("Material entry or job changed; reload history.")
+        if work["kind"] != "job" or work["status"] not in _ALLOWED or work["is_archived"]:
+            raise ValueError("Closed or archived job material history is locked")
+        if entry["actual_cost_pence"] == cost:
+            raise ValueError("Enter a changed cost")
+        changed = db.execute("UPDATE hq_work_records SET revision=revision+1 WHERE id=? AND revision=?",
+                             (work_id, expected_revision))
+        if changed.rowcount != 1:
+            raise StaleWorkRecordError("Job changed; reload history.")
+        replacement = uuid.uuid4().hex
+        now = _now()
+        db.execute("UPDATE hq_work_material_entries SET voided_at=?,voided_by_fingerprint=? WHERE entry_id=?",
+                   (now, actor, entry_id))
+        db.execute("""INSERT INTO hq_work_material_entries
+            (entry_id,work_id,operation_id,payload_fingerprint,material_name,quantity_milli,
+             unit,actual_cost_pence,source_note,actor_fingerprint,created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (replacement, work_id, operation, fingerprint, entry["material_name"], entry["quantity_milli"],
+             entry["unit"], cost, entry["source_note"], actor, now))
+        db.execute("INSERT INTO hq_work_material_cost_corrections VALUES(?,?,?,?,?,?)",
+                   (operation, work_id, entry_id, replacement, fingerprint, reason.strip()))
+        _audit_work(db, work_id, expected_revision + 1, "material_cost_corrected",
+                    {"entry_id": entry_id, "cost_known": entry["actual_cost_pence"] is not None},
+                    {"entry_id": replacement, "cost_known": cost is not None})
+    return replacement
