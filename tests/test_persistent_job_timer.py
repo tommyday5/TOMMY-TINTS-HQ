@@ -205,6 +205,59 @@ class PersistentTimerTests(unittest.TestCase):
         anonymous=app.test_client()
         self.assertEqual(anonymous.get("/hq/work/"+self.job+"/time").status_code,302)
 
+    def test_clear_timer_allowance_keeps_time_and_historical_alerts(self):
+        from hq_timer_alerts import scan, inbox
+        self.command("start", allowance="10")
+        sid = snapshot(self.job)["id"]
+        self.now.return_value += 480
+        self.assertEqual(scan(), 1)
+        self.command("pause", 0, sid)
+        self.now.return_value += 60
+        c = app.test_client()
+        with c.session_transaction() as s, auth_db() as db:
+            s["hq_sid"] = issue_session(db, "owner")
+            s["csrf"] = "test"
+        page = "/hq/work/" + self.job + "/time"
+        url = "/hq/work/" + self.job + "/timer"
+        self.assertIn(b"Clear estimated allowance", c.get(page).data)
+        data = dict(action="clear_allowance", timer_revision="1", timer_session=sid,
+                    operation_id=uuid.uuid4().hex, reason="Synthetic estimate withdrawn")
+        self.assertEqual(c.post(url, data=data).status_code, 403)
+        self.assertEqual(c.post(url, data=dict(data, csrf="test", reason="")).status_code, 400)
+        before = snapshot(self.job)
+        self.assertEqual(c.post(url, data=dict(data, csrf="test")).status_code, 303)
+        self.assertEqual(c.post(url, data=dict(data, csrf="test")).status_code, 303)
+        after = snapshot(self.job)
+        self.assertIsNone(after["allowance_minutes"])
+        self.assertEqual(after["revision"], 2)
+        for key in ("changed_at", "display_seconds", "display_break", "state"):
+            self.assertEqual(before[key], after[key])
+        self.assertEqual(after["display_seconds"], 480)
+        self.assertEqual(after["display_break"], 60)
+        self.assertEqual(scan(), 0)
+        self.assertFalse(inbox()["pending"][0]["same_open_allowance"])
+        refreshed = c.get(page)
+        self.assertNotIn(b"Clear estimated allowance", refreshed.data)
+        self.assertIn(b'data-allowance="0"', refreshed.data)
+        self.assertIn(b"Synthetic estimate withdrawn", refreshed.data)
+        self.assertEqual(time_ledger_snapshot(self.job)["minutes_total"], 0)
+        self.assertEqual(open_timer_jobs()["records"][0]["budget_state"], "unknown")
+        with self.assertRaises(StaleWorkRecordError):
+            self.command("clear_allowance", 1, sid, operation=data["operation_id"],
+                         reason="Different reason")
+        self.command("resume", 2, sid)
+        self.now.return_value += 120
+        self.assertEqual(snapshot(self.job)["display_seconds"], 600)
+        self.assertEqual(scan(), 0)
+        self.command("allowance", 3, sid, allowance="20")
+        self.assertEqual(snapshot(self.job)["allowance_minutes"], 20)
+        self.command("clear_allowance", 4, sid, reason="Synthetic running estimate withdrawn")
+        self.assertIsNone(snapshot(self.job)["allowance_minutes"])
+        self.command("finish", 5, sid)
+        with self.assertRaises(ValueError):
+            self.command("clear_allowance", 6, sid, reason="Cannot change a reviewed session")
+        self.assertEqual(snapshot(self.job)["active_seconds"], 600)
+
     def test_next_session_suggests_last_saved_allowance_not_discarded(self):
         self.command("start", allowance="390")
         sid = snapshot(self.job)["id"]
