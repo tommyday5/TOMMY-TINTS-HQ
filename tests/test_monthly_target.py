@@ -24,6 +24,9 @@ class MonthlyTargetTests(unittest.TestCase):
             "HQ_ALLOWED_GOOGLE_EMAIL":"owner@example.invalid"})
         env.start()
         self.addCleanup(env.stop)
+        ctx = app.app_context()
+        ctx.push()
+        self.addCleanup(ctx.pop)
         self.client = app.test_client()
         self.today = date(2026,11,28)
 
