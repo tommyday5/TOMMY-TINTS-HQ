@@ -2494,3 +2494,26 @@ Reported claims remain unverified, no actual finance record, booking,
 external message, payment, workbook or historical import performed.
 Next: actual source-evidence reconciliation, bounded historical approval and
 off-volume recovery; customer authenticated acceptance still open.
+
+
+### 2026-11-28 — payment search deployed; direct provider evidence review
+
+PR #341 head b306efc40b1e11d5f27b3ff9e91b9d8f75424886 passed Actions
+46080506350 (127 + 721 Python tests, 22 JavaScript tests). Squash merged as
+7ffc1e1b6ee1eeece7f5bf9f0cde913e465b7446; Railway deployment
+bc182098-9e34-40c5-93d8-f1be616b96a2 SUCCESS 00:02:00 UTC. Railway inventory
+retains the existing 1024 MB /data volume and no staged infrastructure changes.
+Read-only workbook metadata returned all 48 tabs and Monzo Live Feed A7:U7
+headers. Customer quote/appointment handoff and account isolation tests passed.
+No new domain authority or live historical import; authenticated UI, current
+Kia identity and independent recovery snapshot approval remain outstanding.
+
+Next slice: direct navigation from any saved card allocation to its exact
+provider recognition and fee review, including records beyond recent display
+limits. Filter all local candidate/recognition/fee/history queries by the exact
+opaque allocation ID before limits, retain focus after save or withdrawal,
+and keep owner-only access, CSRF and live provider preview/approval guards.
+Opening the focused page makes no provider requests. No bank-settlement or
+new cash claim. Synthetic route assertions added; CI and deployment pending.
+No live business records or workbook cells modified. Next: evidence-based
+settlement and bounded historical approval; authenticated customer acceptance.
