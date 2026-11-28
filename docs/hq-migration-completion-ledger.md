@@ -2809,3 +2809,29 @@ Historical reconciliation/authority unchanged. Independent recovery,
 exact import approval, canonical Kia match and authenticated production
 browser acceptance remain unverified. Next: reversible historical import
 execution and independently evidenced bank reconciliation.
+
+
+### 2026-11-28 — material history deployed; independent recovery entry point
+
+PR #353 exact head 4adc2c8d920d44464a152ac5c6585bd7d73c20ec passed
+Actions 46143168700 (127 + 730 Python tests, 22 JavaScript tests).
+Squash merged as 408695d789d6fda3edfc40949a2b47bcb10a5d2f.
+Railway deployment 78151aa2-63d1-456e-99a3-d62db857ac4a SUCCESS
+at 12:58:31 UTC. Original 1024 MB /data volume confirmed attached
+before merge; all 48 workbook tabs and Customers A4:AF4 confirmed read-only.
+No live canonical data or actual backup was accessed or written.
+
+Owner priority now shifts to finishing full workflows. See
+[hq-unfinished-work-backlog.md](hq-unfinished-work-backlog.md) for
+the actionable cross-domain checklist and evidence requirements.
+The existing backup/export controls previously required a staged Jobs
+mapping. Proposed standalone owner-only /hq/migration/recovery UI
+makes private snapshot creation, isolated restore check, persisted snapshot
+list and encrypted download accessible without Sheets or a staged job.
+The existing bounded snapshot and encryption implementation is reused.
+Explicit confirmation, CSRF, idempotent operation replay, no-store and
+synthetic owner HTTP/export tests included. CI/deployment pending.
+No actual snapshot, off-volume transfer, live restore, or import authorised.
+Next: independently retained and verified owner recovery copy, exact bounded
+customer manifest, and independently evidenced financial reconciliation;
+authenticated owner/customer acceptance and current Kia identity remain open.
