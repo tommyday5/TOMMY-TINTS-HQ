@@ -172,7 +172,8 @@ def batch_save(db, allocations, entry, fee, reference, manifest, operation, acto
                 old["manifest"] == manifest and old["source_id"] == entry["ref"] and
                 data.get("source_digest") == source_digest(entry) and data.get("fee") == fee and
                 data.get("reference") == reference.strip() and
-                [m["allocation_id"] for m in data.get("members", [])] == allocations):
+                [m["allocation_id"] for m in data.get("members", [])] == allocations
+                and any(r["id"] == old["id"] for r in active_batches(db))):
             return
         raise ValueError("Operation already used with different evidence.")
     data, expected = batch_preview(db, allocations, entry, fee, reference)
@@ -208,7 +209,8 @@ def save(db, allocation_id, entry, fee, reference, manifest, operation, actor):
                 and old["actor"] == actor and old["state"] == "proposed"
                 and previous.get("source_id") == entry["ref"]
                 and previous.get("source_digest") == source_digest(entry)
-                and previous.get("fee") == fee and previous.get("reference") == reference.strip()):
+                and previous.get("fee") == fee and previous.get("reference") == reference.strip()
+                and any(r["id"] == old["id"] for r in active(db))):
             return
         raise ValueError("Operation already used with different evidence.")
     data, expected = preview(db, allocation_id, entry, fee, reference)
@@ -318,6 +320,11 @@ def register(bp):
             return "Persistent storage required.",503,{"Cache-Control":"no-store"}
         error, proposed, code = None, None, 200
         form = request.form if request.method == "POST" else request.args
+        view = request.args.get("view", "recent")
+        before_raw = request.args.get("before", "")
+        if view not in ("recent", "active") or (before_raw and not re.fullmatch(r"[1-9][0-9]{0,17}", before_raw)):
+            abort(400)
+        before = int(before_raw) if before_raw else None
         raw, source = form.get("allocations",""), form.get("source","")
         fee_raw, reference = form.get("fee",""), form.get("reference","")
         try:
@@ -366,8 +373,14 @@ def register(bp):
         try:
             with closing(connect()) as db, db:
                 tables(db)
-                rows = [dict(r) for r in db.execute("SELECT * FROM hq_square_batch_reviews ORDER BY id DESC LIMIT 50")]
                 current = {r["id"] for r in active_batches(db)}
+                rows = [dict(r) for r in db.execute("""SELECT e.* FROM hq_square_batch_reviews e
+                    WHERE (? IS NULL OR e.id < ?) AND (? = 'recent' OR
+                        (e.state='proposed' AND NOT EXISTS (SELECT 1 FROM hq_square_batch_reviews n
+                            WHERE n.source_id=e.source_id AND n.id>e.id)))
+                    ORDER BY e.id DESC LIMIT 51""", (before,before,view))]
+                next_before = rows[49]["id"] if len(rows) > 50 else None
+                rows = rows[:50]
                 for row in rows:
                     row["details"] = json.loads(row["evidence"])
                     row["undo_operation"] = uuid.uuid4().hex
@@ -375,7 +388,7 @@ def register(bp):
             return "Persistent storage unavailable.",503,{"Cache-Control":"no-store"}
         return render_template("hq_settlement_batches.html",error=error,proposed=proposed,
             allocations=raw,source=source,fee=fee_raw,reference=reference,rows=rows,
-            current=current,csrf=session.get("csrf",""),operation=uuid.uuid4().hex),code,{"Cache-Control":"no-store"}
+            current=current,view=view,next_before=next_before,csrf=session.get("csrf",""),operation=uuid.uuid4().hex),code,{"Cache-Control":"no-store"}
 
 
     @bp.route("/hq/finance/dna-payout-review", methods=["GET", "POST"])
