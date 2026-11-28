@@ -521,6 +521,9 @@ class AllocationTests(unittest.TestCase):
                     self.assertEqual(compared["missing"], 1)
                     self.assertEqual(compared["total_pence"], 400)
                     self.assertEqual(len(compared["known"]), 1)
+                    with self.assertRaisesRegex(ValueError, "Known provider fee subtotal exceeds"):
+                        provider_fee_comparison(db, members, 399)
+                    self.assertEqual(provider_fee_comparison(db, members, 400)["missing"], 1)
                     import json
                     saved = json.loads(db.execute("SELECT evidence FROM hq_square_settlement_reviews").fetchone()[0])
                     self.assertEqual(saved["provider_fees"]["total_pence"], 400)
@@ -888,7 +891,10 @@ class AllocationTests(unittest.TestCase):
             source.return_value = dict(entry, evidence="c"*64)
             self.assertEqual(self.client.post(url, data=approval).status_code, 409)
             source.return_value = entry
-            self.assertEqual(self.client.post(url, data=approval).status_code, 303)
+            saved_response = self.client.post(url, data=approval)
+            self.assertEqual(saved_response.status_code, 303)
+            focused = url + "?allocation=" + payload["id"]
+            self.assertTrue(saved_response.headers["Location"].endswith(focused))
             self.assertEqual(self.client.post(url, data=approval).status_code, 303)
             # A replay cannot claim success with changed evidence or source data.
             self.assertEqual(self.client.post(url, data=dict(approval, fee="4.00")).status_code, 409)
@@ -900,14 +906,36 @@ class AllocationTests(unittest.TestCase):
             self.assertIn(b"Synthetic payout statement", self.client.get(url).data)
             with connect() as db:
                 event = db.execute("SELECT id FROM hq_square_settlement_reviews").fetchone()[0]
+                # Displace the active proposal beyond the recent display cap.
+                for n in range(51):
+                    db.execute("""INSERT INTO hq_square_settlement_reviews
+                        (allocation_id,source_id,manifest,state,evidence,actor,created,operation)
+                        VALUES(?,?,?,'withdrawn',?,?,?,?)""",
+                        (uuid.uuid4().hex, "unrelated-source", "a"*64, "{}", "synthetic",
+                         "2026-11-24", uuid.uuid4().hex))
+            source.reset_mock()
+            self.assertEqual(app.test_client().get(focused).status_code, 302)
+            self.assertEqual(self.client.get(url+"?allocation=invalid").status_code, 400)
+            self.assertNotIn(b"Synthetic payout statement", self.client.get(url).data)
+            selected = self.client.get(focused)
+            self.assertEqual(selected.status_code, 200)
+            self.assertEqual(selected.headers["Cache-Control"], "no-store")
+            self.assertIn(b"Synthetic payout statement", selected.data)
+            self.assertIn(b"Withdraw proposal", selected.data)
+            self.assertNotIn(b"unrelated-source", selected.data)
+            self.assertNotIn(b"Synthetic payout statement", self.client.get(url+"?allocation="+uuid.uuid4().hex).data)
+            source.assert_not_called()
             undo = dict(allocation=payload["id"], csrf="test", action="withdraw",
                         confirm="yes", event=str(event), operation=uuid.uuid4().hex)
+            undone = self.client.post(url, data=undo)
+            self.assertEqual(undone.status_code, 303)
+            self.assertTrue(undone.headers["Location"].endswith(focused))
             self.assertEqual(self.client.post(url, data=undo).status_code, 303)
-            self.assertEqual(self.client.post(url, data=undo).status_code, 303)
+            self.assertNotIn(b"Withdraw proposal", self.client.get(focused).data)
             self.assertEqual(self.client.post(url, data=form).status_code, 200)
             external_post.assert_not_called()
         with connect() as db:
-            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_square_settlement_reviews").fetchone()[0], 2)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM hq_square_settlement_reviews WHERE allocation_id=?", (payload["id"],)).fetchone()[0], 2)
             self.assertEqual(db.execute("SELECT amount_pence,status FROM hq_receivable_allocations").fetchone()[:],
                              (20000,"reported"))
         after = self.client.get("/api/hq/finance/receipt-allocations").json
