@@ -2648,3 +2648,29 @@ recovery snapshot, domain authority change or customer/financial record
 mutation. Next: independently evidenced receipt/settlement matching and
 bounded owner-approved historical imports; owner browser acceptance and
 current Kia identity remain outstanding.
+
+
+### 2026-11-28 — Monzo active candidate queue deployed; reversal-aware retry and history
+
+PR #347 exact head 2f8c63d633b7fac0bbccc12410811064621c9572 passed
+Actions 46110590624 (127 + 724 Python tests; 22 JavaScript tests).
+Squash merge 242a945b7c2da2d58bd337ff66bd85981597a384 deployed on
+Railway 608a4db9-cc33-4d24-aa1a-72872e86f687 SUCCESS at 06:04:52 UTC.
+Read-only inventory confirmed original 1024 MB /data mount, no pending
+environment changes, 48 workbook tabs and Monzo Live Feed schema.
+Synthetic customer-to-HQ quote review, customer account isolation,
+persistent timer breaks/reload and multi-day regression passed.
+
+New slice: Monzo saved candidate submission replay now requires the
+original candidate to remain active; replay of an owner-reported allocation
+after reversal is rejected rather than showing stale success. Existing
+active retries remain idempotent and withdrawals retain their history.
+The owner source view lists the latest 100 reversed linked allocations
+separately from active reported amounts, with evidence reference and
+ledger navigation. No new bank verification or cash entries.
+Synthetic route regression tests extend existing withdrawal, reversal,
+idempotency and ledger assertions. CI and deployment pending.
+No live financial/job/customer data or workbook mutation, no domain
+authority changes. Independent recovery snapshot, bounded import approval,
+authenticated production acceptance and current Kia identity remain open.
+Next: evidence-backed reconciliation and reversible historical import.

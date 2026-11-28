@@ -79,6 +79,14 @@ def reported_links(db, ref):
 
 
 
+def reversed_links(db, ref):
+    """Retain the visible trail of source-linked allocations after reversal."""
+    return [dict(r) for r in db.execute("""SELECT l.*,a.amount_pence,a.status,a.invoice_id
+        FROM hq_monzo_reported_links l JOIN hq_receivable_allocations a
+        ON a.id=l.allocation_id WHERE l.source_id=? AND a.status='reversed'
+        ORDER BY l.candidate_revision DESC LIMIT 100""",(ref,))]
+
+
 def require_source_not_settled(db, ref):
     """Prevent a payout deposit being reused as an independent invoice receipt.
 
@@ -265,6 +273,7 @@ def register(bp):
         raw_amount = ""
         active = []
         linked = []
+        reversed_allocations = []
         report = None
         queue = None
         try:
@@ -303,7 +312,9 @@ def register(bp):
                         prior = db.execute("SELECT revision FROM hq_monzo_invoice_match_events WHERE operation=?",
                                            (operation,)).fetchone()
                         if prior:
-                            notice = "This owner-reported allocation was already recorded."
+                            if not any(e["candidate_revision"] == rev for e in reported_links(db,ref)):
+                                raise Conflict("This allocation was previously reversed. Review fresh evidence before recording another.")
+                            notice = "This owner-reported allocation was already recorded and remains active."
                         else:
                             report = report_preview(db,entry,invoice_ref,rev,evidence_ref)
                             if action == "report":
@@ -320,6 +331,9 @@ def register(bp):
                         prior = db.execute("SELECT revision FROM hq_monzo_invoice_match_events WHERE operation=?",
                                            (operation,)).fetchone()
                         if prior:
+                            if action == "save" and not any(e["revision"] == prior["revision"]
+                                    for e in active_candidates(db,ref)):
+                                raise Conflict("This saved candidate is no longer active. Review again before saving another.")
                             notice = "This candidate action was already recorded."
                         elif action == "save":
                             candidate = review(db,entry,invoice_ref,amount)
@@ -346,6 +360,7 @@ def register(bp):
                     events = history(db,ref)
                     active = active_candidates(db,ref)
                     linked = reported_links(db,ref)
+                    reversed_allocations = reversed_links(db,ref)
             elif ref:
                 if not ID.fullmatch(ref):
                     raise ValueError("Invalid source transaction ID.")
@@ -354,6 +369,7 @@ def register(bp):
                     events = history(db,ref)
                     active = active_candidates(db,ref)
                     linked = reported_links(db,ref)
+                    reversed_allocations = reversed_links(db,ref)
             elif request.method == "GET":
                 offset = request.args.get("offset","0")
                 if not re.fullmatch(r"[0-9]{1,6}",offset) or int(offset)>100000:
@@ -369,4 +385,4 @@ def register(bp):
         except (requests.RequestException,sqlite3.Error,OSError,KeyError):
             error,status = "Read-only source or HQ storage unavailable; no new save confirmed.",503
         return render_template("finance_monzo_invoice_match.html",ref=ref,invoice_ref=invoice_ref,
-            preview=preview,events=events,active=active,linked=linked,report=report,queue=queue,notice=notice,error=error,raw_amount=raw_amount,csrf=session.get("csrf","")),status,{"Cache-Control":"no-store"}
+            preview=preview,events=events,active=active,linked=linked,reversed_allocations=reversed_allocations,report=report,queue=queue,notice=notice,error=error,raw_amount=raw_amount,csrf=session.get("csrf","")),status,{"Cache-Control":"no-store"}
